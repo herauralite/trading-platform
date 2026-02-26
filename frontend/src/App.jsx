@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import axios from 'axios'
 
-const API = 'http://127.0.0.1:8000'
+const API = 'https://trading-platform-production-70e0.up.railway.app'
 
 function App() {
   const [token, setToken] = useState(null)
