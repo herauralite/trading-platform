@@ -1,13 +1,756 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TaliTrade — Risk Monitor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080c10;
+    --panel: #0d1117;
+    --border: #1a2332;
+    --green: #00ff88;
+    --yellow: #ffd60a;
+    --red: #ff3b3b;
+    --cyan: #00d4ff;
+    --text: #c9d4e0;
+    --muted: #4a5568;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Barlow', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    position: relative;
+    z-index: 1;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 20px;
+  }
+
+  /* Header */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 32px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-mark {
+    width: 36px;
+    height: 36px;
+    border: 2px solid var(--cyan);
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--mono);
+    font-size: 16px;
+    color: var(--cyan);
+    box-shadow: 0 0 12px rgba(0,212,255,0.3);
+  }
+
+  .logo-text {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: #fff;
+  }
+
+  .logo-text span { color: var(--cyan); }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: all 0.3s;
+  }
+  .status-dot.live {
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  /* Account card */
+  .account-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+    margin-bottom: 28px;
+  }
+
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: var(--cyan);
+    opacity: 0.4;
+  }
+
+  .stat-label {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    margin-bottom: 6px;
+  }
+
+  .stat-value {
+    font-size: 22px;
+    font-weight: 700;
+    font-family: var(--mono);
+    color: #fff;
+  }
+
+  .stat-value.positive { color: var(--green); }
+  .stat-value.negative { color: var(--red); }
+  .stat-value.neutral { color: var(--cyan); }
+
+  .stat-sub {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-family: var(--mono);
+  }
+
+  /* Gauge cards */
+  .gauges {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 28px;
+  }
+
+  .gauge-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px 20px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s;
+  }
+
+  .gauge-card.warn { border-color: rgba(255,214,10,0.4); }
+  .gauge-card.danger { border-color: rgba(255,59,59,0.5); }
+  .gauge-card.critical {
+    border-color: var(--red);
+    box-shadow: 0 0 20px rgba(255,59,59,0.2);
+    animation: critical-pulse 1s infinite;
+  }
+
+  @keyframes critical-pulse {
+    0%, 100% { box-shadow: 0 0 20px rgba(255,59,59,0.2); }
+    50% { box-shadow: 0 0 40px rgba(255,59,59,0.5); }
+  }
+
+  .gauge-title {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    margin-bottom: 20px;
+  }
+
+  .gauge-title span {
+    float: right;
+    color: var(--cyan);
+    font-size: 10px;
+  }
+
+  /* Arc gauge */
+  .arc-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .arc-svg {
+    width: 140px;
+    height: 80px;
+    overflow: visible;
+  }
+
+  .arc-bg {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 10;
+    stroke-linecap: round;
+  }
+
+  .arc-fill {
+    fill: none;
+    stroke-width: 10;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.8s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.3s;
+    transform-origin: center;
+  }
+
+  .arc-pct {
+    font-family: var(--mono);
+    font-size: 22px;
+    font-weight: bold;
+    fill: #fff;
+    text-anchor: middle;
+  }
+
+  .arc-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    fill: var(--muted);
+    text-anchor: middle;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+
+  /* Gauge bar details */
+  .gauge-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .gauge-detail {
+    background: rgba(255,255,255,0.03);
+    border-radius: 6px;
+    padding: 10px;
+  }
+
+  .gauge-detail-label {
+    font-size: 9px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 4px;
+  }
+
+  .gauge-detail-value {
+    font-size: 15px;
+    font-family: var(--mono);
+    font-weight: bold;
+    color: #fff;
+  }
+
+  /* Threshold markers */
+  .thresholds {
+    display: flex;
+    gap: 6px;
+    margin-top: 14px;
+    flex-wrap: wrap;
+  }
+
+  .threshold-tag {
+    font-size: 9px;
+    font-family: var(--mono);
+    padding: 3px 7px;
+    border-radius: 4px;
+    border: 1px solid;
+  }
+
+  .threshold-tag.warn {
+    color: var(--yellow);
+    border-color: rgba(255,214,10,0.3);
+    background: rgba(255,214,10,0.05);
+  }
+
+  .threshold-tag.danger {
+    color: #ff8c42;
+    border-color: rgba(255,140,66,0.3);
+    background: rgba(255,140,66,0.05);
+  }
+
+  .threshold-tag.critical {
+    color: var(--red);
+    border-color: rgba(255,59,59,0.3);
+    background: rgba(255,59,59,0.05);
+  }
+
+  /* Alert log */
+  .alert-section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  .alert-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 16px;
+  }
+
+  .alert-title {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+
+  .alert-count {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--cyan);
+  }
+
+  .alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .alert-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.02);
+    border-left: 3px solid;
+    animation: slideIn 0.3s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+
+  .alert-item.warn { border-color: var(--yellow); }
+  .alert-item.danger { border-color: #ff8c42; }
+  .alert-item.critical { border-color: var(--red); }
+
+  .alert-icon { font-size: 14px; flex-shrink: 0; margin-top: 1px; }
+
+  .alert-body { flex: 1; }
+
+  .alert-msg {
+    font-size: 12px;
+    font-family: var(--mono);
+    color: var(--text);
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+
+  .alert-time {
+    font-size: 10px;
+    color: var(--muted);
+    margin-top: 4px;
+    font-family: var(--mono);
+  }
+
+  .no-alerts {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+    padding: 24px;
+  }
+
+  /* Footer */
+  footer {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--muted);
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .gauges { grid-template-columns: 1fr; }
+    .account-strip { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <div class="logo">
+      <div class="logo-mark">T</div>
+      <div class="logo-text">Tali<span>Trade</span></div>
+    </div>
+    <div class="status-bar">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">CONNECTING...</span>
+    </div>
+  </header>
+
+  <!-- Account stats strip -->
+  <div class="account-strip">
+    <div class="stat-card">
+      <div class="stat-label">Account</div>
+      <div class="stat-value neutral" id="accountId">—</div>
+      <div class="stat-sub">10K Master</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Balance</div>
+      <div class="stat-value" id="balance">—</div>
+      <div class="stat-sub" id="balanceSub">starting $10,000</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Equity</div>
+      <div class="stat-value" id="equity">—</div>
+      <div class="stat-sub" id="equitySub">floating P&L</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Open P&L</div>
+      <div class="stat-value" id="profit">—</div>
+      <div class="stat-sub" id="positions">no positions</div>
+    </div>
+  </div>
+
+  <!-- Gauges -->
+  <div class="gauges">
+
+    <!-- Trade Idea Risk -->
+    <div class="gauge-card" id="card-trade">
+      <div class="gauge-title">
+        Risk Per Trade Idea
+        <span>HARD BREACH</span>
+      </div>
+      <div class="arc-container">
+        <svg class="arc-svg" viewBox="0 0 140 80">
+          <path class="arc-bg" d="M 15 75 A 55 55 0 0 1 125 75" />
+          <path class="arc-fill" id="arc-trade" d="M 15 75 A 55 55 0 0 1 125 75"
+            stroke="var(--green)"
+            stroke-dasharray="172.8"
+            stroke-dashoffset="172.8" />
+          <text class="arc-pct" id="pct-trade" x="70" y="68">0%</text>
+          <text class="arc-label" x="70" y="80">USED</text>
+        </svg>
+      </div>
+      <div class="gauge-details">
+        <div class="gauge-detail">
+          <div class="gauge-detail-label">Used</div>
+          <div class="gauge-detail-value" id="trade-used">$0</div>
+        </div>
+        <div class="gauge-detail">
+          <div class="gauge-detail-label">Remaining</div>
+          <div class="gauge-detail-value" id="trade-rem">$300</div>
+        </div>
+      </div>
+      <div class="thresholds">
+        <span class="threshold-tag warn">⚠ $150</span>
+        <span class="threshold-tag danger">🔴 $225</span>
+        <span class="threshold-tag critical">🚨 $270</span>
+      </div>
+    </div>
+
+    <!-- Daily Loss -->
+    <div class="gauge-card" id="card-daily">
+      <div class="gauge-title">
+        Daily Loss Limit
+        <span>HARD BREACH</span>
+      </div>
+      <div class="arc-container">
+        <svg class="arc-svg" viewBox="0 0 140 80">
+          <path class="arc-bg" d="M 15 75 A 55 55 0 0 1 125 75" />
+          <path class="arc-fill" id="arc-daily" d="M 15 75 A 55 55 0 0 1 125 75"
+            stroke="var(--green)"
+            stroke-dasharray="172.8"
+            stroke-dashoffset="172.8" />
+          <text class="arc-pct" id="pct-daily" x="70" y="68">0%</text>
+          <text class="arc-label" x="70" y="80">USED</text>
+        </svg>
+      </div>
+      <div class="gauge-details">
+        <div class="gauge-detail">
+          <div class="gauge-detail-label">Used</div>
+          <div class="gauge-detail-value" id="daily-used">$0</div>
+        </div>
+        <div class="gauge-detail">
+          <div class="gauge-detail-label">Remaining</div>
+          <div class="gauge-detail-value" id="daily-rem">$500</div>
+        </div>
+      </div>
+      <div class="thresholds">
+        <span class="threshold-tag warn">⚠ $250</span>
+        <span class="threshold-tag danger">🔴 $400</span>
+        <span class="threshold-tag critical">🚨 $450</span>
+      </div>
+    </div>
+
+    <!-- Overall Loss -->
+    <div class="gauge-card" id="card-overall">
+      <div class="gauge-title">
+        Overall Loss Limit
+        <span>HARD BREACH</span>
+      </div>
+      <div class="arc-container">
+        <svg class="arc-svg" viewBox="0 0 140 80">
+          <path class="arc-bg" d="M 15 75 A 55 55 0 0 1 125 75" />
+          <path class="arc-fill" id="arc-overall" d="M 15 75 A 55 55 0 0 1 125 75"
+            stroke="var(--green)"
+            stroke-dasharray="172.8"
+            stroke-dashoffset="172.8" />
+          <text class="arc-pct" id="pct-overall" x="70" y="68">0%</text>
+          <text class="arc-label" x="70" y="80">USED</text>
+        </svg>
+      </div>
+      <div class="gauge-details">
+        <div class="gauge-detail">
+          <div class="gauge-detail-label">Used</div>
+          <div class="gauge-detail-value" id="overall-used">$0</div>
+        </div>
+        <div class="gauge-detail">
+          <div class="gauge-detail-label">Remaining</div>
+          <div class="gauge-detail-value" id="overall-rem">$1,000</div>
+        </div>
+      </div>
+      <div class="thresholds">
+        <span class="threshold-tag warn">⚠ $500</span>
+        <span class="threshold-tag danger">🔴 $800</span>
+        <span class="threshold-tag critical">🚨 $900</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Alert log -->
+  <div class="alert-section">
+    <div class="alert-header">
+      <div class="alert-title">Alert Log</div>
+      <div class="alert-count" id="alertCount">0 alerts</div>
+    </div>
+    <div class="alert-list" id="alertList">
+      <div class="no-alerts">No alerts fired — all limits safe ✓</div>
+    </div>
+  </div>
+
+  <footer>
+    <span>TALITRADE RISK MONITOR v2.0</span>
+    <span id="lastUpdate">Last update: —</span>
+    <span>10K 2-STEP MASTER</span>
+  </footer>
+
+</div>
+
+<script>
+  const API = 'https://trading-platform-production-70e0.up.railway.app/extension/status';
+  const ACCOUNT_ID = '1917136';
+  const ARC_LENGTH = 172.8;
+
+  let alertLog = [];
+  let lastAlertCount = 0;
+
+  function updateArc(id, pct) {
+    const arc = document.getElementById(`arc-${id}`);
+    const pctEl = document.getElementById(`pct-${id}`);
+    const card = document.getElementById(`card-${id}`);
+    if (!arc) return;
+
+    const clamped = Math.min(100, Math.max(0, pct));
+    const offset = ARC_LENGTH - (ARC_LENGTH * clamped / 100);
+    arc.style.strokeDashoffset = offset;
+    pctEl.textContent = `${Math.round(clamped)}%`;
+
+    // Color based on level
+    let color = 'var(--green)';
+    let level = '';
+    if (clamped >= 90) { color = 'var(--red)'; level = 'critical'; }
+    else if (clamped >= 75) { color = '#ff8c42'; level = 'danger'; }
+    else if (clamped >= 50) { color = 'var(--yellow)'; level = 'warn'; }
+
+    arc.style.stroke = color;
+    pctEl.style.fill = clamped > 0 ? color : '#fff';
+
+    card.className = `gauge-card ${level}`;
+  }
+
+  function fmt(val) {
+    if (val === null || val === undefined) return '—';
+    return '$' + Math.abs(val).toFixed(2);
+  }
+
+  function fmtProfit(val) {
+    if (val === null || val === undefined) return '—';
+    const sign = val >= 0 ? '+' : '-';
+    return sign + '$' + Math.abs(val).toFixed(2);
+  }
+
+  async function fetchData() {
+    try {
+      const res = await fetch(API);
+      const data = await res.json();
+      const acct = data.accounts?.[ACCOUNT_ID];
+
+      if (!acct) {
+        document.getElementById('statusDot').className = 'status-dot';
+        document.getElementById('statusText').textContent = 'WAITING FOR DATA...';
+        return;
+      }
+
+      // Status
+      document.getElementById('statusDot').className = 'status-dot live';
+      document.getElementById('statusText').textContent = 'LIVE';
+
+      // Account strip
+      document.getElementById('accountId').textContent = ACCOUNT_ID;
+
+      const balance = acct.balance;
+      const equity = acct.equity;
+      const profit = acct.profit;
+
+      const balEl = document.getElementById('balance');
+      balEl.textContent = balance ? fmt(balance) : '—';
+      balEl.className = 'stat-value ' + (balance >= 10000 ? 'positive' : balance < 9500 ? 'negative' : '');
+
+      const eqEl = document.getElementById('equity');
+      eqEl.textContent = equity ? fmt(equity) : '—';
+      eqEl.className = 'stat-value ' + (equity >= 10000 ? 'positive' : equity < 9800 ? 'negative' : '');
+
+      const prEl = document.getElementById('profit');
+      prEl.textContent = profit !== null ? fmtProfit(profit) : '—';
+      prEl.className = 'stat-value ' + (profit > 0 ? 'positive' : profit < 0 ? 'negative' : '');
+
+      document.getElementById('positions').textContent =
+        acct.hasPositions ? `${acct.openPositionCount || 1} position(s) open` : 'no positions';
+
+      // Gauges
+      const risk = acct.riskPerTradeIdea || {};
+      const daily = acct.dailyLoss || {};
+      const overall = acct.overallLoss || {};
+
+      updateArc('trade', risk.pct || 0);
+      document.getElementById('trade-used').textContent = fmt(risk.combined);
+      document.getElementById('trade-rem').textContent = fmt(risk.remaining ?? 300);
+
+      updateArc('daily', daily.pct || 0);
+      document.getElementById('daily-used').textContent = fmt(daily.used);
+      document.getElementById('daily-rem').textContent = fmt(daily.remaining ?? 500);
+
+      updateArc('overall', overall.pct || 0);
+      document.getElementById('overall-used').textContent = fmt(overall.used);
+      document.getElementById('overall-rem').textContent = fmt(overall.remaining ?? 1000);
+
+      // Alerts
+      if (acct.alerts && acct.alerts.length > 0) {
+        acct.alerts.forEach(alert => {
+          const key = alert.type + ':' + alert.level + ':' + alert.message?.slice(0, 30);
+          if (!alertLog.find(a => a.key === key)) {
+            alertLog.unshift({
+              key,
+              type: alert.type,
+              level: alert.level,
+              message: alert.message,
+              time: new Date().toLocaleTimeString()
+            });
+          }
+        });
+        if (alertLog.length > 50) alertLog = alertLog.slice(0, 50);
+        renderAlerts();
+      }
+
+      // Last update
+      document.getElementById('lastUpdate').textContent =
+        'Last update: ' + new Date().toLocaleTimeString();
+
+    } catch (e) {
+      document.getElementById('statusDot').className = 'status-dot';
+      document.getElementById('statusText').textContent = 'CONNECTION ERROR';
+      console.error(e);
+    }
+  }
+
+  function renderAlerts() {
+    const list = document.getElementById('alertList');
+    const countEl = document.getElementById('alertCount');
+    countEl.textContent = alertLog.length + ' alert' + (alertLog.length !== 1 ? 's' : '');
+
+    if (alertLog.length === 0) {
+      list.innerHTML = '<div class="no-alerts">No alerts fired — all limits safe ✓</div>';
+      return;
+    }
+
+    const icons = { warn: '⚠️', danger: '🔴', critical: '🚨' };
+    list.innerHTML = alertLog.map(a => `
+      <div class="alert-item ${a.level}">
+        <div class="alert-icon">${icons[a.level] || 'ℹ️'}</div>
+        <div class="alert-body">
+          <div class="alert-msg">${a.message}</div>
+          <div class="alert-time">${a.time}</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // Poll every 5 seconds
+  fetchData();
+  setInterval(fetchData, 5000);
+</script>
+</body>
 </html>
