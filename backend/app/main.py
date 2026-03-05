@@ -22,36 +22,33 @@ logger = logging.getLogger(__name__)
 
 RAILWAY_URL = "https://trading-platform-production-70e0.up.railway.app"
 
-# ── News config for indices trader ───────────────────────────────────────────
-# Indices (DJI30, NAS100, SP500) are primarily moved by USD events
-# Also affected by global risk events (CNY, broad market)
-INDEX_CURRENCIES = {"USD", "CNY"}  # USD drives indices; CNY causes global risk-off
-
-# High-impact event keywords that specifically move indices hard
+# ── News config ───────────────────────────────────────────────────────────────
+INDEX_CURRENCIES = {"USD", "CNY"}
 INDEX_KEYWORDS = [
-    "non-farm", "nfp", "payroll",
-    "cpi", "inflation", "pce",
+    "non-farm", "nfp", "payroll", "cpi", "inflation", "pce",
     "fomc", "fed", "federal reserve", "powell", "interest rate",
-    "gdp",
-    "ism", "pmi",
-    "unemployment", "jobless",
-    "retail sales",
-    "consumer confidence",
-    "ats", "jolts",
+    "gdp", "ism", "pmi", "unemployment", "jobless",
+    "retail sales", "consumer confidence", "jolts",
 ]
-
-# Warn at 10 minutes before
 WARN_MINUTES = 10
+
+# ── Weekend close times (ET) ──────────────────────────────────────────────────
+# Forex/Indices market closes Friday ~5:00 PM ET
+# Warn at 4:00 PM ET (1 hour before) and 4:45 PM ET (15 min before)
+FRIDAY_WARN_HOURS_ET = [16, 16, 16]   # 4:00 PM
+FRIDAY_WARN_MINS_ET  = [0,  30, 45]   # :00, :30, :45
+FRIDAY_CLOSE_HOUR_ET = 17             # 5:00 PM ET = market close
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
     await setup_telegram_webhook()
-    # Start background news scheduler
-    task = asyncio.create_task(news_scheduler())
+    news_task = asyncio.create_task(news_scheduler())
+    weekend_task = asyncio.create_task(weekend_scheduler())
     yield
-    task.cancel()
+    news_task.cancel()
+    weekend_task.cancel()
     logger.info("Shutting down...")
 
 
@@ -122,42 +119,103 @@ async def setup_telegram_webhook():
         logger.error(f"Webhook setup failed: {e}")
 
 
+# ── Weekend Close Scheduler ───────────────────────────────────────────────────
+weekend_alerted = set()
+
+async def weekend_scheduler():
+    """Fire reminders Friday afternoon to close all positions before market close."""
+    logger.info("Weekend scheduler started")
+
+    while True:
+        try:
+            now_utc = datetime.now(timezone.utc)
+
+            # Convert to ET
+            et_offset = -4 if 3 <= now_utc.month <= 11 else -5
+            now_et = now_utc + timedelta(hours=et_offset)
+
+            # Only run on Fridays (weekday 4)
+            if now_et.weekday() == 4:
+                today_key = now_et.strftime("%Y-%m-%d")
+
+                # Check each warning time
+                warn_times = [
+                    (16, 0,  "1 HOUR",   "⚠️"),
+                    (16, 30, "30 MINUTES","🔴"),
+                    (16, 45, "15 MINUTES","🚨"),
+                ]
+
+                for warn_hour, warn_min, label, icon in warn_times:
+                    alert_key = f"{today_key}_{warn_hour}_{warn_min}"
+                    if alert_key in weekend_alerted:
+                        continue
+
+                    # Check if we're within 1 minute of warning time
+                    target = now_et.replace(hour=warn_hour, minute=warn_min, second=0, microsecond=0)
+                    diff = abs((now_et - target).total_seconds())
+
+                    if diff <= 60:
+                        weekend_alerted.add(alert_key)
+
+                        # Check if any positions are open
+                        open_accounts = [
+                            acct_id for acct_id, acct in account_data_store.items()
+                            if acct.get("hasPositions")
+                        ]
+
+                        position_warning = ""
+                        if open_accounts:
+                            position_warning = (
+                                f"\n🔴 <b>YOU HAVE OPEN POSITIONS!</b>\n"
+                                f"Accounts: {', '.join(open_accounts)}\n"
+                                f"Any profits from these trades will NOT count.\n"
+                            )
+
+                        msg = (
+                            f"{icon} <b>MARKET CLOSES IN {label}</b>\n"
+                            f"{'─'*28}\n"
+                            f"🗓 Friday market close: <b>5:00 PM ET</b>\n"
+                            f"📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n"
+                            f"{position_warning}"
+                            f"{'─'*28}\n"
+                            f"⚠️ FundingPips rule: holding over the weekend\n"
+                            f"is <b>not permitted</b> on Master accounts.\n"
+                            f"Profits will <b>not count</b> — close before 5 PM ET\n"
+                            f"to protect your gains."
+                        )
+                        await send_telegram(msg)
+                        logger.info(f"Weekend alert sent: {label} warning")
+
+        except Exception as e:
+            logger.error(f"Weekend scheduler error: {e}")
+
+        await asyncio.sleep(60)  # check every minute
+
+
 # ── News Calendar ─────────────────────────────────────────────────────────────
-news_cache = []                  # cached events for the week
-news_alerted = set()             # event IDs already alerted (avoid duplicates)
-news_last_fetch = None           # when we last fetched the calendar
+news_cache = []
+news_alerted = set()
+news_last_fetch = None
 
 
 def is_index_relevant(event: dict) -> bool:
-    """Check if this news event is relevant to indices (DJI30/NAS100/SP500)."""
     currency = (event.get("country") or "").upper()
     title = (event.get("title") or "").lower()
     impact = (event.get("impact") or "").lower()
-
-    # Only high-impact (red) events
     if impact not in ["high", "red", "3"]:
         return False
-
-    # Must be USD (primary) or matched keyword
     if currency in INDEX_CURRENCIES:
         return True
-
-    # Check for index-specific keywords even if non-USD
     if any(kw in title for kw in INDEX_KEYWORDS):
         return True
-
     return False
 
 
 async def fetch_news_calendar() -> list:
-    """Fetch this week's high-impact news from Forex Factory JSON feed."""
     global news_cache, news_last_fetch
-
-    # Only re-fetch once per hour
     now = datetime.now(timezone.utc)
     if news_last_fetch and (now - news_last_fetch).seconds < 3600 and news_cache:
         return news_cache
-
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             res = await client.get(
@@ -165,123 +223,84 @@ async def fetch_news_calendar() -> list:
                 headers={"User-Agent": "Mozilla/5.0"}
             )
             if res.status_code == 200:
-                events = res.json()
-                news_cache = events
+                news_cache = res.json()
                 news_last_fetch = now
-                logger.info(f"News calendar: fetched {len(events)} events")
-                return events
+                logger.info(f"News: fetched {len(news_cache)} events")
+                return news_cache
     except Exception as e:
         logger.error(f"News fetch error: {e}")
+    return news_cache
 
-    return news_cache  # return cached if fetch failed
 
-
-def parse_event_time(event: dict) -> datetime | None:
-    """Parse event datetime into UTC datetime object."""
+def parse_event_time(event: dict):
     try:
-        date_str = event.get("date", "")   # e.g. "03-07-2026"
-        time_str = event.get("time", "")   # e.g. "8:30am"
-
+        date_str = event.get("date", "")
+        time_str = event.get("time", "")
         if not date_str or not time_str or time_str.lower() in ["", "all day", "tentative"]:
             return None
-
-        # Parse date
         dt_date = datetime.strptime(date_str, "%m-%d-%Y").date()
-
-        # Parse time (12hr format)
         time_str = time_str.strip().lower()
         if ":" in time_str:
             dt_time = datetime.strptime(time_str, "%I:%M%p").time()
         else:
             dt_time = datetime.strptime(time_str, "%I%p").time()
-
-        # Forex Factory times are in US/Eastern — convert to UTC
-        # EST = UTC-5, EDT = UTC-4 (approximate: use UTC-5 for safety)
         naive = datetime.combine(dt_date, dt_time)
-        # Assume EDT (UTC-4) during March-November, EST (UTC-5) otherwise
         month = dt_date.month
         offset = -4 if 3 <= month <= 11 else -5
         utc_dt = naive.replace(tzinfo=timezone(timedelta(hours=offset)))
         return utc_dt.astimezone(timezone.utc)
-
     except Exception:
         return None
 
 
 async def news_scheduler():
-    """Background task: check every 60 seconds for upcoming high-impact news."""
     logger.info("News scheduler started")
-
     while True:
         try:
             events = await fetch_news_calendar()
             now = datetime.now(timezone.utc)
-
             for event in events:
                 if not is_index_relevant(event):
                     continue
-
                 event_time = parse_event_time(event)
                 if not event_time:
                     continue
-
                 minutes_until = (event_time - now).total_seconds() / 60
-
-                # Alert at WARN_MINUTES (10 min) before
                 alert_key = f"{event.get('title','')}_{event_time.isoformat()}"
-
                 if WARN_MINUTES - 1 <= minutes_until <= WARN_MINUTES + 1:
                     if alert_key not in news_alerted:
                         news_alerted.add(alert_key)
                         await send_news_alert(event, event_time, round(minutes_until))
-
-                # Also alert at 30 min for speeches/FOMC (extra warning)
                 alert_key_30 = f"30min_{event.get('title','')}_{event_time.isoformat()}"
                 title_lower = (event.get("title") or "").lower()
                 is_speech = any(w in title_lower for w in ["speech", "fomc", "powell", "fed chair", "testimony"])
-
                 if is_speech and 29 <= minutes_until <= 31:
                     if alert_key_30 not in news_alerted:
                         news_alerted.add(alert_key_30)
                         await send_news_alert(event, event_time, round(minutes_until))
-
-            # Clean up old alerted events (older than 2 hours)
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=2)
-            # (keep set small — in practice it won't grow too large)
-
         except Exception as e:
             logger.error(f"News scheduler error: {e}")
-
-        await asyncio.sleep(60)  # check every minute
+        await asyncio.sleep(60)
 
 
 async def send_news_alert(event: dict, event_time: datetime, minutes: int):
-    """Send formatted news alert to Telegram."""
     title = event.get("title", "Unknown Event")
     currency = (event.get("country") or "").upper()
     forecast = event.get("forecast", "")
     previous = event.get("previous", "")
-
-    # Format local time (show in ET)
     et_offset = -4 if 3 <= event_time.month <= 11 else -5
     et_time = event_time + timedelta(hours=et_offset)
     time_str = et_time.strftime("%I:%M %p ET")
-
-    # Determine which indices are affected
     affected = "DJI30, NAS100, SP500"
-
-    # Extra context based on event type
     title_lower = title.lower()
     guidance = ""
     if any(w in title_lower for w in ["fomc", "fed", "powell", "interest rate"]):
-        guidance = "⚡ <b>Fed event — expect high volatility. Wide spreads possible.</b>\n"
+        guidance = "⚡ <b>Fed event — expect high volatility.</b>\n"
     elif any(w in title_lower for w in ["non-farm", "nfp", "payroll"]):
-        guidance = "⚡ <b>NFP — one of the biggest movers for indices.</b>\n"
+        guidance = "⚡ <b>NFP — biggest mover for indices.</b>\n"
     elif any(w in title_lower for w in ["cpi", "inflation", "pce"]):
-        guidance = "⚡ <b>Inflation data — major impact on rate expectations.</b>\n"
-
+        guidance = "⚡ <b>Inflation data — major rate expectations impact.</b>\n"
     forecast_line = f"Forecast: <b>{forecast}</b> | Previous: {previous}\n" if forecast else ""
-
     msg = (
         f"🗞 <b>HIGH-IMPACT NEWS IN {minutes} MIN</b>\n"
         f"{'─'*28}\n"
@@ -292,12 +311,10 @@ async def send_news_alert(event: dict, event_time: datetime, minutes: int):
         f"{forecast_line}"
         f"{'─'*28}\n"
         f"{guidance}"
-        f"⚠️ FundingPips rule: cannot open/close\n"
-        f"positions within <b>5 min before or after</b> this event."
+        f"⚠️ No trades within <b>5 min before or after</b> this event."
     )
-
     await send_telegram(msg)
-    logger.info(f"News alert sent: {title} in {minutes} min")
+    logger.info(f"News alert: {title} in {minutes} min")
 
 
 # ── In-memory stores ──────────────────────────────────────────────────────────
@@ -331,15 +348,12 @@ async def telegram_webhook(request: Request):
             "/help — This message",
             chat_id=chat_id
         )
-
     return {"ok": True}
 
 
 async def handle_news(chat_id: str):
-    """Show upcoming high-impact news for today."""
     events = await fetch_news_calendar()
     now = datetime.now(timezone.utc)
-
     upcoming = []
     for event in events:
         if not is_index_relevant(event):
@@ -348,26 +362,19 @@ async def handle_news(chat_id: str):
         if not event_time:
             continue
         minutes_until = (event_time - now).total_seconds() / 60
-        if 0 < minutes_until < 480:  # next 8 hours
+        if 0 < minutes_until < 480:
             upcoming.append((minutes_until, event, event_time))
-
     upcoming.sort(key=lambda x: x[0])
-
     if not upcoming:
         await send_telegram("📅 No high-impact news in the next 8 hours.", chat_id=chat_id)
         return
-
     lines = []
     for mins, event, event_time in upcoming[:8]:
         et_offset = -4 if 3 <= event_time.month <= 11 else -5
         et_time = event_time + timedelta(hours=et_offset)
         time_str = et_time.strftime("%I:%M %p")
-        if mins < 60:
-            when = f"in {round(mins)}m"
-        else:
-            when = f"in {round(mins/60,1)}h"
+        when = f"in {round(mins)}m" if mins < 60 else f"in {round(mins/60,1)}h"
         lines.append(f"🔴 <b>{event.get('title','?')}</b> — {time_str} ET ({when})")
-
     msg = (
         f"📅 <b>Upcoming High-Impact News</b>\n"
         f"<i>Affects: DJI30, NAS100, SP500</i>\n"
@@ -383,7 +390,6 @@ async def handle_status(chat_id: str):
     if not account_data_store:
         await send_telegram("📡 No data — open FundingPips in your browser first.", chat_id=chat_id)
         return
-
     acct_id = "1917136" if "1917136" in account_data_store else list(account_data_store.keys())[0]
     acct = account_data_store[acct_id]
     balance = acct.get("balance") or 0
@@ -414,7 +420,6 @@ async def handle_status(chat_id: str):
             f"  {bar(risk.get('pct',0))}  ${risk.get('combined',0):.0f} / ${risk.get('limit',300):.0f}\n"
             f"  Remaining: <b>${risk.get('remaining',300):.0f}</b>\n\n"
         )
-
     msg = (
         f"📊 <b>TaliTrade — {acct_id}</b>\n"
         f"<i>{acct_type} | ${acct_size/1000:.0f}K</i>\n"
@@ -445,11 +450,12 @@ async def handle_today(chat_id: str):
     total_pnl = sum(t.get("pnl") or 0 for t in today_trades)
     wins = [t for t in today_trades if (t.get("pnl") or 0) > 0]
     losses = [t for t in today_trades if (t.get("pnl") or 0) <= 0]
-    win_rate = round(len(wins) / len(today_trades) * 100) if today_trades else 0
-    lines = []
-    for t in today_trades:
-        pnl = t.get("pnl") or 0
-        lines.append(f"{'✅'if pnl>0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b> @ {(t.get('closedAt') or '')[11:16]}")
+    win_rate = round(len(wins) / len(today_trades) * 100)
+    lines = [
+        f"{'✅'if(t.get('pnl')or 0)>0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} "
+        f"<b>{'+'if(t.get('pnl')or 0)>=0 else ''}{(t.get('pnl')or 0):.2f}</b> @ {(t.get('closedAt') or '')[11:16]}"
+        for t in today_trades
+    ]
     msg = (
         f"📅 <b>Today — {today}</b>\n{'─'*28}\n\n"
         + "\n".join(lines) +
@@ -467,10 +473,12 @@ async def handle_journal(chat_id: str):
         return
     total_pnl = sum(t.get("pnl") or 0 for t in recent)
     wins = len([t for t in recent if (t.get("pnl") or 0) > 0])
-    lines = []
-    for t in recent:
-        pnl = t.get("pnl") or 0
-        lines.append(f"{'✅'if pnl>0 else '❌'} <b>{t.get('symbol','?')}</b> {t.get('direction','?')} {'+'if pnl>=0 else ''}{pnl:.2f} | {(t.get('closedAt') or '')[:10]}")
+    lines = [
+        f"{'✅'if(t.get('pnl')or 0)>0 else '❌'} <b>{t.get('symbol','?')}</b> "
+        f"{t.get('direction','?')} {'+'if(t.get('pnl')or 0)>=0 else ''}{(t.get('pnl')or 0):.2f} | "
+        f"{(t.get('closedAt') or '')[:10]}"
+        for t in recent
+    ]
     msg = (
         f"📒 <b>Last {len(recent)} Trades</b>\n{'─'*28}\n\n"
         + "\n".join(lines) +
@@ -480,7 +488,7 @@ async def handle_journal(chat_id: str):
     await send_telegram(msg, chat_id=chat_id)
 
 
-# ── Extension Data Endpoint ───────────────────────────────────────────────────
+# ── Extension Endpoints ───────────────────────────────────────────────────────
 class ExtensionData(BaseModel):
     profit: float | None = None
     balance: float | None = None
@@ -506,10 +514,8 @@ async def receive_extension_data(data: ExtensionData):
     account_id = data.accountId or "unknown"
     prev = account_data_store.get(account_id, {})
     account_data_store[account_id] = {**data.dict(), "last_updated": datetime.utcnow().isoformat()}
-
     for alert in data.alerts:
         await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>")
-
     prev_profit = prev.get("profit")
     curr_profit = data.profit
     if curr_profit is not None and prev_profit is not None:
@@ -520,7 +526,6 @@ async def receive_extension_data(data: ExtensionData):
             )
         if prev_profit < 0 and curr_profit >= 0:
             await send_telegram(f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}")
-
     risk = data.riskPerTradeIdea or {}
     daily = data.dailyLoss or {}
     overall = data.overallLoss or {}
@@ -534,7 +539,6 @@ async def receive_extension_data(data: ExtensionData):
     }
 
 
-# ── Trade Journal Endpoint ────────────────────────────────────────────────────
 class TradeData(BaseModel):
     accountId: str | None = None
     accountType: str | None = None
@@ -560,14 +564,12 @@ async def log_trade(trade: TradeData):
     trade_journal.insert(0, entry)
     if len(trade_journal) > 500:
         trade_journal.pop()
-
     pnl = trade.pnl or 0
     icon = "✅" if pnl > 0 else "❌"
     daily_pct = round((trade.dailyLossUsed or 0) / (trade.dailyLossLimit or 500) * 100)
     overall_pct = round((trade.overallLossUsed or 0) / (trade.overallLossLimit or 1000) * 100)
     await send_telegram(
-        f"{icon} <b>Trade Closed</b>\n"
-        f"Account: {trade.accountId}\n"
+        f"{icon} <b>Trade Closed</b>\nAccount: {trade.accountId}\n"
         f"{trade.symbol} {trade.direction} | <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n"
         f"Balance: ${trade.balanceAfter:.2f}\n"
         f"Daily: {daily_pct}% | Overall: {overall_pct}%"
@@ -590,7 +592,6 @@ async def extension_status():
 
 @app.get("/extension/news")
 async def get_news():
-    """API endpoint for dashboard to fetch upcoming news."""
     events = await fetch_news_calendar()
     now = datetime.now(timezone.utc)
     upcoming = []
@@ -619,13 +620,12 @@ async def get_news():
 
 @app.get("/test/telegram")
 async def test_telegram():
-    await send_telegram("🚀 <b>TaliTrade v2 live!</b>\nTry /status, /today, /journal, /news")
+    await send_telegram("🚀 <b>TaliTrade v2 live!</b>\nTry /status /today /journal /news")
     return {"status": "sent"}
 
 
 @app.get("/test/news")
 async def test_news():
-    """Manually trigger a test news alert."""
     await send_telegram(
         "🗞 <b>HIGH-IMPACT NEWS IN 10 MIN [TEST]</b>\n"
         "──────────────────────────────\n"
@@ -634,7 +634,23 @@ async def test_news():
         "🕐 Time: <b>08:30 AM ET</b>\n"
         "📊 Affects: <b>DJI30, NAS100, SP500</b>\n"
         "──────────────────────────────\n"
-        "⚡ <b>NFP — one of the biggest movers for indices.</b>\n"
+        "⚡ <b>NFP — biggest mover for indices.</b>\n"
         "⚠️ No trades within 5 min before/after this event."
+    )
+    return {"status": "sent"}
+
+
+@app.get("/test/weekend")
+async def test_weekend():
+    await send_telegram(
+        "⚠️ <b>MARKET CLOSES IN 1 HOUR [TEST]</b>\n"
+        "──────────────────────────────\n"
+        "🗓 Friday market close: <b>5:00 PM ET</b>\n"
+        "📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n"
+        "──────────────────────────────\n"
+        "⚠️ FundingPips rule: holding over the weekend\n"
+        "is <b>not permitted</b> on Master accounts.\n"
+        "Profits will <b>not count</b> — close before 5 PM ET\n"
+        "to protect your gains."
     )
     return {"status": "sent"}
