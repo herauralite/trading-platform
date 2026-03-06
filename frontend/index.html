@@ -94,9 +94,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 @keyframes shimmer{0%{background-position:-600px 0;}100%{background-position:600px 0;}}
 .skel{background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 50%,var(--s2) 75%);background-size:1200px 100%;animation:shimmer 1.8s ease-in-out infinite;border-radius:6px;flex-shrink:0;}
 .skel-r{border-radius:100px;}
-.sk-fade{transition:opacity .38s var(--out),transform .38s var(--out);}
-.sk-fade.sk-out{opacity:0;transform:translateY(5px);pointer-events:none;position:absolute;width:100%;}
-.sk-fade.sk-in{opacity:1;transform:translateY(0);}
+.sk-fade{transition:opacity .38s var(--out),transform .38s var(--out),max-height .38s var(--out);}
+.sk-fade.sk-out{opacity:0;transform:translateY(5px);pointer-events:none;overflow:hidden;max-height:0;}
+.sk-fade.sk-in{opacity:1;transform:translateY(0);max-height:2000px;}
 .sk-wrap{position:relative;}
 .acct-card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:10px;position:relative;overflow:hidden;transition:border-color .25s;}
 .acct-card:hover{border-color:var(--border2);}
@@ -401,7 +401,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <!-- DASHBOARD -->
 <div id="page-dash" class="page active">
   <div class="sec-head"><div class="sec-label">Overview</div><div class="sec-meta" id="clock">--:--:--</div></div>
-  <div class="sk-wrap" style="min-height:160px;margin-bottom:10px">
+  <div class="sk-wrap" id="acctWrap" style="margin-bottom:10px">
     <!-- SKELETON -->
     <div class="acct-card sk-fade sk-in" id="skelAcct" style="margin-bottom:0">
       <div class="grid-t"></div>
@@ -444,7 +444,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     </div>
   </div>
   <div class="sec-head"><div class="sec-label">Risk Parameters</div><div class="sec-meta" id="riskMeta">10K 2-Step</div></div>
-  <div class="sk-wrap" style="min-height:340px">
+  <div class="sk-wrap" id="riskWrap">
     <!-- SKELETON risk stack -->
     <div class="risk-stack sk-fade sk-in" id="skelRisk" style="position:relative">
       <div class="rcard" style="padding:14px 16px 14px">
@@ -531,10 +531,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <div id="page-analytics" class="page">
   <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta">All trades</div></div>
   <div class="stat-row" id="analyticsStats">
-    <div class="stat-box"><div class="stat-box-label">Win Rate</div><div class="skel skel-r sk-fade sk-in" id="skelWr" style="width:70px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="wr" style="position:absolute">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
-    <div class="stat-box"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf" style="position:absolute">—</div><div class="stat-box-sub">gross profit / loss</div></div>
-    <div class="stat-box"><div class="stat-box-label">Net P&L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl" style="position:absolute">—</div><div class="stat-box-sub">closed trades only</div></div>
-    <div class="stat-box"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades" style="position:absolute">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Win Rate</div><div class="skel skel-r sk-fade sk-in" id="skelWr" style="width:70px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="wr">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf">—</div><div class="stat-box-sub">gross profit / loss</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
   </div>
   <div class="chart-card">
     <div class="chart-label">Equity Curve</div>
@@ -1043,7 +1043,7 @@ async function fetchAnalytics(){
     ['Wr','Pf','Netpl','Trades'].forEach(k=>{
       const s=document.getElementById('skel'+k),r=document.getElementById(k==='Wr'?'wr':k==='Pf'?'pf':k==='Netpl'?'netpl':'totalTrades');
       if(s){s.classList.remove('sk-in');s.classList.add('sk-out');}
-      if(r){r.classList.remove('sk-out');r.classList.add('sk-in');r.style.position='';}
+      if(r){r.classList.remove('sk-out');r.classList.add('sk-in');}
     });
     const wins=trades.filter(t=>(t.pnl||0)>0),losses=trades.filter(t=>(t.pnl||0)<=0);
     const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
