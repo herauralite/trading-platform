@@ -663,6 +663,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
         <div class="ph-badge not-yet" id="payoutBadge">—</div>
       </div>
       <div class="payout-checks" id="payoutChecks"></div>
+      <div id="payoutCountdownCard" style="background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);margin-bottom:12px"></div>
       <div id="rewardSplitsSection" style="display:none;margin-bottom:16px">
         <div style="font-size:10px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--t3);margin-bottom:8px">Reward Splits</div>
         <div class="reward-splits" id="rewardSplitsGrid"></div>
@@ -1006,6 +1007,7 @@ async function fetchPayout(){
 }
 
 function renderPayout(ev){
+  window._lastPayoutEvent=ev; // store for cycle reset / manual date retry
   // reveal skeleton → real
   const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
   if(sp){sp.classList.remove('sk-in');sp.classList.add('sk-out');}
@@ -1108,6 +1110,14 @@ function renderPayout(ev){
     } else splitsSec.style.display='none';
     phaseSec.style.display='none';
 
+    // render countdown card
+    renderPayoutCountdown(
+      payoutCycleDays,
+      p.first_trade_date||ev.first_trade_date||null,
+      p.last_reward_date||lastPayoutDate||null,
+      rewardCycle
+    );
+
   } else {
     // Evaluation phase
     const profitPct=ev.profit_pct||0;
@@ -1167,18 +1177,10 @@ function buildChecks(checks){
 function buildMasterChecks(apiChecks, meta){
   const {minPayout, payAmt, split, daysUntil, windowOpen, nextPayoutDate,
          payoutCycleDays, lastPayoutDate, accountSize, breached,
-         modelType, rewardCycle, isFpZero}=meta;
+         modelType, rewardCycle, isFpZero, firstTradeDate, cycleLabel}=meta;
   const rows=[];
 
-  // ── 1. Risk limits not breached ──────────────────────────────────────────
-  rows.push(mkCheck(
-    !breached, 'Risk Limits',
-    !breached?'All limits within rules':'One or more limits breached',
-    null
-  ));
-
-  // ── 2. Minimum withdrawal amount ─────────────────────────────────────────
-  // 1% of balance for all / 2% for On Demand (1-step, 2-step)
+  // ── 1. Minimum withdrawal amount ─────────────────────────────────────────
   const minOk=payAmt>=minPayout;
   const minPct=minPayout>0?Math.min(100,(payAmt/minPayout)*100):100;
   const minPctLabel=(accountSize*0.01===minPayout)?'1% min':'2% min';
@@ -1188,46 +1190,21 @@ function buildMasterChecks(apiChecks, meta){
     minOk?null:minPct
   ));
 
-  // ── 3. Payout window ─────────────────────────────────────────────────────
-  const isOnDemand=rewardCycle.includes('on_demand')||rewardCycle.includes('demand');
-  if(isOnDemand){
-    // On Demand — no cycle, just show as always open
-    rows.push(mkCheck(true,'Payout Window','On Demand — no waiting period',null));
-  } else {
-    const windowOk=windowOpen;
-    let windowLabel,windowVal,windowPct=null;
-    if(windowOpen){
-      windowLabel='Payout Window';
-      windowVal=payoutCycleDays===1?'Daily window open':'Window open now';
-    } else {
-      const cycleNames={1:'Daily',7:'Weekly',14:'Bi-Weekly',30:'Monthly'};
-      const cycleName=cycleNames[payoutCycleDays]||payoutCycleDays+'d';
-      windowLabel=cycleName+' Payout Window';
-      const dateStr=nextPayoutDate?new Date(nextPayoutDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
-      windowVal=daysUntil+'d away'+(dateStr?' · '+dateStr:'');
-      windowPct=payoutCycleDays>0?Math.min(100,Math.round(((payoutCycleDays-daysUntil)/payoutCycleDays)*100)):0;
-    }
-    rows.push(mkCheck(windowOk,windowLabel,windowVal,windowOk?null:windowPct));
-  }
-
-  // ── 4. FP Zero: Safety cushion (first 3% not withdrawable) ───────────────
+  // ── 2. FP Zero: Safety cushion (first 3% not withdrawable) ───────────────
   if(isFpZero){
     const cushion=accountSize*0.03;
     const cushionOk=payAmt>cushion;
     const cushionPct=Math.min(100,(payAmt/cushion)*100);
     rows.push(mkCheck(
       cushionOk,'3% Safety Cushion',
-      cushionOk?'Cushion cleared':''+usd(payAmt)+' / '+usd(cushion)+' threshold',
+      cushionOk?'Cushion cleared':usd(payAmt)+' / '+usd(cushion)+' threshold',
       cushionOk?null:cushionPct
     ));
   }
 
-  // ── 5. API checks — smart filter based on model ───────────────────────────
-  // Always skip min_trading_days for master (eval only)
-  // Keep profitable_days only for FP Zero (it has a 7-day/30-cycle requirement)
+  // ── 3. API checks — smart filter ─────────────────────────────────────────
   const alwaysSkip=['min_trading_days','trading_days','minimum_trading_days'];
   const fpZeroOnly=['profitable_days','minimum_profitable_days','profitable_day'];
-
   Object.entries(apiChecks).forEach(([key,c])=>{
     const k=key.toLowerCase();
     if(alwaysSkip.some(s=>k.includes(s)))return;
@@ -1240,8 +1217,7 @@ function buildMasterChecks(apiChecks, meta){
     rows.push(mkCheck(ok,c.label||key,val,ok?null:pct));
   });
 
-  // ── 6. FP Zero: Biggest loss ≤ biggest win ────────────────────────────────
-  // Only show if API hasn't already returned this check
+  // ── 4. FP Zero: Biggest loss ≤ biggest win ───────────────────────────────
   if(isFpZero){
     const hasLossWinCheck=Object.keys(apiChecks).some(k=>k.toLowerCase().includes('biggest_loss')||k.toLowerCase().includes('loss_win'));
     if(!hasLossWinCheck){
@@ -1278,7 +1254,151 @@ function mkCheck(ok, label, subtext, pct){
 // Poll payout every 30s when visible
 setInterval(()=>{if(document.getElementById('page-account').classList.contains('active'))fetchPayout();},30000);
 
-// ── TRADING RULES SHEET ───────────────────────────────────────────────────────
+// ── PAYOUT COUNTDOWN TRACKER ──────────────────────────────────────────────────
+// We track the first-trade date and last-reset date in localStorage per account.
+// This lets us compute days until next payout window without relying on the API.
+const PAYOUT_KEY='tali_payout_'+ACCT;
+
+function getPayoutTracker(){
+  try{return JSON.parse(localStorage.getItem(PAYOUT_KEY)||'{}');}
+  catch(e){return {};}
+}
+function savePayoutTracker(data){
+  try{localStorage.setItem(PAYOUT_KEY,JSON.stringify(data));}catch(e){}
+}
+
+// Called when we know the first trade date (from API or stored)
+function syncPayoutTracker(firstTradeDateStr, lastRewardDateStr, cycleDays){
+  const stored=getPayoutTracker();
+  // Prefer API-provided dates; fall back to stored
+  const firstTrade=firstTradeDateStr||stored.firstTradeDate||null;
+  const lastReward=lastRewardDateStr||stored.lastRewardDate||null;
+  if(firstTrade&&firstTrade!==stored.firstTradeDate){
+    stored.firstTradeDate=firstTrade;
+    savePayoutTracker(stored);
+  }
+  if(lastReward&&lastReward!==stored.lastRewardDate){
+    stored.lastRewardDate=lastReward;
+    stored.cycleStartDate=lastReward; // cycle resets after each reward
+    savePayoutTracker(stored);
+  }
+  // If no cycleStartDate yet, use firstTradeDate
+  if(!stored.cycleStartDate&&firstTrade){
+    stored.cycleStartDate=firstTrade;
+    savePayoutTracker(stored);
+  }
+  return stored;
+}
+
+// Returns {daysElapsed, daysRemaining, nextDate, pct, isOpen, cycleStartDate}
+function computePayoutCountdown(cycleDays, firstTradeDateStr, lastRewardDateStr){
+  if(!cycleDays||cycleDays===null) return {isOnDemand:true};
+  const stored=syncPayoutTracker(firstTradeDateStr, lastRewardDateStr, cycleDays);
+  const cycleStart=stored.cycleStartDate||stored.firstTradeDate||null;
+  if(!cycleStart) return {unknown:true};
+
+  const now=new Date();
+  const start=new Date(cycleStart);
+  const nextDate=new Date(start.getTime()+(cycleDays*24*60*60*1000));
+  const daysElapsed=Math.floor((now-start)/(1000*60*60*24));
+  const daysRemaining=Math.max(0,Math.ceil((nextDate-now)/(1000*60*60*24)));
+  const pct=Math.min(100,Math.round((daysElapsed/cycleDays)*100));
+  const isOpen=daysRemaining<=0;
+  return {daysElapsed,daysRemaining,nextDate,pct,isOpen,cycleStart,cycleDays};
+}
+
+// Renders the countdown card below the checks
+function renderPayoutCountdown(cycleDays, firstTradeDateStr, lastRewardDateStr, rewardCycle){
+  const el=document.getElementById('payoutCountdownCard');
+  if(!el)return;
+
+  const isOnDemand=rewardCycle&&(rewardCycle.includes('on_demand')||rewardCycle.includes('demand'));
+  if(isOnDemand){
+    el.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px">
+      <div style="width:36px;height:36px;border-radius:10px;background:var(--green-dim);color:var(--green);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <div><div style="font-size:13px;font-weight:600;color:var(--text)">On Demand</div><div style="font-size:11px;color:var(--t3);margin-top:2px">No waiting period — withdraw anytime you meet the criteria</div></div>
+    </div>`;
+    return;
+  }
+
+  const cd=computePayoutCountdown(cycleDays, firstTradeDateStr, lastRewardDateStr);
+  const cycleNames={1:'Daily',7:'Weekly',14:'Bi-Weekly',30:'Monthly'};
+  const cycleName=cycleNames[cycleDays]||cycleDays+'d';
+
+  if(cd.unknown){
+    // No first trade date known yet — show prompt
+    el.innerHTML=`<div style="padding:14px">
+      <div style="font-size:11px;color:var(--t3);margin-bottom:10px;font-weight:600;text-transform:uppercase;letter-spacing:.7px">${cycleName} Payout Window</div>
+      <div style="font-size:12px;color:var(--t3);margin-bottom:12px">Cycle starts on your first executed trade. No trades recorded yet.</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <div style="font-size:11px;color:var(--t3)">Set manually if needed:</div>
+        <div id="setFirstTradeBtn" class="btn btn-ghost rip" style="padding:5px 12px;font-size:11px;border-radius:8px">Set Date</div>
+      </div>
+    </div>`;
+    document.getElementById('setFirstTradeBtn')?.addEventListener('click',()=>promptFirstTradeDate(cycleDays));
+    return;
+  }
+
+  if(cd.isOpen){
+    el.innerHTML=`<div style="padding:14px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div style="font-size:11px;color:var(--t3);font-weight:600;text-transform:uppercase;letter-spacing:.7px">${cycleName} Payout Window</div>
+        <div class="tag" style="background:var(--green-dim);color:var(--green);border-color:rgba(77,205,138,0.2)">Open Now</div>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:10px">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;color:var(--green)">0</div>
+        <div style="font-size:13px;color:var(--t3)">days remaining</div>
+      </div>
+      <div style="font-size:11px;color:var(--t3)">Window opened ${new Date(cd.cycleStart).toLocaleDateString('en-US',{month:'short',day:'numeric'})} · ${cd.daysElapsed}d elapsed</div>
+    </div>`;
+    return;
+  }
+
+  const nextStr=cd.nextDate.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+  const barColor=cd.pct>80?'var(--green)':cd.pct>50?'var(--blue)':'var(--orange)';
+
+  el.innerHTML=`<div style="padding:14px">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:11px;color:var(--t3);font-weight:600;text-transform:uppercase;letter-spacing:.7px">${cycleName} Payout Window</div>
+      <div style="font-size:10px;color:var(--t3)">${nextStr}</div>
+    </div>
+    <div style="display:flex;align-items:baseline;gap:6px;margin-bottom:12px">
+      <div style="font-family:'JetBrains Mono',monospace;font-size:36px;font-weight:700;color:var(--text)" id="cdDays">${cd.daysRemaining}</div>
+      <div style="font-size:14px;color:var(--t3)">day${cd.daysRemaining===1?'':'s'} remaining</div>
+    </div>
+    <div class="bar-bg" style="margin-bottom:8px;height:6px;border-radius:100px">
+      <div class="bar-fill" style="width:${cd.pct}%;background:${barColor};border-radius:100px;box-shadow:none;transition:width 1.2s var(--spring)"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between">
+      <div style="font-size:10px;color:var(--t3)">Day ${cd.daysElapsed} of ${cd.cycleDays}</div>
+      <div style="font-size:10px;color:var(--t3)">${cd.pct}% complete</div>
+    </div>
+  </div>`;
+}
+
+// Prompt to manually set first trade date (fallback when API doesn't provide it)
+function promptFirstTradeDate(cycleDays){
+  const input=prompt('Enter your first trade date (YYYY-MM-DD):');
+  if(!input||!/^\d{4}-\d{2}-\d{2}$/.test(input))return;
+  const stored=getPayoutTracker();
+  stored.firstTradeDate=input;
+  stored.cycleStartDate=input;
+  savePayoutTracker(stored);
+  // re-render
+  const ev=window._lastPayoutEvent;
+  if(ev)renderPayout(ev);
+}
+
+// Called after a payout is processed to reset the cycle
+function resetPayoutCycle(){
+  const stored=getPayoutTracker();
+  stored.lastRewardDate=new Date().toISOString().split('T')[0];
+  stored.cycleStartDate=stored.lastRewardDate;
+  savePayoutTracker(stored);
+}
+
 document.getElementById('rulesBack').addEventListener('click',closeRules);
 function openRules(){document.getElementById('rulesSheet').classList.add('open');document.body.style.overflow='hidden';}
 function closeRules(){document.getElementById('rulesSheet').classList.remove('open');document.body.style.overflow='';}
