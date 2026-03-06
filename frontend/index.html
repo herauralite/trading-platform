@@ -46,8 +46,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .bnav{position:fixed;bottom:0;left:0;right:0;z-index:200;background:var(--s1);border-top:1px solid var(--border);display:flex;align-items:center;padding:8px 0 max(8px,env(safe-area-inset-bottom));backdrop-filter:blur(16px);}
 .bnav-item{display:flex;flex-direction:column;align-items:center;gap:3px;padding:4px 8px;border-radius:10px;transition:transform .2s var(--spring);flex:1;}
 .bnav-item:hover{transform:translateY(-2px);}
-.bnav-icon{font-size:20px;line-height:1;position:relative;transition:transform .25s var(--spring);}
-.bnav-item.active .bnav-icon{transform:scale(1.15);}
+.bnav-icon{line-height:1;position:relative;transition:transform .25s var(--spring);display:flex;align-items:center;justify-content:center;color:var(--t3);}
+.bnav-icon svg{width:22px;height:22px;stroke:currentColor;fill:none;transition:stroke .2s;}
+.bnav-item.active .bnav-icon{transform:scale(1.12);color:var(--blue);}
 .bnav-label{font-size:9px;font-weight:500;letter-spacing:0.4px;color:var(--t3);transition:color .2s;}
 .bnav-item.active .bnav-label{color:var(--blue);}
 .bnav-dot{position:absolute;top:-2px;right:-2px;width:7px;height:7px;border-radius:50%;background:var(--blue);border:1.5px solid var(--s1);animation:dotBlink 2s ease-in-out infinite;}
@@ -120,6 +121,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .rcard.warn-c{border-color:rgba(232,146,74,0.25);}
 .rcard-head{display:flex;align-items:center;padding:14px 16px 10px;gap:10px;}
 .rcard-icon{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:15px;flex-shrink:0;transition:transform .3s var(--spring);}
+.rcard-icon svg{width:17px;height:17px;stroke:currentColor;fill:none;}
 .rcard:hover .rcard-icon{transform:scale(1.12) rotate(-4deg);}
 .rcard-info{flex:1;}
 .rcard-title{font-size:14px;font-weight:600;color:var(--text);margin-bottom:1px;}
@@ -332,8 +334,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <div class="tb-avatar">T</div>
   <div class="tb-info"><div class="tb-name">TaliTrade</div><div class="tb-status" id="tb-status">connecting...</div></div>
   <div style="display:flex;gap:4px;">
-    <div class="tb-btn rip">🔔</div>
-    <div class="tb-profile-btn rip"><div class="tb-profile-inner">1</div></div>
+    <div class="tb-btn rip" id="btnBell" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div id="bellDot" style="display:none;position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid var(--s1)"></div></div>
+    <div class="tb-profile-btn rip" id="btnProfile"><div class="tb-profile-inner">1</div></div>
   </div>
 </div>
 
@@ -369,21 +371,21 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <div class="sec-head"><div class="sec-label">Risk Parameters</div><div class="sec-meta" id="riskMeta">10K 2-Step</div></div>
   <div class="risk-stack">
     <div class="rcard breach rip" id="rcard1">
-      <div class="rcard-head"><div class="rcard-icon" style="background:var(--red-dim)">⚡</div><div class="rcard-info"><div class="rcard-title">Risk per Trade</div><div class="rcard-sub" id="r1sub">Max $300</div></div><div class="rcard-right"><div class="rpct txt-red"><span id="rp1">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-red" style="margin-top:3px" id="r1tag">—</div></div></div>
+      <div class="rcard-head"><div class="rcard-icon" style="background:var(--red-dim);color:var(--red)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="rcard-info"><div class="rcard-title">Risk per Trade</div><div class="rcard-sub" id="r1sub">Max $300</div></div><div class="rcard-right"><div class="rpct txt-red"><span id="rp1">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-red" style="margin-top:3px" id="r1tag">—</div></div></div>
       <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r1usedLbl">$0 used</span><span id="r1leftLbl">$300 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-red" id="rb1" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
       <div class="divider"></div>
       <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r1usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r1remVal">$300.00</div></div></div>
       <div class="divider"></div><div class="chip-row" id="r1chips"></div>
     </div>
     <div class="rcard breach rip" id="rcard2">
-      <div class="rcard-head"><div class="rcard-icon" style="background:var(--orange-dim)">📉</div><div class="rcard-info"><div class="rcard-title">Daily Loss Limit</div><div class="rcard-sub" id="r2sub">Max $500</div></div><div class="rcard-right"><div class="rpct txt-orange"><span id="rp2">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-orange" style="margin-top:3px" id="r2tag">—</div></div></div>
+      <div class="rcard-head"><div class="rcard-icon" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></div><div class="rcard-info"><div class="rcard-title">Daily Loss Limit</div><div class="rcard-sub" id="r2sub">Max $500</div></div><div class="rcard-right"><div class="rpct txt-orange"><span id="rp2">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-orange" style="margin-top:3px" id="r2tag">—</div></div></div>
       <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r2usedLbl">$0 used</span><span id="r2leftLbl">$500 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-orange" id="rb2" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
       <div class="divider"></div>
       <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r2usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r2remVal">$500.00</div></div></div>
       <div class="divider"></div><div class="chip-row" id="r2chips"></div>
     </div>
     <div class="rcard safe-c rip" id="rcard3">
-      <div class="rcard-head"><div class="rcard-icon" style="background:var(--blue-dim)">🛡</div><div class="rcard-info"><div class="rcard-title">Overall Loss Limit</div><div class="rcard-sub" id="r3sub">Max $1,000</div></div><div class="rcard-right"><div class="rpct txt-dim"><span id="rp3">0</span><span style="font-size:14px;opacity:.5">%</span></div><div class="tag tag-blue" style="margin-top:3px" id="r3tag">Safe</div></div></div>
+      <div class="rcard-head"><div class="rcard-icon" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="rcard-info"><div class="rcard-title">Overall Loss Limit</div><div class="rcard-sub" id="r3sub">Max $1,000</div></div><div class="rcard-right"><div class="rpct txt-dim"><span id="rp3">0</span><span style="font-size:14px;opacity:.5">%</span></div><div class="tag tag-blue" style="margin-top:3px" id="r3tag">Safe</div></div></div>
       <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r3usedLbl" style="color:var(--t3)">$0 used</span><span id="r3leftLbl">$1,000 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-blue" id="rb3" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
       <div class="divider"></div>
       <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val txt-dim" id="r3usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r3remVal">$1,000.00</div></div></div>
@@ -391,7 +393,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     </div>
   </div>
   <div class="alert-bar rip" id="alertBar">
-    <div class="alert-ico" id="alertIco" style="background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)">✓</div>
+    <div class="alert-ico" id="alertIco" style="background:var(--green-dim);border:1px solid rgba(77,205,138,0.2);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
     <div style="flex:1"><div style="font-size:13px;font-weight:600" id="alertTitle">All limits safe</div><div style="font-size:11px;color:var(--t3)" id="alertSub">No alerts fired · monitoring active</div></div>
     <div class="alert-pill" id="alertPill" style="color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)">0 alerts</div>
   </div>
@@ -429,10 +431,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Analytics</span></div>
 </div>
 
-<!-- JOURNAL -->
-<div id="page-journal" class="page">
+<!-- JOURNAL (merged into analytics, hidden standalone) -->
+<div id="page-journal" class="page" style="display:none!important">
   <div class="sec-head"><div class="sec-label">Trade Journal</div><div class="sec-meta" id="journalMeta">—</div></div>
-  <div id="journalEntries"><div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2">📒<br>Trades log automatically<br>when you close positions</div></div>
+  <div id="journalEntries"><div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.4" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Trades log automatically<br>when you close positions</div></div>
   <div class="footer-card"><span>TaliTrade v3.2</span><span></span><span>Journal</span></div>
 </div>
 
@@ -485,10 +487,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
   <div class="sec-head"><div class="sec-label">Settings</div></div>
   <div class="settings-group">
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--blue-dim)">🔔</div><div class="sg-info"><div class="sg-title">Push Notifications</div><div class="sg-sub">Telegram alerts active</div></div><div class="toggle"></div></div>
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--orange-dim)">⚡</div><div class="sg-info"><div class="sg-title">Risk Alerts</div><div class="sg-sub">50% / 80% / 90% warnings</div></div><div class="toggle"></div></div>
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--green-dim)">📊</div><div class="sg-info"><div class="sg-title">Daily Summary</div><div class="sg-sub">End of day P&L report</div></div><div class="toggle"></div></div>
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--s3)">📋</div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right">›</div></div>
+    <div class="sg-item rip"><div class="sg-ico" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="sg-info"><div class="sg-title">Push Notifications</div><div class="sg-sub">Telegram alerts active</div></div><div class="toggle"></div></div>
+    <div class="sg-item rip"><div class="sg-ico" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="sg-info"><div class="sg-title">Risk Alerts</div><div class="sg-sub">50% / 80% / 90% warnings</div></div><div class="toggle"></div></div>
+    <div class="sg-item rip"><div class="sg-ico" style="background:var(--green-dim);color:var(--green)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></div><div class="sg-info"><div class="sg-title">Daily Summary</div><div class="sg-sub">End of day P&L report</div></div><div class="toggle"></div></div>
+    <div class="sg-item rip"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
   </div>
   <div class="footer-card"><span>TaliTrade v3.2</span><span></span><span>Account</span></div>
 </div>
@@ -503,7 +505,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="leaderboard-item rip"><div class="lb-rank gold">1</div><div class="lb-avatar" style="background:linear-gradient(135deg,#f5c842,#e8924a)">A</div><div class="lb-name">Alex_trades<div style="font-size:10px;color:var(--t3)">$10K · Day 18</div></div><span>🇺🇸</span><div class="lb-profit txt-green">+$1,840</div></div>
     <div class="leaderboard-item rip"><div class="lb-rank silver">2</div><div class="lb-avatar" style="background:linear-gradient(135deg,#94a3b8,#64748b)">S</div><div class="lb-name">SniperFX<div style="font-size:10px;color:var(--t3)">$25K · Day 12</div></div><span>🇬🇧</span><div class="lb-profit txt-green">+$1,620</div></div>
     <div class="leaderboard-item rip"><div class="lb-rank bronze">3</div><div class="lb-avatar" style="background:linear-gradient(135deg,#cd7f32,#a0522d)">M</div><div class="lb-name">MarketMage<div style="font-size:10px;color:var(--t3)">$50K · Day 7</div></div><span>🇦🇪</span><div class="lb-profit txt-green">+$1,240</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank">4</div><div class="lb-avatar" style="background:linear-gradient(135deg,var(--blue),var(--blue-dark))">Y</div><div class="lb-name">You · <span id="lbId">1917136</span><div style="font-size:10px;color:var(--blue)" id="lbSub">$10K · Master</div></div><span>🎯</span><div class="lb-profit txt-green" id="lbProfit">+$0</div></div>
+    <div class="leaderboard-item rip"><div class="lb-rank">4</div><div class="lb-avatar" style="background:linear-gradient(135deg,var(--blue),var(--blue-dark))">Y</div><div class="lb-name">You · <span id="lbId">1917136</span><div style="font-size:10px;color:var(--blue)" id="lbSub">$10K · Master</div></div><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg><div class="lb-profit txt-green" id="lbProfit">+$0</div></div>
   </div>
   <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Challenges</span></div>
 </div>
@@ -536,8 +538,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="chart-container">
       <div class="live-tag"><div class="live-tag-dot"></div><div class="live-tag-txt">LIVE</div></div>
       <div class="chart-tools">
-        <div class="chart-tool-btn active rip" id="toolCandle">🕯</div>
-        <div class="chart-tool-btn rip" id="toolLine">📈</div>
+        <div class="chart-tool-btn active rip" id="toolCandle"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="6"/><rect x="6" y="6" width="4" height="9" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="8"/><rect x="14" y="8" width="4" height="6" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg></div>
+        <div class="chart-tool-btn rip" id="toolLine"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
       </div>
       <div id="chartEl"></div>
     </div>
@@ -577,13 +579,22 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 </div>
 
 <nav class="bnav">
-  <div class="bnav-item active rip" data-page="dash"><div class="bnav-icon">📊</div><div class="bnav-label">Dashboard</div></div>
-  <div class="bnav-item rip" data-page="chart"><div class="bnav-icon">🕯<div class="bnav-dot"></div></div><div class="bnav-label">Charts</div></div>
-  <div class="bnav-item rip" data-page="news"><div class="bnav-icon">🗞</div><div class="bnav-label">News</div></div>
-  <div class="bnav-item rip" data-page="analytics"><div class="bnav-icon">📈</div><div class="bnav-label">Analytics</div></div>
-  <div class="bnav-item rip" data-page="journal"><div class="bnav-icon">📓</div><div class="bnav-label">Journal</div></div>
-  <div class="bnav-item rip" data-page="account"><div class="bnav-icon">💳</div><div class="bnav-label">Account</div></div>
-  <div class="bnav-item rip" data-page="challenges"><div class="bnav-icon">🏆</div><div class="bnav-label">Challenges</div></div>
+  <div class="bnav-item active rip" data-page="dash">
+    <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
+    <div class="bnav-label">Dashboard</div>
+  </div>
+  <div class="bnav-item rip" data-page="chart">
+    <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="4" x2="8" y2="7"/><rect x="6" y="7" width="4" height="8" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="5" x2="16" y2="9"/><rect x="14" y="9" width="4" height="5" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg><div class="bnav-dot"></div></div>
+    <div class="bnav-label">Charts</div>
+  </div>
+  <div class="bnav-item rip" data-page="analytics">
+    <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></div>
+    <div class="bnav-label">Analytics</div>
+  </div>
+  <div class="bnav-item rip" data-page="challenges">
+    <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14v8"/><path d="M14 14v8"/><path d="M6 4h12v10a6 6 0 0 1-12 0Z"/></svg></div>
+    <div class="bnav-label">Challenges</div>
+  </div>
 </nav>
 
 <script>
@@ -614,20 +625,31 @@ document.querySelectorAll('.rip').forEach(el=>{
 });
 
 // NAV
+function showPage(p){
+  document.querySelectorAll('.page').forEach(pg=>pg.classList.remove('active'));
+  const el=document.getElementById('page-'+p);if(el)el.classList.add('active');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
 document.querySelectorAll('.bnav-item').forEach(item=>{
   item.addEventListener('click',()=>{
     const p=item.dataset.page;
     document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
     item.classList.add('active');
-    document.querySelectorAll('.page').forEach(pg=>pg.classList.remove('active'));
-    document.getElementById('page-'+p).classList.add('active');
+    showPage(p);
     if(p==='chart')setTimeout(initChart,200);
-    if(p==='journal')fetchJournal();
-    if(p==='analytics')fetchAnalytics();
-    if(p==='news')fetchNews();
+    if(p==='analytics'){fetchAnalytics();fetchJournal();}
     if(p==='account')fetchPayout();
-    window.scrollTo({top:0,behavior:'smooth'});
+    if(p==='news')fetchNews();
   });
+});
+// Topbar: bell → news, profile → account
+document.getElementById('btnBell').addEventListener('click',()=>{
+  document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
+  showPage('news');fetchNews();
+});
+document.getElementById('btnProfile').addEventListener('click',()=>{
+  document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
+  showPage('account');fetchPayout();
 });
 
 // CLOCK
@@ -701,15 +723,22 @@ async function fetchStatus(){
     if(alerts&&alerts.length){
       const a=alerts[0],w=a.level==='warn';
       aBar.style.borderColor=w?'rgba(232,146,74,0.3)':'rgba(224,92,92,0.3)';
-      aIco.textContent=w?'⚠':'🚨';aIco.style.background=w?'var(--orange-dim)':'var(--red-dim)';
+      aIco.innerHTML=w
+        ?'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+        :'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      aIco.style.background=w?'var(--orange-dim)':'var(--red-dim)';
       aIco.style.border=w?'1px solid rgba(232,146,74,0.2)':'1px solid rgba(224,92,92,0.2)';
+      aIco.style.color=w?'var(--orange)':'var(--red)';
       aTitle.textContent=a.message||'Alert';aSub.textContent=alerts.length+' alert(s)';
       aPill.textContent=alerts.length+' alerts';aPill.style.cssText='color:var(--red);background:var(--red-dim);border:1px solid rgba(224,92,92,0.2)';
+      document.getElementById('bellDot').style.display='block';
     } else {
-      aBar.style.borderColor='';aIco.textContent='✓';aIco.style.background='var(--green-dim)';
-      aIco.style.border='1px solid rgba(77,205,138,0.2)';aTitle.textContent='All limits safe';
-      aSub.textContent='No alerts fired · monitoring active';aPill.textContent='0 alerts';
-      aPill.style.cssText='color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)';
+      aBar.style.borderColor='';
+      aIco.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
+      aIco.style.background='var(--green-dim)';aIco.style.border='1px solid rgba(77,205,138,0.2)';aIco.style.color='var(--green)';
+      aTitle.textContent='All limits safe';aSub.textContent='No alerts fired · monitoring active';
+      aPill.textContent='0 alerts';aPill.style.cssText='color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)';
+      document.getElementById('bellDot').style.display='none';
     }
     if(ri)document.getElementById('tradeRiskLeft').textContent=usd(ri.remaining);
   }catch(e){
@@ -761,9 +790,9 @@ function renderPayout(ev){
     amtEl.className='ph-hero-amount '+(eligible?'txt-green':breached?'txt-red':'txt-dim');
     splitEl.textContent=split+'% split · '+Object.keys(splits).join(' / ')+' options';
 
-    if(eligible){badge.textContent='✅ Eligible';badge.className='ph-badge eligible';}
-    else if(breached){badge.textContent='❌ Breached';badge.className='ph-badge breached';}
-    else{badge.textContent='⏳ Not Yet';badge.className='ph-badge not-yet';}
+    if(eligible){badge.textContent='Eligible';badge.className='ph-badge eligible';}
+    else if(breached){badge.textContent='Breached';badge.className='ph-badge breached';}
+    else{badge.textContent='Not Yet';badge.className='ph-badge not-yet';}
 
     reqBtn.style.opacity=eligible?'1':'0.4';
     reqBtn.style.pointerEvents=eligible?'auto':'none';
@@ -796,8 +825,8 @@ function renderPayout(ev){
     amtEl.className='ph-hero-amount '+(profitPct>0?'txt-green':profitPct<0?'txt-red':'txt-dim');
     splitEl.textContent='Target: '+targetPct+'%  ('+usd(targetUsd)+')';
 
-    if(allPassed){badge.textContent='🎯 Pass!';badge.className='ph-badge eligible';}
-    else if(breached){badge.textContent='❌ Breached';badge.className='ph-badge breached';}
+    if(allPassed){badge.textContent='Pass!';badge.className='ph-badge eligible';}
+    else if(breached){badge.textContent='Breached';badge.className='ph-badge breached';}
     else{badge.textContent='In Progress';badge.className='ph-badge phase';}
 
     reqBtn.style.display='none';
@@ -827,7 +856,7 @@ function buildChecks(checks){
     else if(c.current!=null)val=String(c.current);
     return`<div class="pcheck ${ok?'passed':'failed'}">
       <div class="pcheck-row">
-        <div><span style="margin-right:6px">${ok?'✅':'❌'}</span><span class="pcheck-label">${c.label||key}</span></div>
+        <div><span style="margin-right:6px;display:inline-flex;vertical-align:middle">${ok?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>':'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>'}</span><span class="pcheck-label">${c.label||key}</span></div>
         <div class="pcheck-val">${val}</div>
       </div>
       ${pct!=null?`<div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${barColor};box-shadow:none;transition:width 1.2s var(--spring)"></div></div>`:''}
@@ -846,13 +875,15 @@ async function fetchJournal(){
     const trades=data.trades||[];
     document.getElementById('journalMeta').textContent=trades.length+' trades';
     const el=document.getElementById('journalEntries');
-    if(!trades.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2">📒<br>No trades logged yet</div>';return;}
+    if(!trades.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.4" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No trades logged yet</div>';return;}
+    const winIco='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>';
+    const lossIco='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="7" x2="17" y2="17"/><polyline points="17 7 17 17 7 17"/></svg>';
     el.innerHTML=trades.map(t=>{
       const win=(t.pnl||0)>0;
       const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
       return`<div class="journal-entry rip">
         <div class="je-head">
-          <div class="je-ico" style="background:${win?'var(--green-dim)':'var(--red-dim)'}">${win?'📈':'📉'}</div>
+          <div class="je-ico" style="background:${win?'var(--green-dim)':'var(--red-dim)'};color:${win?'var(--green)':'var(--red)'}">${win?winIco:lossIco}</div>
           <div class="je-info"><div class="je-sym" style="color:${win?'var(--green)':'var(--red)'}">${t.symbol||'?'} · ${t.direction||'?'}</div><div class="je-date">${dt}</div></div>
           <div class="je-pl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(t.pnl)}</div>
         </div>
@@ -923,7 +954,7 @@ async function fetchNews(){
       const fc=e.forecast?`<div style="font-size:10px;color:var(--t3);margin-top:4px;font-family:'JetBrains Mono',monospace">F: ${e.forecast} · P: ${e.previous||'—'}</div>`:'';
       return`<div class="news-item ${cls} rip">
         <div class="news-title">${e.title}${fc}</div>
-        <div class="news-meta"><div class="news-time-str">🕐 ${e.time_et}</div><div class="news-pill ${pillCls}">${when}</div></div>
+        <div class="news-meta"><div class="news-time-str"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${e.time_et}</div><div class="news-pill ${pillCls}">${when}</div></div>
       </div>`;
     }).join('');
   }catch(e){document.getElementById('newsList').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Could not load calendar</div>';}
@@ -1019,7 +1050,7 @@ function updateRiskCalc(){
   document.getElementById('marginReq').textContent='$'+mg;
 }
 document.getElementById('execBtn').addEventListener('click',function(){
-  const orig=this.innerHTML;this.innerHTML='<span class="btn-shine"></span>✓ Order Placed';
+  const orig=this.innerHTML;this.innerHTML='<span class="btn-shine"></span>&#10003; Order Placed';
   setTimeout(()=>{this.innerHTML=orig;},1800);
 });
 function updateDepth(){
