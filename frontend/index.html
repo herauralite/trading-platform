@@ -184,8 +184,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .news-pill-soon{background:var(--orange-dim);color:var(--orange);border:1px solid rgba(232,146,74,0.2);}
 .news-pill-later{background:var(--s3);color:var(--t3);border:1px solid var(--border);}
 /* ── NOTIFICATION DRAWER ── */
-#notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:300;pointer-events:none;transition:background .3s;}
-#notif-overlay.open{background:rgba(0,0,0,0.55);pointer-events:all;}
+#notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:300;pointer-events:none;transition:background .3s;top:56px;}
+#notif-overlay.open{background:rgba(0,0,0,0.55);pointer-events:all;top:0;}
 #notif-drawer{position:fixed;bottom:0;left:0;right:0;z-index:301;background:var(--s1);border-top:1px solid var(--border);border-radius:20px 20px 0 0;max-height:82vh;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .38s var(--out);max-width:680px;margin:0 auto;}
 #notif-drawer.open{transform:translateY(0);}
 .drawer-handle{width:36px;height:4px;border-radius:100px;background:var(--s3);margin:12px auto 0;}
@@ -1135,6 +1135,7 @@ function closeDrawer(){
   document.getElementById('notif-drawer').classList.remove('open');
   document.body.style.overflow='';
 }
+document.getElementById('btnBell').addEventListener('click',openDrawer);
 document.getElementById('drawerClose').addEventListener('click',closeDrawer);
 document.getElementById('notif-overlay').addEventListener('click',closeDrawer);
 
