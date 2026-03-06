@@ -98,6 +98,32 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .sk-fade.sk-out{opacity:0;transform:translateY(5px);pointer-events:none;overflow:hidden;max-height:0;}
 .sk-fade.sk-in{opacity:1;transform:translateY(0);max-height:2000px;}
 .sk-wrap{position:relative;}
+/* ── TRADING RULES SHEET ── */
+#rulesSheet{position:fixed;inset:0;z-index:400;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .4s var(--out);background:var(--bg);}
+#rulesSheet.open{transform:translateY(0);}
+.rs-topbar{height:56px;background:var(--s1);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px;gap:12px;flex-shrink:0;}
+.rs-back{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--t2);transition:background .18s;}
+.rs-back:hover{background:var(--blue-dim);color:var(--blue);}
+.rs-title{flex:1;font-size:15px;font-weight:700;color:var(--text);}
+.rs-body{flex:1;overflow-y:auto;padding:16px 14px 40px;}
+.rs-body::-webkit-scrollbar{width:3px;}
+.rule-section{margin-bottom:18px;}
+.rule-section-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:0 2px;}
+.rule-section-ico{width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+.rule-section-ico svg{width:15px;height:15px;stroke:currentColor;fill:none;}
+.rule-section-title{font-size:11px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--t3);}
+.rule-card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
+.rule-row{display:flex;align-items:flex-start;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border);gap:12px;}
+.rule-row:last-child{border-bottom:none;}
+.rule-row-label{font-size:12px;font-weight:500;color:var(--t2);flex:1;line-height:1.4;}
+.rule-row-label small{display:block;font-size:10px;color:var(--t3);margin-top:2px;font-weight:400;}
+.rule-row-val{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;text-align:right;flex-shrink:0;}
+.rule-breach{background:var(--red-dim);border:1px solid rgba(224,92,92,0.2);border-radius:var(--rs);padding:10px 12px;display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
+.rule-breach svg{flex-shrink:0;margin-top:1px;}
+.rule-breach-txt{font-size:11px;color:var(--red);line-height:1.5;}
+.rule-note{background:var(--blue-dim);border:1px solid rgba(42,171,238,0.15);border-radius:var(--rs);padding:10px 12px;display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
+.rule-note svg{flex-shrink:0;margin-top:1px;}
+.rule-note-txt{font-size:11px;color:var(--t2);line-height:1.5;}
 .acct-card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:10px;position:relative;overflow:hidden;transition:border-color .25s;}
 .acct-card:hover{border-color:var(--border2);}
 .acct-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),rgba(42,171,238,0.3),transparent);}
@@ -386,6 +412,20 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
       <p>Loading notifications...</p>
     </div>
+  </div>
+</div>
+
+<!-- TRADING RULES SHEET -->
+<div id="rulesSheet">
+  <div class="rs-topbar">
+    <div class="rs-back rip" id="rulesBack">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+    </div>
+    <div class="rs-title" id="rulesTitle">Trading Rules</div>
+    <div class="tag tag-blue" id="rulesModelTag">—</div>
+  </div>
+  <div class="rs-body" id="rulesBody">
+    <div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">Loading rules...</div>
   </div>
 </div>
 
@@ -894,6 +934,8 @@ async function fetchStatus(){
     document.getElementById('riskMeta').textContent=(sz/1000)+'K '+typeStr;
     document.getElementById('sgRulesSub').textContent='$'+(sz/1000)+'K '+typeStr;
     document.getElementById('lbProfit').textContent=pnl(balance-sz);
+    // update rules sheet with live account data
+    updateRulesSheet(accountType||'2_step', sz, '$'+(sz/1000)+'K '+typeStr);
     if(ri&&ri.applicable){
       setBar(1,ri.pct,ri.combined,ri.limit,ri.remaining,[{cls:'warn',label:'⚠ '+usd(ri.limit*.5)},{cls:'soft',label:'● '+usd(ri.limit*.8)},{cls:'hard',label:'⛔ '+usd(ri.limit)}]);
     } else {document.getElementById('r1sub').textContent='N/A';document.getElementById('rp1').textContent='—';}
@@ -1235,6 +1277,278 @@ function mkCheck(ok, label, subtext, pct){
 
 // Poll payout every 30s when visible
 setInterval(()=>{if(document.getElementById('page-account').classList.contains('active'))fetchPayout();},30000);
+
+// ── TRADING RULES SHEET ───────────────────────────────────────────────────────
+document.getElementById('rulesBack').addEventListener('click',closeRules);
+function openRules(){document.getElementById('rulesSheet').classList.add('open');document.body.style.overflow='hidden';}
+function closeRules(){document.getElementById('rulesSheet').classList.remove('open');document.body.style.overflow='';}
+document.querySelectorAll('.sg-item').forEach(item=>{
+  if(item.querySelector('#sgRulesSub')){item.style.cursor='pointer';item.addEventListener('click',openRules);}
+});
+
+// Rule data keyed by model
+const RULES={
+  '2_step':{
+    label:'2-Step Master',
+    phases:[
+      {name:'Student (Phase I)',options:['Option A: 8% profit target, min 3 trading days','Option B: 10% profit target, min 3 trading days']},
+      {name:'Practitioner (Phase II)',options:['5% profit target, min 3 trading days']},
+    ],
+    hard:[
+      {label:'Max Overall Loss',val:'10%',sub:'Equity/balance cannot hit 90% of initial'},
+      {label:'Daily Loss Limit',val:'5%',sub:'Of higher value: starting balance or equity'},
+      {label:'Risk per Trade (Master only)',val:'3% / 2%',sub:'<50K accounts: 3% · 50K+ accounts: 2%'},
+      {label:'Inactivity',val:'30 days',sub:'Must trade at least once every 30 days'},
+    ],
+    soft:[
+      {label:'News Trading (Master)',val:'±5 min',sub:'Cannot open/close within 5 min of red-folder news. Trades opened 5h+ before are exempt'},
+      {label:'Weekend Holding',val:'Not Allowed',sub:'All positions must be closed before Friday market close (temporary rule)'},
+      {label:'Purposely trading news',val:'Account closure',sub:'Intentional news trading during evaluation is prohibited'},
+    ],
+    rewards:[
+      {label:'On Demand',val:'90% split',sub:'35% consistency score · 2% min withdrawal'},
+      {label:'Weekly',val:'60% split',sub:'Every 7 days after first executed trade'},
+      {label:'Bi-Weekly',val:'80% split',sub:'Every 14 days after first executed trade'},
+      {label:'Monthly',val:'100% split',sub:'Every 30 days after first executed trade'},
+    ],
+    rewardMin:'1% of balance (2% for On Demand)',
+    notes:[
+      'Consistency score resets after each reward',
+      'Rolling cycle restarts after first trade following each processed reward',
+    ]
+  },
+  '1_step':{
+    label:'1-Step Master',
+    phases:[
+      {name:'Student Phase',options:['10% profit target, min 3 trading days']},
+    ],
+    hard:[
+      {label:'Max Overall Loss',val:'6%',sub:'Equity/balance cannot hit 94% of initial'},
+      {label:'Daily Loss Limit',val:'3%',sub:'Of higher value: starting balance or equity'},
+      {label:'Risk per Trade (Master only)',val:'3% / 2%',sub:'<50K accounts: 3% · 50K+ accounts: 2%'},
+      {label:'Inactivity',val:'30 days',sub:'Must trade at least once every 30 days'},
+    ],
+    soft:[
+      {label:'News Trading (Master)',val:'±5 min',sub:'Cannot open/close within 5 min of red-folder news. Trades opened 5h+ before are exempt'},
+      {label:'Weekend Holding',val:'Not Allowed',sub:'All positions must be closed before Friday market close (temporary rule)'},
+      {label:'Purposely trading news',val:'Account closure',sub:'Intentional news trading during evaluation is prohibited'},
+    ],
+    rewards:[
+      {label:'On Demand',val:'90% split',sub:'35% consistency score · 2% min withdrawal'},
+      {label:'Weekly',val:'60% split',sub:'Every 7 days after first executed trade'},
+      {label:'Bi-Weekly',val:'80% split',sub:'Every 14 days after first executed trade'},
+      {label:'Monthly',val:'100% split',sub:'Every 30 days after first executed trade'},
+    ],
+    rewardMin:'1% of balance (2% for On Demand)',
+    notes:[
+      'Consistency score resets after each reward',
+      'Rolling cycle restarts after first trade following each processed reward',
+    ]
+  },
+  '2_step_pro':{
+    label:'2-Step Pro Master',
+    phases:[
+      {name:'Student (Phase I)',options:['6% profit target, min 1 trading day']},
+      {name:'Practitioner (Phase II)',options:['6% profit target, min 1 trading day']},
+    ],
+    hard:[
+      {label:'Max Overall Loss',val:'6%',sub:'Equity/balance cannot hit 94% of initial'},
+      {label:'Daily Loss Limit',val:'3%',sub:'Of higher value: starting balance or equity'},
+      {label:'Risk per Trade (Master only)',val:'3% / 2%',sub:'<50K accounts: 3% · 50K+ accounts: 2%'},
+      {label:'Inactivity',val:'30 days',sub:'Must trade at least once every 30 days'},
+    ],
+    soft:[
+      {label:'News Trading (Master)',val:'±5 min',sub:'Cannot open/close within 5 min of red-folder news. Trades opened 5h+ before are exempt'},
+      {label:'Weekend Holding',val:'Not Allowed',sub:'All positions must be closed before Friday market close (temporary rule)'},
+      {label:'Purposely trading news',val:'Account closure',sub:'Intentional news trading during evaluation is prohibited'},
+    ],
+    rewards:[
+      {label:'Weekly',val:'80% split',sub:'Every 7 days after first executed trade'},
+      {label:'Daily (Beta)',val:'80% split',sub:'Daily after first executed trade · adds 35% consistency rule to eval phases'},
+    ],
+    rewardMin:'1% of balance',
+    notes:[
+      'Daily Reward adds 35% consistency rule to Student & Practitioner phases only — not Master',
+      'No consistency rule on Master account for either reward cycle',
+    ]
+  },
+  'fp_zero':{
+    label:'FP Zero Master',
+    phases:[],
+    hard:[
+      {label:'Daily Loss Limit',val:'3%',sub:'Of higher value: starting balance or equity'},
+      {label:'Max Trailing Loss',val:'5%',sub:'Trails highest equity · locks at initial size once 5% profit reached'},
+      {label:'Max Floating Risk',val:'1%',sub:'Open floating PnL cannot drop below -1% of account size'},
+      {label:'Risk per Trade Idea',val:'3% / 2%',sub:'<50K accounts: 3% · 50K+ accounts: 2%'},
+      {label:'Same Trade Idea',val:'10 min rule',sub:'Reopening same direction within 10 min after a loss counts as same idea'},
+    ],
+    soft:[
+      {label:'News & Speeches',val:'±10 min',sub:'Cannot hold or open trades 10 min before/after red-folder news or high-impact speeches'},
+      {label:'Weekend Holding',val:'Not Allowed',sub:'All positions must be closed before Friday market close. Hard breach.'},
+      {label:'Inactivity',val:'30 days',sub:'Account suspended if no trades in 30 consecutive days'},
+    ],
+    rewards:[
+      {label:'Bi-Weekly',val:'95% split',sub:'Every 14 days after first executed trade'},
+    ],
+    rewardMin:'1% of balance',
+    fpZeroExtra:[
+      {label:'15% Consistency Score',val:'Required',sub:'Biggest winning day ≤ 15% of total profit'},
+      {label:'7 Profitable Days',val:'Per 30 days',sub:'Each profitable day must be ≥ 0.25% of initial balance'},
+      {label:'3% Safety Cushion',val:'First 3%',sub:'First 3% of profit on Master cannot be withdrawn'},
+      {label:'Biggest Loss ≤ Biggest Win',val:'Required',sub:'Keep trading until biggest loss no longer exceeds biggest win'},
+    ],
+    notes:[
+      'Trailing loss limit does NOT reset after a reward',
+      '30-day profitable day cycle resets at end of period or after each reward',
+      'Max 20 lots per click/trade',
+    ]
+  }
+};
+
+function buildRulesSheet(modelType, accountSize, accountLabel){
+  const modelKey=modelType.includes('zero')||modelType.includes('fp_zero')?'fp_zero'
+    :modelType.includes('pro')?'2_step_pro'
+    :modelType.includes('1_step')?'1_step'
+    :'2_step';
+  const r=RULES[modelKey];
+  const sz=accountSize||10000;
+  const riskPct=sz>=50000?2:3;
+  const riskAmt=usd(sz*(riskPct/100));
+  const dailyLossAmt=usd(sz*(parseFloat(r.hard.find(h=>h.label.includes('Daily'))?.val||'5')/100));
+  const maxLossRule=r.hard.find(h=>h.label.includes('Overall')||h.label.includes('Trailing'));
+  const maxLossAmt=maxLossRule?usd(sz*(parseFloat(maxLossRule.val)/100)):'—';
+
+  document.getElementById('rulesTitle').textContent='Trading Rules';
+  document.getElementById('rulesModelTag').textContent=accountLabel||r.label;
+
+  const ico=(bg,col,path)=>`<div class="rule-section-ico" style="background:${bg};color:${col}"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${path}</svg></div>`;
+  const redIco=ico('var(--red-dim)','var(--red)','<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>');
+  const orangeIco=ico('var(--orange-dim)','var(--orange)','<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>');
+  const greenIco=ico('var(--green-dim)','var(--green)','<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>');
+  const blueIco=ico('var(--blue-dim)','var(--blue)','<circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>');
+  const goldIco=ico('var(--gold-dim)','var(--gold)','<circle cx="12" cy="8" r="6"/><path d="M15.477 12.89L17 22l-5-3-5 3 1.523-9.11"/>');
+
+  let html='';
+
+  // ── At-a-glance summary card ──────────────────────────────────────────────
+  html+=`<div class="rule-section">
+    <div class="rule-card" style="background:linear-gradient(135deg,rgba(42,171,238,0.06),rgba(42,171,238,0.02));border-color:rgba(42,171,238,0.15)">
+      <div style="padding:14px 14px 10px;border-bottom:1px solid var(--border)">
+        <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--t3);margin-bottom:10px">Your Limits at a Glance</div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px">
+          <div style="text-align:center">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--orange)">${dailyLossAmt}</div>
+            <div style="font-size:9px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:.5px">Daily Max Loss</div>
+          </div>
+          <div style="text-align:center;border-left:1px solid var(--border);border-right:1px solid var(--border)">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--red)">${maxLossAmt}</div>
+            <div style="font-size:9px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:.5px">${maxLossRule?.label.includes('Trailing')?'Trailing Max':'Overall Max'}</div>
+          </div>
+          <div style="text-align:center">
+            <div style="font-family:'JetBrains Mono',monospace;font-size:16px;font-weight:700;color:var(--blue)">${riskAmt}</div>
+            <div style="font-size:9px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:.5px">Per Trade Idea</div>
+          </div>
+        </div>
+      </div>
+      ${modelKey==='fp_zero'?`<div style="padding:10px 14px;font-size:11px;color:var(--orange)">⚡ Trailing loss does <strong>not</strong> reset after payouts</div>`:''}
+    </div>
+  </div>`;
+
+  // ── Evaluation phases (skip for FP Zero — direct master) ──────────────────
+  if(r.phases.length){
+    html+=`<div class="rule-section">
+      <div class="rule-section-head">${blueIco}<div class="rule-section-title">Evaluation Phases</div></div>
+      <div class="rule-card">`;
+    r.phases.forEach(ph=>{
+      ph.options.forEach((opt,i)=>{
+        html+=`<div class="rule-row">
+          <div class="rule-row-label">${ph.name}${ph.options.length>1?' — Option '+(i===0?'A':'B'):''}
+            <small>${opt}</small>
+          </div>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>`;
+      });
+    });
+    html+=`</div></div>`;
+  }
+
+  // ── Hard breaches ─────────────────────────────────────────────────────────
+  html+=`<div class="rule-section">
+    <div class="rule-section-head">${redIco}<div class="rule-section-title">Hard Breaches — Account Closure</div></div>
+    <div class="rule-breach"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><div class="rule-breach-txt">Violating any rule below results in <strong>immediate account termination</strong>.</div></div>
+    <div class="rule-card">`;
+  r.hard.forEach(h=>{
+    // substitute actual dollar amounts where possible
+    let val=h.val;
+    let sub=h.sub;
+    if(h.label.includes('Daily Loss')){val=h.val+' · '+dailyLossAmt;}
+    if(h.label.includes('Overall')||h.label.includes('Trailing')){val=h.val+' · '+maxLossAmt;}
+    if(h.label.includes('Risk per Trade')){val=riskPct+'% · '+riskAmt;}
+    if(h.label.includes('Floating')||h.label.includes('Max Floating')){val=h.val+' · '+usd(sz*0.01);}
+    html+=`<div class="rule-row">
+      <div class="rule-row-label">${h.label}<small>${sub}</small></div>
+      <div class="rule-row-val txt-red">${val}</div>
+    </div>`;
+  });
+  html+=`</div></div>`;
+
+  // ── FP Zero extra reward conditions ───────────────────────────────────────
+  if(modelKey==='fp_zero'&&r.fpZeroExtra){
+    html+=`<div class="rule-section">
+      <div class="rule-section-head">${orangeIco}<div class="rule-section-title">Reward Conditions (FP Zero)</div></div>
+      <div class="rule-card">`;
+    r.fpZeroExtra.forEach(f=>{
+      html+=`<div class="rule-row">
+        <div class="rule-row-label">${f.label}<small>${f.sub}</small></div>
+        <div class="rule-row-val txt-orange">${f.val}</div>
+      </div>`;
+    });
+    html+=`</div></div>`;
+  }
+
+  // ── Soft breaches / guidelines ────────────────────────────────────────────
+  html+=`<div class="rule-section">
+    <div class="rule-section-head">${orangeIco}<div class="rule-section-title">Guidelines — Soft Rules</div></div>
+    <div class="rule-card">`;
+  r.soft.forEach(s=>{
+    html+=`<div class="rule-row">
+      <div class="rule-row-label">${s.label}<small>${s.sub}</small></div>
+      <div class="rule-row-val txt-orange">${s.val}</div>
+    </div>`;
+  });
+  html+=`</div></div>`;
+
+  // ── Reward cycles ─────────────────────────────────────────────────────────
+  html+=`<div class="rule-section">
+    <div class="rule-section-head">${goldIco}<div class="rule-section-title">Reward Cycles</div></div>
+    <div class="rule-note"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><div class="rule-note-txt">Minimum withdrawal: <strong>${r.rewardMin}</strong> (including platform split).</div></div>
+    <div class="rule-card">`;
+  r.rewards.forEach(rw=>{
+    html+=`<div class="rule-row">
+      <div class="rule-row-label">${rw.label}<small>${rw.sub}</small></div>
+      <div class="rule-row-val txt-green">${rw.val}</div>
+    </div>`;
+  });
+  html+=`</div></div>`;
+
+  // ── General notes ─────────────────────────────────────────────────────────
+  if(r.notes.length){
+    html+=`<div class="rule-section">
+      <div class="rule-section-head">${blueIco}<div class="rule-section-title">Important Notes</div></div>
+      <div class="rule-card">`;
+    r.notes.forEach(n=>{
+      html+=`<div class="rule-row"><div class="rule-row-label" style="color:var(--t2)">${n}</div></div>`;
+    });
+    html+=`</div></div>`;
+  }
+
+  document.getElementById('rulesBody').innerHTML=html;
+}
+
+// Called from renderPayout or fetchStatus when model is known
+function updateRulesSheet(modelType, accountSize, accountLabel){
+  buildRulesSheet(modelType, accountSize, accountLabel);
+}
 
 // JOURNAL
 async function fetchJournal(){
