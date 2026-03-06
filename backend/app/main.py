@@ -126,7 +126,7 @@ async def db_get_trades(account_id: str = None, limit: int = 50) -> list:
 
 async def db_get_trades_today(account_id: str = None) -> list:
     from app.core.database import engine
-    today = date.today().isoformat()
+    today = date.today()
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(text("""
@@ -147,6 +147,7 @@ async def db_get_trades_today(account_id: str = None) -> list:
 async def db_get_trades_for_date(target_date: str, account_id: str = None) -> list:
     """Fetch trades for any specific date (YYYY-MM-DD)."""
     from app.core.database import engine
+    parsed_date = date.fromisoformat(target_date)
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(text("""
@@ -154,13 +155,13 @@ async def db_get_trades_for_date(target_date: str, account_id: str = None) -> li
                 WHERE account_id = :account_id
                   AND logged_at::date = :target_date
                 ORDER BY logged_at DESC
-            """), {"account_id": account_id, "target_date": target_date})
+            """), {"account_id": account_id, "target_date": parsed_date})
         else:
             result = await conn.execute(text("""
                 SELECT * FROM trades
                 WHERE logged_at::date = :target_date
                 ORDER BY logged_at DESC
-            """), {"target_date": target_date})
+            """), {"target_date": parsed_date})
         return [dict(r) for r in result.mappings().all()]
 
 
