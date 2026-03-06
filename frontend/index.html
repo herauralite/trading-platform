@@ -245,7 +245,33 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .notif-empty{text-align:center;padding:36px 16px;color:var(--t3);}
 .notif-empty svg{display:block;margin:0 auto 10px;opacity:.3;}
 .notif-empty p{font-size:12px;}
-/* ── ACCOUNT / PAYOUT ── */
+/* ── ACCOUNT SWITCHER ── */
+#acct-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:350;pointer-events:none;transition:background .3s;}
+#acct-overlay.open{background:rgba(0,0,0,0.6);pointer-events:all;}
+#acct-sheet{position:fixed;bottom:0;left:0;right:0;z-index:351;background:var(--s1);border-top:1px solid var(--border);border-radius:20px 20px 0 0;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .38s var(--out);max-width:680px;margin:0 auto;padding-bottom:max(20px,env(safe-area-inset-bottom));}
+#acct-sheet.open{transform:translateY(0);}
+.as-handle{width:36px;height:4px;border-radius:100px;background:var(--s3);margin:12px auto 0;}
+.as-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;}
+.as-title{font-size:15px;font-weight:700;color:var(--text);}
+.as-close{width:30px;height:30px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t2);transition:background .18s,transform .2s var(--spring);}
+.as-close:hover{background:var(--s2);transform:scale(1.1);color:var(--text);}
+.as-body{padding:4px 14px 8px;}
+.as-acct{display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:12px;border:1px solid var(--border);background:var(--s2);margin-bottom:8px;transition:border-color .2s,transform .2s var(--spring);position:relative;overflow:hidden;}
+.as-acct:hover{transform:translateY(-1px);}
+.as-acct.active-acct{border-color:var(--border2);background:var(--blue-dim);}
+.as-acct-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;}
+.as-acct-info{flex:1;}
+.as-acct-id{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);line-height:1.2;}
+.as-acct-label{font-size:11px;color:var(--t3);margin-top:2px;}
+.as-acct-status{display:flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;}
+.as-dot{width:7px;height:7px;border-radius:50%;background:var(--green);}
+.as-dot.offline{background:var(--t3);}
+.as-check{display:none;color:var(--blue);}
+.as-acct.active-acct .as-check{display:flex;}
+.as-add{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1px dashed var(--border);margin-bottom:4px;color:var(--t3);transition:border-color .2s,color .2s;}
+.as-add:hover{border-color:var(--border2);color:var(--blue);}
+.as-add-ico{width:38px;height:38px;border-radius:50%;border:1.5px dashed currentColor;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
 .payout-hero{background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.15);border-radius:var(--r);padding:20px;margin-bottom:10px;position:relative;overflow:hidden;}
 .payout-hero::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),rgba(42,171,238,0.3),transparent);}
 .payout-hero.eligible{background:linear-gradient(135deg,rgba(77,205,138,0.1),rgba(77,205,138,0.04));border-color:rgba(77,205,138,0.25);}
@@ -393,6 +419,19 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <div id="cur"></div><div id="cur-ring"></div>
 
 <!-- NOTIFICATION DRAWER -->
+<!-- ACCOUNT SWITCHER SHEET -->
+<div id="acct-overlay"></div>
+<div id="acct-sheet">
+  <div class="as-handle"></div>
+  <div class="as-header">
+    <div class="as-title">Switch Account</div>
+    <div class="as-close rip" id="acctSheetClose">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="as-body" id="acctSheetBody"></div>
+</div>
+
 <div id="notif-overlay"></div>
 <div id="notif-drawer">
   <div class="drawer-handle"></div>
@@ -431,7 +470,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <div class="topbar">
   <div class="tb-avatar">T</div>
-  <div class="tb-info"><div class="tb-name">TaliTrade</div><div class="tb-status" id="tb-status">connecting...</div></div>
+  <div class="tb-info"><div class="tb-name">TaliTrade <span id="tbAcctPill" style="font-size:10px;font-weight:500;letter-spacing:.5px;color:var(--blue);background:var(--blue-dim);border:1px solid rgba(42,171,238,0.2);padding:1px 8px;border-radius:100px;vertical-align:middle">1917136</span></div><div class="tb-status" id="tb-status">connecting...</div></div>
   <div style="display:flex;gap:4px;">
     <div class="tb-btn rip" id="btnBell" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div id="bellDot" style="display:none;position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid var(--s1)"></div></div>
     <div class="tb-profile-btn rip" id="btnProfile"><div class="tb-profile-inner">1</div></div>
@@ -807,7 +846,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <script>
 const API='https://trading-platform-production-70e0.up.railway.app';
-const ACCT='1917136';
+const ACCOUNTS={
+  '1917136':{label:'10K Master',short:'Master',color:'var(--blue)',idx:1},
+  '1886220':{label:'10K Demo',short:'Demo',color:'var(--t3)',idx:2}
+};
+let activeAcct='1917136';
 let liveBalance=10000;
 
 // CURSOR
@@ -850,11 +893,116 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
     if(p==='news')fetchNews();
   });
 });
-// Topbar: profile → account
-document.getElementById('btnProfile').addEventListener('click',()=>{
-  document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
-  showPage('account');fetchPayout();
-});
+// Topbar: profile → account switcher sheet
+document.getElementById('btnProfile').addEventListener('click', openAcctSheet);
+
+// ── ACCOUNT SWITCHER ──────────────────────────────────────────────────────────
+let acctBalances={}; // cache of {id: balance} for display in switcher
+
+function openAcctSheet(){
+  renderAcctSheet();
+  document.getElementById('acct-overlay').classList.add('open');
+  document.getElementById('acct-sheet').classList.add('open');
+  document.body.style.overflow='hidden';
+}
+function closeAcctSheet(){
+  document.getElementById('acct-overlay').classList.remove('open');
+  document.getElementById('acct-sheet').classList.remove('open');
+  document.body.style.overflow='';
+}
+document.getElementById('acctSheetClose').addEventListener('click', closeAcctSheet);
+document.getElementById('acct-overlay').addEventListener('click', closeAcctSheet);
+
+let asTouch=0;
+document.getElementById('acct-sheet').addEventListener('touchstart',e=>{asTouch=e.touches[0].clientY;},{passive:true});
+document.getElementById('acct-sheet').addEventListener('touchend',e=>{
+  if(e.changedTouches[0].clientY-asTouch>60)closeAcctSheet();
+},{passive:true});
+
+function renderAcctSheet(){
+  const body=document.getElementById('acctSheetBody');
+  const avatarColors=['linear-gradient(135deg,var(--blue),var(--blue-dark))','linear-gradient(135deg,var(--t3),#3d5a6e)'];
+  let html=Object.entries(ACCOUNTS).map(([id,info],i)=>{
+    const isActive=id===activeAcct;
+    const bal=acctBalances[id];
+    const balStr=bal!=null?usd(bal):'—';
+    const statusStr=isActive?'<span style="color:var(--green)">Live · syncing</span>':'<span style="color:var(--t3)">Tap to switch</span>';
+    return`<div class="as-acct rip ${isActive?'active-acct':''}" onclick="switchAccount('${id}')">
+      <div class="as-acct-avatar" style="background:${avatarColors[i]||avatarColors[0]}">${info.idx}</div>
+      <div class="as-acct-info">
+        <div class="as-acct-id">${id}</div>
+        <div class="as-acct-label">${info.label}</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:${isActive?'var(--green)':'var(--t2)'}">${balStr}</div>
+        <div style="font-size:10px;margin-top:3px">${statusStr}</div>
+      </div>
+      <div class="as-check">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+    </div>`;
+  }).join('');
+  html+=`<div class="as-add rip">
+    <div class="as-add-ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
+    <div><div style="font-size:13px;font-weight:500">Add Account</div><div style="font-size:11px;margin-top:2px">Connect another FundingPips account</div></div>
+  </div>`;
+  body.innerHTML=html;
+}
+
+function switchAccount(id){
+  if(id===activeAcct){closeAcctSheet();return;}
+  closeAcctSheet();
+  activeAcct=id;
+  const info=ACCOUNTS[id];
+
+  // Update profile button
+  document.querySelector('.tb-profile-inner').textContent=info.idx;
+
+  // Update topbar pill
+  const pill=document.getElementById('tbAcctPill');
+  if(pill)pill.textContent=id;
+
+  // Update static account ID display
+  const acctIdEl=document.getElementById('acctId');
+  if(acctIdEl)acctIdEl.textContent=id;
+
+  // Reset dashboard skeletons
+  dashRevealed=false;
+  const sa=document.getElementById('skelAcct'),ra=document.getElementById('realAcct');
+  if(sa){sa.classList.remove('sk-out');sa.classList.add('sk-in');}
+  if(ra){ra.classList.remove('sk-in');ra.classList.add('sk-out');}
+  const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
+  if(sr){sr.classList.remove('sk-out');sr.classList.add('sk-in');}
+  if(rr){rr.classList.remove('sk-in');rr.classList.add('sk-out');}
+
+  // Reset payout skeleton
+  const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
+  if(sp){sp.classList.remove('sk-out');sp.classList.add('sk-in');}
+  if(rp){rp.classList.remove('sk-in');rp.classList.add('sk-out');}
+
+  // Clear analytics + journal
+  const wr=document.getElementById('wr'),pf=document.getElementById('pf');
+  const netpl=document.getElementById('netpl'),tt=document.getElementById('totalTrades');
+  if(wr)wr.textContent='—';if(pf)pf.textContent='—';
+  if(netpl)netpl.textContent='—';if(tt)tt.textContent='—';
+  const je=document.getElementById('journalEntries');
+  if(je)je.innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div>';
+  const rt=document.getElementById('recentTradesEl');
+  if(rt)rt.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div>';
+
+  // Refetch everything
+  fetchStatus();
+  const curPage=document.querySelector('.page.active');
+  if(curPage&&curPage.id==='page-account')fetchPayout();
+  if(curPage&&curPage.id==='page-analytics'){fetchAnalytics();fetchJournal();}
+}
+
+// Cache balances as they come in from fetchStatus
+function cacheBalance(id, bal){
+  acctBalances[id]=bal;
+  if(document.getElementById('acct-sheet').classList.contains('open'))renderAcctSheet();
+}
+
 
 // CLOCK
 function tick(){const t=new Date().toLocaleTimeString('en-US',{hour12:false});['clock','footerTime'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=t;});}
@@ -914,13 +1062,14 @@ async function fetchStatus(){
   try{
     const res=await fetch(API+'/extension/status');
     const data=await res.json();
-    const acct=data.accounts&&data.accounts[ACCT];
+    const acct=data.accounts&&data.accounts[activeAcct];
     const statusEl=document.getElementById('tb-status');
     if(!acct){statusEl.textContent='waiting for extension...';statusEl.style.color='var(--t3)';return;}
     statusEl.textContent='live · syncing';statusEl.style.color='var(--blue)';
     revealDash();
     const{balance,equity,profit,accountType,accountSize,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
     liveBalance=balance||10000;
+    cacheBalance(activeAcct, balance);
     document.getElementById('mBal').textContent=usd(balance);
     document.getElementById('mEq').textContent=usd(equity);
     const plEl=document.getElementById('mPL');
@@ -977,7 +1126,7 @@ fetchNews(); // populate drawer on load
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
   try{
-    const res=await fetch(API+'/extension/payout?account_id='+ACCT);
+    const res=await fetch(API+'/extension/payout?account_id='+activeAcct);
     if(!res.ok)throw new Error('status '+res.status);
     renderPayout(await res.json());
   }catch(e){
@@ -1257,14 +1406,14 @@ setInterval(()=>{if(document.getElementById('page-account').classList.contains('
 // ── PAYOUT COUNTDOWN TRACKER ──────────────────────────────────────────────────
 // We track the first-trade date and last-reset date in localStorage per account.
 // This lets us compute days until next payout window without relying on the API.
-const PAYOUT_KEY='tali_payout_'+ACCT;
+function payoutKey(){return 'tali_payout_'+activeAcct;}
 
 function getPayoutTracker(){
-  try{return JSON.parse(localStorage.getItem(PAYOUT_KEY)||'{}');}
+  try{return JSON.parse(localStorage.getItem(payoutKey())||'{}');}
   catch(e){return {};}
 }
 function savePayoutTracker(data){
-  try{localStorage.setItem(PAYOUT_KEY,JSON.stringify(data));}catch(e){}
+  try{localStorage.setItem(payoutKey(),JSON.stringify(data));}catch(e){}
 }
 
 // Called when we know the first trade date (from API or stored)
@@ -1673,7 +1822,7 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
 // JOURNAL
 async function fetchJournal(){
   try{
-    const res=await fetch(API+'/extension/journal?account_id='+ACCT+'&limit=50');
+    const res=await fetch(API+'/extension/journal?account_id='+activeAcct+'&limit=50');
     const data=await res.json();
     const trades=data.trades||[];
     document.getElementById('journalMeta').textContent=trades.length+' trades';
@@ -1703,7 +1852,7 @@ async function fetchJournal(){
 // ANALYTICS
 async function fetchAnalytics(){
   try{
-    const res=await fetch(API+'/extension/journal?account_id='+ACCT+'&limit=500');
+    const res=await fetch(API+'/extension/journal?account_id='+activeAcct+'&limit=500');
     const data=await res.json();
     const trades=data.trades||[];if(!trades.length)return;
     // reveal analytics skeletons
