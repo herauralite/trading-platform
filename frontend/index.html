@@ -993,12 +993,54 @@ function renderPayout(ev){
     const payAmt=p.payout_amount||0;
     const split=p.payout_split||80;
     const splits=p.reward_splits||{};
+    const accountSize=ev.account_size||10000;
+    const modelType=(ev.account_type||ev.model||'2_step').toLowerCase(); // fp_zero|1_step|2_step|2_step_pro
+    const rewardCycle=(p.reward_cycle||ev.reward_cycle||'bi_weekly').toLowerCase(); // on_demand|daily|weekly|bi_weekly|monthly
+    const nextPayoutDate=p.next_payout_date||null;
+    const lastPayoutDate=p.last_payout_date||null;
+
+    // ── Correct cycle days by reward_cycle ────────────────────────────────
+    function getCycleDays(cycle){
+      if(cycle.includes('daily'))    return 1;
+      if(cycle.includes('weekly')&&!cycle.includes('bi')) return 7;
+      if(cycle.includes('bi'))       return 14;
+      if(cycle.includes('monthly'))  return 30;
+      if(cycle.includes('on_demand')||cycle.includes('demand')) return null; // no cycle
+      return p.payout_cycle_days||14;
+    }
+    const payoutCycleDays=getCycleDays(rewardCycle);
+
+    // ── Correct minimum payout by model + cycle ───────────────────────────
+    // Rule: 1% of initial balance for all models
+    // Exception: On Demand (1-step & 2-step) = 2% of initial balance
+    function getMinPayout(size, model, cycle){
+      const isOnDemand=cycle.includes('on_demand')||cycle.includes('demand');
+      const pct=(isOnDemand&&(model.includes('1_step')||model.includes('2_step')&&!model.includes('pro')))?0.02:0.01;
+      return size*pct;
+    }
+    const minPayout=p.min_payout_amount||getMinPayout(accountSize, modelType, rewardCycle);
+
+    // ── Days until next payout window ─────────────────────────────────────
+    function getDaysUntil(nextDate){
+      if(!nextDate) return null;
+      const diff=Math.ceil((new Date(nextDate)-new Date())/(1000*60*60*24));
+      return Math.max(0,diff);
+    }
+    const daysUntil=payoutCycleDays===null?null:getDaysUntil(nextPayoutDate);
+    const windowOpen=daysUntil===null||daysUntil<=0;
+
+    // ── FP Zero specific flags ────────────────────────────────────────────
+    const isFpZero=modelType.includes('zero')||modelType.includes('fp_zero');
 
     hero.className='payout-hero rip'+(eligible?' eligible':breached?' breached':'');
     labelEl.textContent='Available Payout';
-    amtEl.textContent=eligible?'$'+payAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}):'$0.00';
-    amtEl.className='ph-hero-amount '+(eligible?'txt-green':breached?'txt-red':'txt-dim');
-    splitEl.textContent=split+'% split · '+Object.keys(splits).join(' / ')+' options';
+    amtEl.textContent='$'+payAmt.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    amtEl.className='ph-hero-amount '+(eligible?'txt-green':breached?'txt-red':payAmt>0?'txt-blue':'txt-dim');
+
+    // Build split label showing active cycle
+    const cycleLabel={'on_demand':'On Demand','daily':'Daily','weekly':'Weekly','bi_weekly':'Bi-Weekly','monthly':'Monthly'};
+    const cycleStr=Object.entries(cycleLabel).find(([k])=>rewardCycle.includes(k))?.[1]||'Bi-Weekly';
+    splitEl.textContent=split+'% split · '+cycleStr+(Object.keys(splits).length?' · '+Object.keys(splits).join(' / '):'');
 
     if(eligible){badge.textContent='Eligible';badge.className='ph-badge eligible';}
     else if(breached){badge.textContent='Breached';badge.className='ph-badge breached';}
@@ -1006,7 +1048,13 @@ function renderPayout(ev){
 
     reqBtn.style.opacity=eligible?'1':'0.4';
     reqBtn.style.pointerEvents=eligible?'auto':'none';
-    checksEl.innerHTML=buildChecks(checks);
+    reqBtn.style.display='';
+
+    checksEl.innerHTML=buildMasterChecks(checks, {
+      minPayout, payAmt, split, daysUntil, windowOpen,
+      nextPayoutDate, payoutCycleDays, lastPayoutDate,
+      accountSize, breached, modelType, rewardCycle, isFpZero
+    });
 
     if(Object.keys(splits).length){
       splitsSec.style.display='block';
@@ -1072,6 +1120,117 @@ function buildChecks(checks){
       ${pct!=null?`<div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${barColor};box-shadow:none;transition:width 1.2s var(--spring)"></div></div>`:''}
     </div>`;
   }).join('');
+}
+
+function buildMasterChecks(apiChecks, meta){
+  const {minPayout, payAmt, split, daysUntil, windowOpen, nextPayoutDate,
+         payoutCycleDays, lastPayoutDate, accountSize, breached,
+         modelType, rewardCycle, isFpZero}=meta;
+  const rows=[];
+
+  // ── 1. Risk limits not breached ──────────────────────────────────────────
+  rows.push(mkCheck(
+    !breached, 'Risk Limits',
+    !breached?'All limits within rules':'One or more limits breached',
+    null
+  ));
+
+  // ── 2. Minimum withdrawal amount ─────────────────────────────────────────
+  // 1% of balance for all / 2% for On Demand (1-step, 2-step)
+  const minOk=payAmt>=minPayout;
+  const minPct=minPayout>0?Math.min(100,(payAmt/minPayout)*100):100;
+  const minPctLabel=(accountSize*0.01===minPayout)?'1% min':'2% min';
+  rows.push(mkCheck(
+    minOk, 'Minimum Withdrawal ('+minPctLabel+')',
+    usd(payAmt)+' / '+usd(minPayout),
+    minOk?null:minPct
+  ));
+
+  // ── 3. Payout window ─────────────────────────────────────────────────────
+  const isOnDemand=rewardCycle.includes('on_demand')||rewardCycle.includes('demand');
+  if(isOnDemand){
+    // On Demand — no cycle, just show as always open
+    rows.push(mkCheck(true,'Payout Window','On Demand — no waiting period',null));
+  } else {
+    const windowOk=windowOpen;
+    let windowLabel,windowVal,windowPct=null;
+    if(windowOpen){
+      windowLabel='Payout Window';
+      windowVal=payoutCycleDays===1?'Daily window open':'Window open now';
+    } else {
+      const cycleNames={1:'Daily',7:'Weekly',14:'Bi-Weekly',30:'Monthly'};
+      const cycleName=cycleNames[payoutCycleDays]||payoutCycleDays+'d';
+      windowLabel=cycleName+' Payout Window';
+      const dateStr=nextPayoutDate?new Date(nextPayoutDate).toLocaleDateString('en-US',{month:'short',day:'numeric'}):'';
+      windowVal=daysUntil+'d away'+(dateStr?' · '+dateStr:'');
+      windowPct=payoutCycleDays>0?Math.min(100,Math.round(((payoutCycleDays-daysUntil)/payoutCycleDays)*100)):0;
+    }
+    rows.push(mkCheck(windowOk,windowLabel,windowVal,windowOk?null:windowPct));
+  }
+
+  // ── 4. FP Zero: Safety cushion (first 3% not withdrawable) ───────────────
+  if(isFpZero){
+    const cushion=accountSize*0.03;
+    const cushionOk=payAmt>cushion;
+    const cushionPct=Math.min(100,(payAmt/cushion)*100);
+    rows.push(mkCheck(
+      cushionOk,'3% Safety Cushion',
+      cushionOk?'Cushion cleared':''+usd(payAmt)+' / '+usd(cushion)+' threshold',
+      cushionOk?null:cushionPct
+    ));
+  }
+
+  // ── 5. API checks — smart filter based on model ───────────────────────────
+  // Always skip min_trading_days for master (eval only)
+  // Keep profitable_days only for FP Zero (it has a 7-day/30-cycle requirement)
+  const alwaysSkip=['min_trading_days','trading_days','minimum_trading_days'];
+  const fpZeroOnly=['profitable_days','minimum_profitable_days','profitable_day'];
+
+  Object.entries(apiChecks).forEach(([key,c])=>{
+    const k=key.toLowerCase();
+    if(alwaysSkip.some(s=>k.includes(s)))return;
+    if(!isFpZero&&fpZeroOnly.some(s=>k.includes(s)))return;
+    const ok=c.passed;
+    const pct=c.pct!=null?Math.min(100,c.pct):null;
+    let val='';
+    if(c.required!=null)val=usd(c.current)+' / '+usd(c.required);
+    else if(c.current!=null)val=String(c.current);
+    rows.push(mkCheck(ok,c.label||key,val,ok?null:pct));
+  });
+
+  // ── 6. FP Zero: Biggest loss ≤ biggest win ────────────────────────────────
+  // Only show if API hasn't already returned this check
+  if(isFpZero){
+    const hasLossWinCheck=Object.keys(apiChecks).some(k=>k.toLowerCase().includes('biggest_loss')||k.toLowerCase().includes('loss_win'));
+    if(!hasLossWinCheck){
+      const bigLoss=meta.biggest_loss||null;
+      const bigWin=meta.biggest_win||null;
+      if(bigLoss!==null&&bigWin!==null){
+        const lossWinOk=bigLoss<=bigWin;
+        rows.push(mkCheck(lossWinOk,'Biggest Loss ≤ Biggest Win',
+          usd(bigLoss)+' loss / '+usd(bigWin)+' win',null));
+      }
+    }
+  }
+
+  return rows.join('');
+}
+
+function mkCheck(ok, label, subtext, pct){
+  const barColor=ok?'var(--green)':pct!=null&&pct>50?'var(--orange)':'var(--red)';
+  const icon=ok
+    ?'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
+    :'<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  return`<div class="pcheck ${ok?'passed':'failed'}">
+    <div class="pcheck-row">
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="display:inline-flex;vertical-align:middle">${icon}</span>
+        <span class="pcheck-label">${label}</span>
+      </div>
+      <div class="pcheck-val">${subtext||''}</div>
+    </div>
+    ${pct!=null?`<div class="bar-bg" style="margin-top:4px"><div class="bar-fill" style="width:${pct}%;background:${barColor};box-shadow:none;transition:width 1.2s var(--spring)"></div></div>`:''}
+  </div>`;
 }
 
 // Poll payout every 30s when visible
