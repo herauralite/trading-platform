@@ -565,29 +565,76 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="sec-meta" id="payoutMeta" style="color:var(--t3)">—</div>
   </div>
 
-  <div class="payout-hero rip" id="payoutHero">
-    <div class="ph-top">
-      <div>
-        <div class="ph-hero-label" id="payoutHeroLabel">Payout Available</div>
-        <div class="ph-hero-amount txt-dim" id="payoutHeroAmt">$—</div>
-        <div class="ph-hero-split" id="payoutHeroSplit">loading...</div>
+  <!-- PAYOUT SKELETON -->
+  <div class="sk-wrap" id="payoutWrap" style="margin-bottom:10px">
+    <div class="payout-hero sk-fade sk-in" id="skelPayout">
+      <div class="ph-top" style="margin-bottom:18px">
+        <div style="flex:1">
+          <div class="skel skel-r" style="width:100px;height:9px;margin-bottom:10px"></div>
+          <div class="skel" style="width:140px;height:34px;margin-bottom:8px"></div>
+          <div class="skel skel-r" style="width:180px;height:10px"></div>
+        </div>
+        <div class="skel skel-r" style="width:80px;height:28px;margin-top:4px"></div>
       </div>
-      <div class="ph-badge not-yet" id="payoutBadge">Loading…</div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:16px">
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);padding:11px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="skel skel-r" style="width:130px;height:11px"></div>
+            <div class="skel skel-r" style="width:50px;height:9px"></div>
+          </div>
+          <div class="skel skel-r" style="width:100%;height:4px"></div>
+        </div>
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);padding:11px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="skel skel-r" style="width:110px;height:11px"></div>
+            <div class="skel skel-r" style="width:50px;height:9px"></div>
+          </div>
+          <div class="skel skel-r" style="width:100%;height:4px"></div>
+        </div>
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);padding:11px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="skel skel-r" style="width:150px;height:11px"></div>
+            <div class="skel skel-r" style="width:50px;height:9px"></div>
+          </div>
+          <div class="skel skel-r" style="width:100%;height:4px"></div>
+        </div>
+        <div style="background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);padding:11px 14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+            <div class="skel skel-r" style="width:120px;height:11px"></div>
+            <div class="skel skel-r" style="width:50px;height:9px"></div>
+          </div>
+          <div class="skel skel-r" style="width:100%;height:4px"></div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px">
+        <div class="skel" style="flex:1;height:42px;border-radius:10px"></div>
+        <div class="skel" style="width:80px;height:42px;border-radius:10px"></div>
+      </div>
     </div>
-    <div class="payout-checks" id="payoutChecks">
-      <div style="text-align:center;padding:14px;color:var(--t3);font-size:11px">Fetching eligibility...</div>
-    </div>
-    <div id="rewardSplitsSection" style="display:none;margin-bottom:16px">
-      <div style="font-size:10px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--t3);margin-bottom:8px">Reward Splits</div>
-      <div class="reward-splits" id="rewardSplitsGrid"></div>
-    </div>
-    <div style="display:flex;gap:10px" id="payoutBtnRow">
-      <div class="btn btn-green rip" style="padding:10px 28px;flex:1;opacity:0.45;pointer-events:none" id="payoutRequestBtn">Request Payout</div>
-      <div class="btn btn-ghost rip" style="padding:10px 20px">History</div>
+
+    <!-- REAL PAYOUT HERO -->
+    <div class="payout-hero rip sk-fade sk-out" id="payoutHero">
+      <div class="ph-top">
+        <div>
+          <div class="ph-hero-label" id="payoutHeroLabel">Payout Available</div>
+          <div class="ph-hero-amount txt-dim" id="payoutHeroAmt">$—</div>
+          <div class="ph-hero-split" id="payoutHeroSplit"></div>
+        </div>
+        <div class="ph-badge not-yet" id="payoutBadge">—</div>
+      </div>
+      <div class="payout-checks" id="payoutChecks"></div>
+      <div id="rewardSplitsSection" style="display:none;margin-bottom:16px">
+        <div style="font-size:10px;font-weight:600;letter-spacing:0.8px;text-transform:uppercase;color:var(--t3);margin-bottom:8px">Reward Splits</div>
+        <div class="reward-splits" id="rewardSplitsGrid"></div>
+      </div>
+      <div style="display:flex;gap:10px" id="payoutBtnRow">
+        <div class="btn btn-green rip" style="padding:10px 28px;flex:1;opacity:0.45;pointer-events:none" id="payoutRequestBtn">Request Payout</div>
+        <div class="btn btn-ghost rip" style="padding:10px 20px">History</div>
+      </div>
     </div>
   </div>
 
-  <div id="phaseProgressSection" style="display:none">
+  <div id="phaseProgressSection" style="display:none;margin-bottom:10px">
     <div class="phase-card">
       <div class="phase-head">
         <div class="phase-title" id="ppTitle">Phase Progress</div>
@@ -888,13 +935,40 @@ fetchNews(); // populate drawer on load
 async function fetchPayout(){
   try{
     const res=await fetch(API+'/extension/payout?account_id='+ACCT);
+    if(!res.ok)throw new Error('status '+res.status);
     renderPayout(await res.json());
   }catch(e){
-    document.getElementById('payoutChecks').innerHTML='<div style="text-align:center;padding:16px;color:var(--red);font-size:11px">Could not load payout data</div>';
+    // dismiss skeleton, show error in real card
+    const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
+    if(sp){sp.classList.remove('sk-in');sp.classList.add('sk-out');}
+    if(rp){rp.classList.remove('sk-out');rp.classList.add('sk-in');}
+    document.getElementById('payoutHeroLabel').textContent='Payout Status';
+    document.getElementById('payoutHeroAmt').textContent='$—';
+    document.getElementById('payoutHeroAmt').className='ph-hero-amount txt-dim';
+    document.getElementById('payoutHeroSplit').textContent='Could not reach server';
+    document.getElementById('payoutBadge').textContent='Offline';
+    document.getElementById('payoutBadge').className='ph-badge not-yet';
+    document.getElementById('payoutChecks').innerHTML=`
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid rgba(224,92,92,0.15);border-radius:var(--rs)">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--red)" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+        <span style="font-size:12px;color:var(--t3)">Unable to load eligibility data — tap to retry</span>
+      </div>`;
+    document.getElementById('payoutChecks').onclick=()=>{
+      document.getElementById('payoutChecks').onclick=null;
+      const sp2=document.getElementById('skelPayout');
+      if(sp2){sp2.classList.remove('sk-out');sp2.classList.add('sk-in');}
+      if(rp){rp.classList.remove('sk-in');rp.classList.add('sk-out');}
+      fetchPayout();
+    };
   }
 }
 
 function renderPayout(ev){
+  // reveal skeleton → real
+  const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
+  if(sp){sp.classList.remove('sk-in');sp.classList.add('sk-out');}
+  if(rp){rp.classList.remove('sk-out');rp.classList.add('sk-in');}
+
   const hero=document.getElementById('payoutHero');
   const badge=document.getElementById('payoutBadge');
   const amtEl=document.getElementById('payoutHeroAmt');
