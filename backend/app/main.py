@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import text
 
 if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
     raise RuntimeError("Set WEB_CONCURRENCY=1.")
@@ -32,19 +33,163 @@ INDEX_KEYWORDS = [
 ]
 WARN_MINUTES = 10
 
-# ── Weekend close times (ET) ──────────────────────────────────────────────────
-# Forex/Indices market closes Friday ~5:00 PM ET
-# Warn at 4:00 PM ET (1 hour before) and 4:45 PM ET (15 min before)
-FRIDAY_WARN_HOURS_ET = [16, 16, 16]   # 4:00 PM
-FRIDAY_WARN_MINS_ET  = [0,  30, 45]   # :00, :30, :45
-FRIDAY_CLOSE_HOUR_ET = 17             # 5:00 PM ET = market close
+FRIDAY_WARN_HOURS_ET = [16, 16, 16]
+FRIDAY_WARN_MINS_ET  = [0,  30, 45]
+FRIDAY_CLOSE_HOUR_ET = 17
+
+
+# ── DB helpers ────────────────────────────────────────────────────────────────
+async def ensure_trades_table():
+    """Create trades table if it doesn't exist (safe to run every startup)."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS trades (
+                id          SERIAL PRIMARY KEY,
+                account_id  TEXT,
+                account_type TEXT,
+                account_size INTEGER,
+                symbol      TEXT,
+                direction   TEXT,
+                volume      FLOAT,
+                open_price  FLOAT,
+                close_price FLOAT,
+                pnl         FLOAT,
+                balance_after FLOAT,
+                equity_after  FLOAT,
+                daily_loss_used  FLOAT,
+                daily_loss_limit FLOAT,
+                overall_loss_used  FLOAT,
+                overall_loss_limit FLOAT,
+                closed_at   TIMESTAMPTZ,
+                logged_at   TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+    logger.info("trades table ready")
+
+
+async def db_insert_trade(trade_dict: dict):
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO trades (
+                account_id, account_type, account_size,
+                symbol, direction, volume, open_price, close_price, pnl,
+                balance_after, equity_after,
+                daily_loss_used, daily_loss_limit,
+                overall_loss_used, overall_loss_limit,
+                closed_at
+            ) VALUES (
+                :accountId, :accountType, :accountSize,
+                :symbol, :direction, :volume, :openPrice, :closePrice, :pnl,
+                :balanceAfter, :equityAfter,
+                :dailyLossUsed, :dailyLossLimit,
+                :overallLossUsed, :overallLossLimit,
+                :closedAt
+            )
+        """), {
+            "accountId":        trade_dict.get("accountId"),
+            "accountType":      trade_dict.get("accountType"),
+            "accountSize":      trade_dict.get("accountSize"),
+            "symbol":           trade_dict.get("symbol"),
+            "direction":        trade_dict.get("direction"),
+            "volume":           trade_dict.get("volume"),
+            "openPrice":        trade_dict.get("openPrice"),
+            "closePrice":       trade_dict.get("closePrice"),
+            "pnl":              trade_dict.get("pnl"),
+            "balanceAfter":     trade_dict.get("balanceAfter"),
+            "equityAfter":      trade_dict.get("equityAfter"),
+            "dailyLossUsed":    trade_dict.get("dailyLossUsed"),
+            "dailyLossLimit":   trade_dict.get("dailyLossLimit"),
+            "overallLossUsed":  trade_dict.get("overallLossUsed"),
+            "overallLossLimit": trade_dict.get("overallLossLimit"),
+            "closedAt":         trade_dict.get("closedAt"),
+        })
+
+
+async def db_get_trades(account_id: str = None, limit: int = 50) -> list:
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        if account_id:
+            result = await conn.execute(text("""
+                SELECT * FROM trades
+                WHERE account_id = :account_id
+                ORDER BY logged_at DESC
+                LIMIT :limit
+            """), {"account_id": account_id, "limit": limit})
+        else:
+            result = await conn.execute(text("""
+                SELECT * FROM trades
+                ORDER BY logged_at DESC
+                LIMIT :limit
+            """), {"limit": limit})
+        rows = result.mappings().all()
+        return [dict(r) for r in rows]
+
+
+async def db_get_trades_today(account_id: str = None) -> list:
+    from app.core.database import engine
+    today = date.today().isoformat()
+    async with engine.connect() as conn:
+        if account_id:
+            result = await conn.execute(text("""
+                SELECT * FROM trades
+                WHERE account_id = :account_id
+                  AND closed_at::date = :today
+                ORDER BY logged_at DESC
+            """), {"account_id": account_id, "today": today})
+        else:
+            result = await conn.execute(text("""
+                SELECT * FROM trades
+                WHERE closed_at::date = :today
+                ORDER BY logged_at DESC
+            """), {"today": today})
+        rows = result.mappings().all()
+        return [dict(r) for r in rows]
+
+
+def row_to_trade(row: dict) -> dict:
+    """Normalise DB row to the same shape the frontend/telegram expects."""
+    closed = row.get("closed_at")
+    if closed and hasattr(closed, "isoformat"):
+        closed = closed.isoformat()
+    logged = row.get("logged_at")
+    if logged and hasattr(logged, "isoformat"):
+        logged = logged.isoformat()
+
+    pnl = row.get("pnl") or 0
+    daily_used  = row.get("daily_loss_used")  or 0
+    daily_limit = row.get("daily_loss_limit") or 500
+    daily_pct   = round(daily_used / daily_limit * 100) if daily_limit else 0
+
+    return {
+        "accountId":        row.get("account_id"),
+        "accountType":      row.get("account_type"),
+        "accountSize":      row.get("account_size"),
+        "symbol":           row.get("symbol"),
+        "direction":        row.get("direction"),
+        "volume":           row.get("volume"),
+        "openPrice":        row.get("open_price"),
+        "closePrice":       row.get("close_price"),
+        "pnl":              pnl,
+        "balanceAfter":     row.get("balance_after"),
+        "equityAfter":      row.get("equity_after"),
+        "dailyLossUsed":    daily_used,
+        "dailyLossLimit":   daily_limit,
+        "overallLossUsed":  row.get("overall_loss_used"),
+        "overallLossLimit": row.get("overall_loss_limit"),
+        "dailyPct":         daily_pct,
+        "closedAt":         closed,
+        "logged_at":        logged,
+    }
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
+    await ensure_trades_table()
     await setup_telegram_webhook()
-    news_task = asyncio.create_task(news_scheduler())
+    news_task    = asyncio.create_task(news_scheduler())
     weekend_task = asyncio.create_task(weekend_scheduler())
     yield
     news_task.cancel()
@@ -52,7 +197,7 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
 
 
-app = FastAPI(title="TaliTrade", version="2.0.0", lifespan=lifespan)
+app = FastAPI(title="TaliTrade", version="3.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,7 +218,6 @@ async def health():
 
 
 from app.core.database import engine
-from sqlalchemy import text
 
 @app.get("/health/db")
 async def health_db():
@@ -119,80 +263,58 @@ async def setup_telegram_webhook():
         logger.error(f"Webhook setup failed: {e}")
 
 
-# ── Weekend Close Scheduler ───────────────────────────────────────────────────
+# ── Weekend scheduler ─────────────────────────────────────────────────────────
 weekend_alerted = set()
 
 async def weekend_scheduler():
-    """Fire reminders Friday afternoon to close all positions before market close."""
     logger.info("Weekend scheduler started")
-
     while True:
         try:
             now_utc = datetime.now(timezone.utc)
-
-            # Convert to ET
             et_offset = -4 if 3 <= now_utc.month <= 11 else -5
             now_et = now_utc + timedelta(hours=et_offset)
-
-            # Only run on Fridays (weekday 4)
             if now_et.weekday() == 4:
                 today_key = now_et.strftime("%Y-%m-%d")
-
-                # Check each warning time
                 warn_times = [
-                    (16, 0,  "1 HOUR",   "⚠️"),
-                    (16, 30, "30 MINUTES","🔴"),
-                    (16, 45, "15 MINUTES","🚨"),
+                    (16, 0,  "1 HOUR",    "⚠️"),
+                    (16, 30, "30 MINUTES", "🔴"),
+                    (16, 45, "15 MINUTES", "🚨"),
                 ]
-
                 for warn_hour, warn_min, label, icon in warn_times:
                     alert_key = f"{today_key}_{warn_hour}_{warn_min}"
                     if alert_key in weekend_alerted:
                         continue
-
-                    # Check if we're within 1 minute of warning time
                     target = now_et.replace(hour=warn_hour, minute=warn_min, second=0, microsecond=0)
-                    diff = abs((now_et - target).total_seconds())
-
-                    if diff <= 60:
+                    if abs((now_et - target).total_seconds()) <= 60:
                         weekend_alerted.add(alert_key)
-
-                        # Check if any positions are open
                         open_accounts = [
                             acct_id for acct_id, acct in account_data_store.items()
                             if acct.get("hasPositions")
                         ]
-
                         position_warning = ""
                         if open_accounts:
                             position_warning = (
                                 f"\n🔴 <b>YOU HAVE OPEN POSITIONS!</b>\n"
                                 f"Accounts: {', '.join(open_accounts)}\n"
-                                f"Any profits from these trades will NOT count.\n"
+                                f"Any profits will NOT count.\n"
                             )
-
                         msg = (
                             f"{icon} <b>MARKET CLOSES IN {label}</b>\n"
                             f"{'─'*28}\n"
-                            f"🗓 Friday market close: <b>5:00 PM ET</b>\n"
+                            f"🗓 Friday close: <b>5:00 PM ET</b>\n"
                             f"📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n"
                             f"{position_warning}"
                             f"{'─'*28}\n"
-                            f"⚠️ FundingPips rule: holding over the weekend\n"
-                            f"is <b>not permitted</b> on Master accounts.\n"
-                            f"Profits will <b>not count</b> — close before 5 PM ET\n"
-                            f"to protect your gains."
+                            f"⚠️ Holding over weekend is <b>not permitted</b>.\n"
+                            f"Profits will <b>not count</b> — close before 5 PM ET."
                         )
                         await send_telegram(msg)
-                        logger.info(f"Weekend alert sent: {label} warning")
-
         except Exception as e:
             logger.error(f"Weekend scheduler error: {e}")
+        await asyncio.sleep(60)
 
-        await asyncio.sleep(60)  # check every minute
 
-
-# ── News Calendar ─────────────────────────────────────────────────────────────
+# ── News calendar ─────────────────────────────────────────────────────────────
 news_cache = []
 news_alerted = set()
 news_last_fetch = None
@@ -200,8 +322,8 @@ news_last_fetch = None
 
 def is_index_relevant(event: dict) -> bool:
     currency = (event.get("country") or "").upper()
-    title = (event.get("title") or "").lower()
-    impact = (event.get("impact") or "").lower()
+    title    = (event.get("title")   or "").lower()
+    impact   = (event.get("impact")  or "").lower()
     if impact not in ["high", "red", "3"]:
         return False
     if currency in INDEX_CURRENCIES:
@@ -240,15 +362,11 @@ def parse_event_time(event: dict):
             return None
         dt_date = datetime.strptime(date_str, "%m-%d-%Y").date()
         time_str = time_str.strip().lower()
-        if ":" in time_str:
-            dt_time = datetime.strptime(time_str, "%I:%M%p").time()
-        else:
-            dt_time = datetime.strptime(time_str, "%I%p").time()
+        dt_time = (datetime.strptime(time_str, "%I:%M%p") if ":" in time_str
+                   else datetime.strptime(time_str, "%I%p")).time()
         naive = datetime.combine(dt_date, dt_time)
-        month = dt_date.month
-        offset = -4 if 3 <= month <= 11 else -5
-        utc_dt = naive.replace(tzinfo=timezone(timedelta(hours=offset)))
-        return utc_dt.astimezone(timezone.utc)
+        offset = -4 if 3 <= dt_date.month <= 11 else -5
+        return naive.replace(tzinfo=timezone(timedelta(hours=offset))).astimezone(timezone.utc)
     except Exception:
         return None
 
@@ -266,68 +384,61 @@ async def news_scheduler():
                 if not event_time:
                     continue
                 minutes_until = (event_time - now).total_seconds() / 60
-                alert_key = f"{event.get('title','')}_{event_time.isoformat()}"
-                if WARN_MINUTES - 1 <= minutes_until <= WARN_MINUTES + 1:
-                    if alert_key not in news_alerted:
-                        news_alerted.add(alert_key)
-                        await send_news_alert(event, event_time, round(minutes_until))
-                alert_key_30 = f"30min_{event.get('title','')}_{event_time.isoformat()}"
+                key = f"{event.get('title','')}_{event_time.isoformat()}"
+                if WARN_MINUTES - 1 <= minutes_until <= WARN_MINUTES + 1 and key not in news_alerted:
+                    news_alerted.add(key)
+                    await send_news_alert(event, event_time, round(minutes_until))
+                key30 = f"30min_{key}"
                 title_lower = (event.get("title") or "").lower()
-                is_speech = any(w in title_lower for w in ["speech", "fomc", "powell", "fed chair", "testimony"])
-                if is_speech and 29 <= minutes_until <= 31:
-                    if alert_key_30 not in news_alerted:
-                        news_alerted.add(alert_key_30)
-                        await send_news_alert(event, event_time, round(minutes_until))
+                is_speech = any(w in title_lower for w in ["speech","fomc","powell","fed chair","testimony"])
+                if is_speech and 29 <= minutes_until <= 31 and key30 not in news_alerted:
+                    news_alerted.add(key30)
+                    await send_news_alert(event, event_time, round(minutes_until))
         except Exception as e:
             logger.error(f"News scheduler error: {e}")
         await asyncio.sleep(60)
 
 
 async def send_news_alert(event: dict, event_time: datetime, minutes: int):
-    title = event.get("title", "Unknown Event")
+    title    = event.get("title", "Unknown Event")
     currency = (event.get("country") or "").upper()
     forecast = event.get("forecast", "")
     previous = event.get("previous", "")
     et_offset = -4 if 3 <= event_time.month <= 11 else -5
     et_time = event_time + timedelta(hours=et_offset)
     time_str = et_time.strftime("%I:%M %p ET")
-    affected = "DJI30, NAS100, SP500"
-    title_lower = title.lower()
+    tl = title.lower()
     guidance = ""
-    if any(w in title_lower for w in ["fomc", "fed", "powell", "interest rate"]):
+    if any(w in tl for w in ["fomc","fed","powell","interest rate"]):
         guidance = "⚡ <b>Fed event — expect high volatility.</b>\n"
-    elif any(w in title_lower for w in ["non-farm", "nfp", "payroll"]):
+    elif any(w in tl for w in ["non-farm","nfp","payroll"]):
         guidance = "⚡ <b>NFP — biggest mover for indices.</b>\n"
-    elif any(w in title_lower for w in ["cpi", "inflation", "pce"]):
+    elif any(w in tl for w in ["cpi","inflation","pce"]):
         guidance = "⚡ <b>Inflation data — major rate expectations impact.</b>\n"
     forecast_line = f"Forecast: <b>{forecast}</b> | Previous: {previous}\n" if forecast else ""
-    msg = (
-        f"🗞 <b>HIGH-IMPACT NEWS IN {minutes} MIN</b>\n"
-        f"{'─'*28}\n"
+    await send_telegram(
+        f"🗞 <b>HIGH-IMPACT NEWS IN {minutes} MIN</b>\n{'─'*28}\n"
         f"📌 <b>{title}</b>\n"
         f"🌍 Currency: <b>{currency}</b>\n"
         f"🕐 Time: <b>{time_str}</b>\n"
-        f"📊 Affects: <b>{affected}</b>\n"
-        f"{forecast_line}"
-        f"{'─'*28}\n"
+        f"📊 Affects: <b>DJI30, NAS100, SP500</b>\n"
+        f"{forecast_line}{'─'*28}\n"
         f"{guidance}"
         f"⚠️ No trades within <b>5 min before or after</b> this event."
     )
-    await send_telegram(msg)
     logger.info(f"News alert: {title} in {minutes} min")
 
 
-# ── In-memory stores ──────────────────────────────────────────────────────────
+# ── In-memory store (account state only, NOT trades) ─────────────────────────
 account_data_store: dict = {}
-trade_journal: list = []
 
 
-# ── Telegram Webhook ──────────────────────────────────────────────────────────
+# ── Telegram webhook ──────────────────────────────────────────────────────────
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    body = await request.json()
+    body    = await request.json()
     message = body.get("message", {})
-    text = message.get("text", "").strip().lower()
+    text    = message.get("text", "").strip().lower()
     chat_id = str(message.get("chat", {}).get("id", ""))
 
     if text in ["/status", "/status@talitrade_bot"]:
@@ -352,8 +463,8 @@ async def telegram_webhook(request: Request):
 
 
 async def handle_news(chat_id: str):
-    events = await fetch_news_calendar()
-    now = datetime.now(timezone.utc)
+    events  = await fetch_news_calendar()
+    now     = datetime.now(timezone.utc)
     upcoming = []
     for event in events:
         if not is_index_relevant(event):
@@ -361,9 +472,9 @@ async def handle_news(chat_id: str):
         event_time = parse_event_time(event)
         if not event_time:
             continue
-        minutes_until = (event_time - now).total_seconds() / 60
-        if 0 < minutes_until < 480:
-            upcoming.append((minutes_until, event, event_time))
+        mins = (event_time - now).total_seconds() / 60
+        if 0 < mins < 480:
+            upcoming.append((mins, event, event_time))
     upcoming.sort(key=lambda x: x[0])
     if not upcoming:
         await send_telegram("📅 No high-impact news in the next 8 hours.", chat_id=chat_id)
@@ -375,15 +486,12 @@ async def handle_news(chat_id: str):
         time_str = et_time.strftime("%I:%M %p")
         when = f"in {round(mins)}m" if mins < 60 else f"in {round(mins/60,1)}h"
         lines.append(f"🔴 <b>{event.get('title','?')}</b> — {time_str} ET ({when})")
-    msg = (
-        f"📅 <b>Upcoming High-Impact News</b>\n"
-        f"<i>Affects: DJI30, NAS100, SP500</i>\n"
-        f"{'─'*28}\n\n"
-        + "\n".join(lines) +
-        f"\n\n{'─'*28}\n"
-        f"⚠️ No trades within 5 min before/after each event."
+    await send_telegram(
+        f"📅 <b>Upcoming High-Impact News</b>\n<i>DJI30, NAS100, SP500</i>\n{'─'*28}\n\n"
+        + "\n".join(lines)
+        + f"\n\n{'─'*28}\n⚠️ No trades within 5 min before/after each event.",
+        chat_id=chat_id
     )
-    await send_telegram(msg, chat_id=chat_id)
 
 
 async def handle_status(chat_id: str):
@@ -391,13 +499,13 @@ async def handle_status(chat_id: str):
         await send_telegram("📡 No data — open FundingPips in your browser first.", chat_id=chat_id)
         return
     acct_id = "1917136" if "1917136" in account_data_store else list(account_data_store.keys())[0]
-    acct = account_data_store[acct_id]
+    acct    = account_data_store[acct_id]
     balance = acct.get("balance") or 0
-    equity = acct.get("equity") or 0
-    profit = acct.get("profit") or 0
-    risk = acct.get("riskPerTradeIdea") or {}
-    daily = acct.get("dailyLoss") or {}
-    overall = acct.get("overallLoss") or {}
+    equity  = acct.get("equity")  or 0
+    profit  = acct.get("profit")  or 0
+    risk    = acct.get("riskPerTradeIdea") or {}
+    daily   = acct.get("dailyLoss")        or {}
+    overall = acct.get("overallLoss")      or {}
     acct_type = acct.get("accountType", "unknown")
     acct_size = acct.get("accountSize", 10000)
     last = (acct.get("last_updated") or "")[:19].replace("T", " ")
@@ -405,12 +513,11 @@ async def handle_status(chat_id: str):
     def bar(pct):
         f = round((pct or 0) / 10)
         return "█" * f + "░" * (10 - f)
-
     def icon(pct):
         if pct is None: return "⚪"
-        if pct >= 90: return "🚨"
-        if pct >= 75: return "🔴"
-        if pct >= 50: return "⚠️"
+        if pct >= 90:   return "🚨"
+        if pct >= 75:   return "🔴"
+        if pct >= 50:   return "⚠️"
         return "✅"
 
     risk_line = ""
@@ -420,75 +527,72 @@ async def handle_status(chat_id: str):
             f"  {bar(risk.get('pct',0))}  ${risk.get('combined',0):.0f} / ${risk.get('limit',300):.0f}\n"
             f"  Remaining: <b>${risk.get('remaining',300):.0f}</b>\n\n"
         )
-    msg = (
-        f"📊 <b>TaliTrade — {acct_id}</b>\n"
-        f"<i>{acct_type} | ${acct_size/1000:.0f}K</i>\n"
-        f"{'─'*28}\n\n"
+    await send_telegram(
+        f"📊 <b>TaliTrade — {acct_id}</b>\n<i>{acct_type} | ${acct_size/1000:.0f}K</i>\n{'─'*28}\n\n"
         f"💰 Balance: <b>${balance:.2f}</b>\n"
         f"📈 Equity:  <b>${equity:.2f}</b>\n"
         f"📉 P&L:     <b>{'+'if profit>=0 else ''}{profit:.2f}</b>\n\n"
-        f"{'─'*28}\n"
-        f"{risk_line}"
+        f"{'─'*28}\n{risk_line}"
         f"{icon(daily.get('pct'))} <b>Daily Loss</b>  {daily.get('pct',0)}%\n"
         f"  {bar(daily.get('pct',0))}  ${daily.get('used',0):.0f} / ${daily.get('limit',500):.0f}\n"
         f"  Remaining: <b>${daily.get('remaining',500):.0f}</b>\n\n"
         f"{icon(overall.get('pct'))} <b>Overall Loss</b>  {overall.get('pct',0)}%\n"
         f"  {bar(overall.get('pct',0))}  ${overall.get('used',0):.0f} / ${overall.get('limit',1000):.0f}\n"
         f"  Remaining: <b>${overall.get('remaining',1000):.0f}</b>\n\n"
-        f"{'─'*28}\n"
-        f"🕐 {last} UTC"
+        f"{'─'*28}\n🕐 {last} UTC",
+        chat_id=chat_id
     )
-    await send_telegram(msg, chat_id=chat_id)
 
 
 async def handle_today(chat_id: str):
+    today_trades_raw = await db_get_trades_today(account_id="1917136")
+    today_trades = [row_to_trade(r) for r in today_trades_raw]
     today = date.today().isoformat()
-    today_trades = [t for t in trade_journal if (t.get("closedAt") or "").startswith(today)]
     if not today_trades:
         await send_telegram(f"📅 No trades logged today ({today}).", chat_id=chat_id)
         return
     total_pnl = sum(t.get("pnl") or 0 for t in today_trades)
-    wins = [t for t in today_trades if (t.get("pnl") or 0) > 0]
-    losses = [t for t in today_trades if (t.get("pnl") or 0) <= 0]
-    win_rate = round(len(wins) / len(today_trades) * 100)
+    wins      = [t for t in today_trades if (t.get("pnl") or 0) > 0]
+    win_rate  = round(len(wins) / len(today_trades) * 100)
     lines = [
-        f"{'✅'if(t.get('pnl')or 0)>0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} "
+        f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} "
         f"<b>{'+'if(t.get('pnl')or 0)>=0 else ''}{(t.get('pnl')or 0):.2f}</b> @ {(t.get('closedAt') or '')[11:16]}"
         for t in today_trades
     ]
-    msg = (
+    await send_telegram(
         f"📅 <b>Today — {today}</b>\n{'─'*28}\n\n"
-        + "\n".join(lines) +
-        f"\n\n{'─'*28}\n"
-        f"P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | "
-        f"{len(today_trades)} trades | WR: {win_rate}%"
+        + "\n".join(lines)
+        + f"\n\n{'─'*28}\n"
+          f"P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | "
+          f"{len(today_trades)} trades | WR: {win_rate}%",
+        chat_id=chat_id
     )
-    await send_telegram(msg, chat_id=chat_id)
 
 
 async def handle_journal(chat_id: str):
-    recent = trade_journal[:10]
+    recent_raw = await db_get_trades(account_id="1917136", limit=10)
+    recent = [row_to_trade(r) for r in recent_raw]
     if not recent:
         await send_telegram("📒 No trades in journal yet.", chat_id=chat_id)
         return
     total_pnl = sum(t.get("pnl") or 0 for t in recent)
     wins = len([t for t in recent if (t.get("pnl") or 0) > 0])
     lines = [
-        f"{'✅'if(t.get('pnl')or 0)>0 else '❌'} <b>{t.get('symbol','?')}</b> "
+        f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} <b>{t.get('symbol','?')}</b> "
         f"{t.get('direction','?')} {'+'if(t.get('pnl')or 0)>=0 else ''}{(t.get('pnl')or 0):.2f} | "
         f"{(t.get('closedAt') or '')[:10]}"
         for t in recent
     ]
-    msg = (
+    await send_telegram(
         f"📒 <b>Last {len(recent)} Trades</b>\n{'─'*28}\n\n"
-        + "\n".join(lines) +
-        f"\n\n{'─'*28}\n"
-        f"P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | WR: {round(wins/len(recent)*100)}%"
+        + "\n".join(lines)
+        + f"\n\n{'─'*28}\n"
+          f"P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | WR: {round(wins/len(recent)*100)}%",
+        chat_id=chat_id
     )
-    await send_telegram(msg, chat_id=chat_id)
 
 
-# ── Extension Endpoints ───────────────────────────────────────────────────────
+# ── Extension endpoints ───────────────────────────────────────────────────────
 class ExtensionData(BaseModel):
     profit: float | None = None
     balance: float | None = None
@@ -526,15 +630,15 @@ async def receive_extension_data(data: ExtensionData):
             )
         if prev_profit < 0 and curr_profit >= 0:
             await send_telegram(f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}")
-    risk = data.riskPerTradeIdea or {}
-    daily = data.dailyLoss or {}
-    overall = data.overallLoss or {}
+    risk    = data.riskPerTradeIdea or {}
+    daily   = data.dailyLoss        or {}
+    overall = data.overallLoss      or {}
     return {
         "status": "ok", "account": account_id,
         "balance": data.balance, "equity": data.equity,
-        "tradeRisk": {"used": risk.get("combined"), "remaining": risk.get("remaining"), "pct": risk.get("pct")},
-        "dailyLoss": {"used": daily.get("used"), "remaining": daily.get("remaining"), "pct": daily.get("pct")},
-        "overallLoss": {"used": overall.get("used"), "remaining": overall.get("remaining"), "pct": overall.get("pct")},
+        "tradeRisk":   {"used": risk.get("combined"),   "remaining": risk.get("remaining"),   "pct": risk.get("pct")},
+        "dailyLoss":   {"used": daily.get("used"),       "remaining": daily.get("remaining"),   "pct": daily.get("pct")},
+        "overallLoss": {"used": overall.get("used"),     "remaining": overall.get("remaining"), "pct": overall.get("pct")},
         "alerts_fired": len(data.alerts)
     }
 
@@ -560,13 +664,12 @@ class TradeData(BaseModel):
 
 @app.post("/extension/trade")
 async def log_trade(trade: TradeData):
-    entry = {**trade.dict(), "logged_at": datetime.utcnow().isoformat()}
-    trade_journal.insert(0, entry)
-    if len(trade_journal) > 500:
-        trade_journal.pop()
-    pnl = trade.pnl or 0
-    icon = "✅" if pnl > 0 else "❌"
-    daily_pct = round((trade.dailyLossUsed or 0) / (trade.dailyLossLimit or 500) * 100)
+    # Persist to Neon
+    await db_insert_trade(trade.dict())
+
+    pnl         = trade.pnl or 0
+    icon        = "✅" if pnl > 0 else "❌"
+    daily_pct   = round((trade.dailyLossUsed   or 0) / (trade.dailyLossLimit   or 500)  * 100)
     overall_pct = round((trade.overallLossUsed or 0) / (trade.overallLossLimit or 1000) * 100)
     await send_telegram(
         f"{icon} <b>Trade Closed</b>\nAccount: {trade.accountId}\n"
@@ -574,15 +677,14 @@ async def log_trade(trade: TradeData):
         f"Balance: ${trade.balanceAfter:.2f}\n"
         f"Daily: {daily_pct}% | Overall: {overall_pct}%"
     )
-    return {"status": "ok", "trades_total": len(trade_journal)}
+    return {"status": "ok", "persisted": True}
 
 
 @app.get("/extension/journal")
 async def get_journal(account_id: str = None, limit: int = 50):
-    trades = trade_journal
-    if account_id:
-        trades = [t for t in trades if t.get("accountId") == account_id]
-    return {"trades": trades[:limit], "total": len(trades)}
+    rows   = await db_get_trades(account_id=account_id, limit=limit)
+    trades = [row_to_trade(r) for r in rows]
+    return {"trades": trades, "total": len(trades)}
 
 
 @app.get("/extension/status")
@@ -592,8 +694,8 @@ async def extension_status():
 
 @app.get("/extension/news")
 async def get_news():
-    events = await fetch_news_calendar()
-    now = datetime.now(timezone.utc)
+    events  = await fetch_news_calendar()
+    now     = datetime.now(timezone.utc)
     upcoming = []
     for event in events:
         if not is_index_relevant(event):
@@ -606,33 +708,31 @@ async def get_news():
             et_offset = -4 if 3 <= event_time.month <= 11 else -5
             et_time = event_time + timedelta(hours=et_offset)
             upcoming.append({
-                "title": event.get("title"),
-                "currency": event.get("country"),
-                "time_et": et_time.strftime("%I:%M %p ET"),
-                "time_utc": event_time.isoformat(),
+                "title":         event.get("title"),
+                "currency":      event.get("country"),
+                "time_et":       et_time.strftime("%I:%M %p ET"),
+                "time_utc":      event_time.isoformat(),
                 "minutes_until": round(minutes_until),
-                "forecast": event.get("forecast"),
-                "previous": event.get("previous"),
+                "forecast":      event.get("forecast"),
+                "previous":      event.get("previous"),
             })
     upcoming.sort(key=lambda x: x["minutes_until"])
     return {"events": upcoming[:10]}
 
 
+# ── Test endpoints ────────────────────────────────────────────────────────────
 @app.get("/test/telegram")
 async def test_telegram():
-    await send_telegram("🚀 <b>TaliTrade v2 live!</b>\nTry /status /today /journal /news")
+    await send_telegram("🚀 <b>TaliTrade v3 live!</b>\nJournal now persisted to Neon ✅")
     return {"status": "sent"}
 
 
 @app.get("/test/news")
 async def test_news():
     await send_telegram(
-        "🗞 <b>HIGH-IMPACT NEWS IN 10 MIN [TEST]</b>\n"
-        "──────────────────────────────\n"
-        "📌 <b>US Non-Farm Payrolls</b>\n"
-        "🌍 Currency: <b>USD</b>\n"
-        "🕐 Time: <b>08:30 AM ET</b>\n"
-        "📊 Affects: <b>DJI30, NAS100, SP500</b>\n"
+        "🗞 <b>HIGH-IMPACT NEWS IN 10 MIN [TEST]</b>\n──────────────────────────────\n"
+        "📌 <b>US Non-Farm Payrolls</b>\n🌍 Currency: <b>USD</b>\n"
+        "🕐 Time: <b>08:30 AM ET</b>\n📊 Affects: <b>DJI30, NAS100, SP500</b>\n"
         "──────────────────────────────\n"
         "⚡ <b>NFP — biggest mover for indices.</b>\n"
         "⚠️ No trades within 5 min before/after this event."
@@ -643,14 +743,20 @@ async def test_news():
 @app.get("/test/weekend")
 async def test_weekend():
     await send_telegram(
-        "⚠️ <b>MARKET CLOSES IN 1 HOUR [TEST]</b>\n"
-        "──────────────────────────────\n"
-        "🗓 Friday market close: <b>5:00 PM ET</b>\n"
+        "⚠️ <b>MARKET CLOSES IN 1 HOUR [TEST]</b>\n──────────────────────────────\n"
+        "🗓 Friday close: <b>5:00 PM ET</b>\n"
         "📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n"
         "──────────────────────────────\n"
-        "⚠️ FundingPips rule: holding over the weekend\n"
-        "is <b>not permitted</b> on Master accounts.\n"
-        "Profits will <b>not count</b> — close before 5 PM ET\n"
-        "to protect your gains."
+        "⚠️ Holding over weekend is <b>not permitted</b>.\n"
+        "Profits will <b>not count</b> — close before 5 PM ET."
     )
     return {"status": "sent"}
+
+
+@app.get("/test/db")
+async def test_db():
+    """Confirm trades table exists and show row count."""
+    async with engine.connect() as conn:
+        result = await conn.execute(text("SELECT COUNT(*) FROM trades"))
+        count = result.scalar()
+    return {"status": "ok", "trades_in_db": count}
