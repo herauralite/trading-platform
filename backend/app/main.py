@@ -33,36 +33,34 @@ INDEX_KEYWORDS = [
 ]
 WARN_MINUTES = 10
 
-FRIDAY_WARN_HOURS_ET = [16, 16, 16]
-FRIDAY_WARN_MINS_ET  = [0,  30, 45]
+# ── Weekend close times (ET) ──────────────────────────────────────────────────
 FRIDAY_CLOSE_HOUR_ET = 17
 
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 async def ensure_trades_table():
-    """Create trades table if it doesn't exist (safe to run every startup)."""
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trades (
-                id          SERIAL PRIMARY KEY,
-                account_id  TEXT,
-                account_type TEXT,
-                account_size INTEGER,
-                symbol      TEXT,
-                direction   TEXT,
-                volume      FLOAT,
-                open_price  FLOAT,
-                close_price FLOAT,
-                pnl         FLOAT,
-                balance_after FLOAT,
-                equity_after  FLOAT,
-                daily_loss_used  FLOAT,
-                daily_loss_limit FLOAT,
+                id                 SERIAL PRIMARY KEY,
+                account_id         TEXT,
+                account_type       TEXT,
+                account_size       INTEGER,
+                symbol             TEXT,
+                direction          TEXT,
+                volume             FLOAT,
+                open_price         FLOAT,
+                close_price        FLOAT,
+                pnl                FLOAT,
+                balance_after      FLOAT,
+                equity_after       FLOAT,
+                daily_loss_used    FLOAT,
+                daily_loss_limit   FLOAT,
                 overall_loss_used  FLOAT,
                 overall_loss_limit FLOAT,
-                closed_at   TIMESTAMPTZ,
-                logged_at   TIMESTAMPTZ DEFAULT NOW()
+                closed_at          TIMESTAMPTZ,
+                logged_at          TIMESTAMPTZ DEFAULT NOW()
             )
         """))
     logger.info("trades table ready")
@@ -123,8 +121,7 @@ async def db_get_trades(account_id: str = None, limit: int = 50) -> list:
                 ORDER BY logged_at DESC
                 LIMIT :limit
             """), {"limit": limit})
-        rows = result.mappings().all()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in result.mappings().all()]
 
 
 async def db_get_trades_today(account_id: str = None) -> list:
@@ -135,33 +132,69 @@ async def db_get_trades_today(account_id: str = None) -> list:
             result = await conn.execute(text("""
                 SELECT * FROM trades
                 WHERE account_id = :account_id
-                  AND closed_at::date = :today
+                  AND logged_at::date = :today
                 ORDER BY logged_at DESC
             """), {"account_id": account_id, "today": today})
         else:
             result = await conn.execute(text("""
                 SELECT * FROM trades
-                WHERE closed_at::date = :today
+                WHERE logged_at::date = :today
                 ORDER BY logged_at DESC
             """), {"today": today})
-        rows = result.mappings().all()
-        return [dict(r) for r in rows]
+        return [dict(r) for r in result.mappings().all()]
+
+
+async def db_get_trades_for_date(target_date: str, account_id: str = None) -> list:
+    """Fetch trades for any specific date (YYYY-MM-DD)."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        if account_id:
+            result = await conn.execute(text("""
+                SELECT * FROM trades
+                WHERE account_id = :account_id
+                  AND logged_at::date = :target_date
+                ORDER BY logged_at DESC
+            """), {"account_id": account_id, "target_date": target_date})
+        else:
+            result = await conn.execute(text("""
+                SELECT * FROM trades
+                WHERE logged_at::date = :target_date
+                ORDER BY logged_at DESC
+            """), {"target_date": target_date})
+        return [dict(r) for r in result.mappings().all()]
+
+
+async def db_get_green_streak(account_id: str = None) -> int:
+    """Count consecutive profitable trading days ending today."""
+    from app.core.database import engine
+    streak = 0
+    check_date = date.today()
+    for _ in range(30):  # max 30 days back
+        rows = await db_get_trades_for_date(check_date.isoformat(), account_id)
+        if not rows:
+            # No trades that day — skip (don't break streak for days off)
+            check_date -= timedelta(days=1)
+            continue
+        day_pnl = sum((r.get("pnl") or 0) for r in rows)
+        if day_pnl > 0:
+            streak += 1
+            check_date -= timedelta(days=1)
+        else:
+            break
+    return streak
 
 
 def row_to_trade(row: dict) -> dict:
-    """Normalise DB row to the same shape the frontend/telegram expects."""
     closed = row.get("closed_at")
     if closed and hasattr(closed, "isoformat"):
         closed = closed.isoformat()
     logged = row.get("logged_at")
     if logged and hasattr(logged, "isoformat"):
         logged = logged.isoformat()
-
-    pnl = row.get("pnl") or 0
+    pnl         = row.get("pnl") or 0
     daily_used  = row.get("daily_loss_used")  or 0
     daily_limit = row.get("daily_loss_limit") or 500
     daily_pct   = round(daily_used / daily_limit * 100) if daily_limit else 0
-
     return {
         "accountId":        row.get("account_id"),
         "accountType":      row.get("account_type"),
@@ -191,13 +224,15 @@ async def lifespan(app: FastAPI):
     await setup_telegram_webhook()
     news_task    = asyncio.create_task(news_scheduler())
     weekend_task = asyncio.create_task(weekend_scheduler())
+    summary_task = asyncio.create_task(daily_summary_scheduler())
     yield
     news_task.cancel()
     weekend_task.cancel()
+    summary_task.cancel()
     logger.info("Shutting down...")
 
 
-app = FastAPI(title="TaliTrade", version="3.0.0", lifespan=lifespan)
+app = FastAPI(title="TaliTrade", version="3.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -235,7 +270,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ── Telegram ──────────────────────────────────────────────────────────────────
 async def send_telegram(message: str, chat_id: str = None):
     token = os.getenv("TELEGRAM_BOT_TOKEN")
-    cid = chat_id or os.getenv("TELEGRAM_CHAT_ID")
+    cid   = chat_id or os.getenv("TELEGRAM_CHAT_ID")
     if not token or not cid:
         return
     try:
@@ -263,6 +298,184 @@ async def setup_telegram_webhook():
         logger.error(f"Webhook setup failed: {e}")
 
 
+# ── Daily Summary Scheduler ───────────────────────────────────────────────────
+daily_summary_sent = set()
+
+async def daily_summary_scheduler():
+    """Send a market-close recap every weekday at 5:05 PM ET."""
+    logger.info("Daily summary scheduler started")
+    while True:
+        try:
+            now_utc   = datetime.now(timezone.utc)
+            et_offset = -4 if 3 <= now_utc.month <= 11 else -5
+            now_et    = now_utc + timedelta(hours=et_offset)
+
+            # Mon–Fri only
+            if now_et.weekday() < 5:
+                today_key = now_et.strftime("%Y-%m-%d")
+
+                # Fire at 5:05 PM ET (market close + 5 min buffer)
+                target = now_et.replace(hour=17, minute=5, second=0, microsecond=0)
+                diff   = abs((now_et - target).total_seconds())
+
+                if diff <= 60 and today_key not in daily_summary_sent:
+                    daily_summary_sent.add(today_key)
+                    await send_daily_summary(today_key)
+
+        except Exception as e:
+            logger.error(f"Daily summary scheduler error: {e}")
+
+        await asyncio.sleep(60)
+
+
+async def send_daily_summary(summary_date: str):
+    """Build and send the end-of-day Telegram recap."""
+    acct_id = "1917136"
+
+    # Pull today's trades from DB
+    rows   = await db_get_trades_for_date(summary_date, account_id=acct_id)
+    trades = [row_to_trade(r) for r in rows]
+
+    # Pull live account state for balance / risk levels
+    acct        = account_data_store.get(acct_id, {})
+    balance     = acct.get("balance")
+    daily       = acct.get("dailyLoss")    or {}
+    overall     = acct.get("overallLoss")  or {}
+    acct_size   = acct.get("accountSize")  or 10000
+    acct_type   = (acct.get("accountType") or "").replace("_", " ").title()
+
+    # ── Stats ──────────────────────────────────────────────────────────────
+    if trades:
+        pnls      = [t.get("pnl") or 0 for t in trades]
+        total_pnl = sum(pnls)
+        wins      = [p for p in pnls if p > 0]
+        losses    = [p for p in pnls if p <= 0]
+        win_rate  = round(len(wins) / len(pnls) * 100)
+        best      = max(pnls)
+        worst     = min(pnls)
+        best_trade  = next(t for t in trades if (t.get("pnl") or 0) == best)
+        worst_trade = next(t for t in trades if (t.get("pnl") or 0) == worst)
+        avg_win  = sum(wins)  / len(wins)   if wins   else 0
+        avg_loss = sum(losses)/ len(losses) if losses else 0
+        pf       = round(sum(wins) / abs(sum(losses)), 2) if losses and sum(losses) != 0 else "∞"
+    else:
+        total_pnl = 0
+
+    # ── Streak ─────────────────────────────────────────────────────────────
+    streak = await db_get_green_streak(account_id=acct_id)
+
+    # ── Day result icon ────────────────────────────────────────────────────
+    if not trades:
+        day_icon = "😴"
+        day_label = "No trades today"
+    elif total_pnl > 0:
+        day_icon = "🟢"
+        day_label = "Green day"
+    elif total_pnl == 0:
+        day_icon = "⚪"
+        day_label = "Breakeven"
+    else:
+        day_icon = "🔴"
+        day_label = "Red day"
+
+    # ── Risk levels for tomorrow ────────────────────────────────────────────
+    def risk_bar(pct):
+        filled = round((pct or 0) / 10)
+        return "█" * filled + "░" * (10 - filled)
+
+    def risk_icon(pct):
+        if pct is None:  return "⚪"
+        if pct >= 90:    return "🚨"
+        if pct >= 75:    return "🔴"
+        if pct >= 50:    return "⚠️"
+        return "✅"
+
+    d_pct  = daily.get("pct")   or 0
+    o_pct  = overall.get("pct") or 0
+    d_rem  = daily.get("remaining")   or 0
+    o_rem  = overall.get("remaining") or 0
+
+    # ── Streak display ──────────────────────────────────────────────────────
+    streak_line = ""
+    if streak >= 3:
+        streak_line = f"🔥 <b>{streak}-day green streak!</b> Keep it going.\n"
+    elif streak == 2:
+        streak_line = f"🔥 2-day green streak — stay focused tomorrow.\n"
+    elif streak == 1 and total_pnl > 0:
+        streak_line = f"✨ First green day of a new streak.\n"
+
+    # ── Balance line ───────────────────────────────────────────────────────
+    balance_line = ""
+    if balance:
+        profit_total = balance - acct_size
+        balance_line = (
+            f"💰 Balance: <b>${balance:,.2f}</b>  "
+            f"({'+'if profit_total>=0 else ''}{profit_total:,.2f} overall)\n"
+        )
+
+    # ── No trades message ──────────────────────────────────────────────────
+    if not trades:
+        msg = (
+            f"😴 <b>Market Close — {summary_date}</b>\n"
+            f"{'─'*28}\n\n"
+            f"No trades logged today.\n\n"
+            f"{balance_line}"
+            f"{'─'*28}\n"
+            f"{risk_icon(d_pct)} Daily limit:   {d_pct}%  {risk_bar(d_pct)}\n"
+            f"{risk_icon(o_pct)} Overall limit: {o_pct}%  {risk_bar(o_pct)}\n\n"
+            f"Rest up. Markets open Monday 6:00 PM ET 🌙"
+            if datetime.strptime(summary_date, "%Y-%m-%d").weekday() == 4
+            else
+            f"😴 <b>Market Close — {summary_date}</b>\n"
+            f"{'─'*28}\n\n"
+            f"No trades logged today.\n\n"
+            f"{balance_line}"
+            f"{'─'*28}\n"
+            f"{risk_icon(d_pct)} Daily resets at midnight GMT+1 🔄\n"
+            f"{risk_icon(o_pct)} Overall: {o_pct}%  (${o_rem:,.0f} remaining)"
+        )
+        await send_telegram(msg)
+        logger.info(f"Daily summary sent (no trades): {summary_date}")
+        return
+
+    # ── Full recap ─────────────────────────────────────────────────────────
+    trade_lines = "\n".join([
+        f"  {'✅' if (t.get('pnl') or 0) > 0 else '❌'} "
+        f"{t.get('symbol','?')} {t.get('direction','?')} "
+        f"{'+'if(t.get('pnl')or 0)>=0 else ''}{(t.get('pnl')or 0):.2f}"
+        for t in trades
+    ])
+
+    msg = (
+        f"{day_icon} <b>Market Close — {summary_date}</b>\n"
+        f"<i>{acct_type} · ${acct_size//1000}K · Account {acct_id}</i>\n"
+        f"{'─'*28}\n\n"
+        f"{streak_line}"
+        f"📊 <b>Today's Results</b>\n"
+        f"  Net P&L:    <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b>\n"
+        f"  Trades:     {len(trades)}  (W: {len(wins)} | L: {len(losses)})\n"
+        f"  Win Rate:   {win_rate}%\n"
+        f"  Prof. Factor: {pf}\n\n"
+        f"🏆 Best:  {best_trade.get('symbol','?')} +{best:.2f}\n"
+        f"💔 Worst: {worst_trade.get('symbol','?')} {worst:.2f}\n"
+        f"📈 Avg Win:  +{avg_win:.2f}  |  Avg Loss: {avg_loss:.2f}\n\n"
+        f"{'─'*28}\n"
+        f"<b>All Trades</b>\n{trade_lines}\n\n"
+        f"{'─'*28}\n"
+        f"<b>Risk Going Into Tomorrow</b>\n"
+        f"{risk_icon(d_pct)} Daily:   {d_pct}%  {risk_bar(d_pct)}\n"
+        f"   Resets midnight GMT+1  (${d_rem:,.0f} available)\n"
+        f"{risk_icon(o_pct)} Overall: {o_pct}%  {risk_bar(o_pct)}\n"
+        f"   Remaining: <b>${o_rem:,.0f}</b>\n\n"
+        f"{balance_line}"
+        f"{'─'*28}\n"
+        f"See you tomorrow 🎯"
+    )
+
+    await send_telegram(msg)
+    logger.info(f"Daily summary sent: {summary_date} | P&L: {total_pnl:.2f}")
+
+
 # ── Weekend scheduler ─────────────────────────────────────────────────────────
 weekend_alerted = set()
 
@@ -270,9 +483,9 @@ async def weekend_scheduler():
     logger.info("Weekend scheduler started")
     while True:
         try:
-            now_utc = datetime.now(timezone.utc)
+            now_utc   = datetime.now(timezone.utc)
             et_offset = -4 if 3 <= now_utc.month <= 11 else -5
-            now_et = now_utc + timedelta(hours=et_offset)
+            now_et    = now_utc + timedelta(hours=et_offset)
             if now_et.weekday() == 4:
                 today_key = now_et.strftime("%Y-%m-%d")
                 warn_times = [
@@ -288,7 +501,7 @@ async def weekend_scheduler():
                     if abs((now_et - target).total_seconds()) <= 60:
                         weekend_alerted.add(alert_key)
                         open_accounts = [
-                            acct_id for acct_id, acct in account_data_store.items()
+                            aid for aid, acct in account_data_store.items()
                             if acct.get("hasPositions")
                         ]
                         position_warning = ""
@@ -296,7 +509,7 @@ async def weekend_scheduler():
                             position_warning = (
                                 f"\n🔴 <b>YOU HAVE OPEN POSITIONS!</b>\n"
                                 f"Accounts: {', '.join(open_accounts)}\n"
-                                f"Any profits will NOT count.\n"
+                                f"Profits will NOT count.\n"
                             )
                         msg = (
                             f"{icon} <b>MARKET CLOSES IN {label}</b>\n"
@@ -315,8 +528,8 @@ async def weekend_scheduler():
 
 
 # ── News calendar ─────────────────────────────────────────────────────────────
-news_cache = []
-news_alerted = set()
+news_cache      = []
+news_alerted    = set()
 news_last_fetch = None
 
 
@@ -345,7 +558,7 @@ async def fetch_news_calendar() -> list:
                 headers={"User-Agent": "Mozilla/5.0"}
             )
             if res.status_code == 200:
-                news_cache = res.json()
+                news_cache     = res.json()
                 news_last_fetch = now
                 logger.info(f"News: fetched {len(news_cache)} events")
                 return news_cache
@@ -360,11 +573,11 @@ def parse_event_time(event: dict):
         time_str = event.get("time", "")
         if not date_str or not time_str or time_str.lower() in ["", "all day", "tentative"]:
             return None
-        dt_date = datetime.strptime(date_str, "%m-%d-%Y").date()
+        dt_date  = datetime.strptime(date_str, "%m-%d-%Y").date()
         time_str = time_str.strip().lower()
-        dt_time = (datetime.strptime(time_str, "%I:%M%p") if ":" in time_str
-                   else datetime.strptime(time_str, "%I%p")).time()
-        naive = datetime.combine(dt_date, dt_time)
+        dt_time  = (datetime.strptime(time_str, "%I:%M%p") if ":" in time_str
+                    else datetime.strptime(time_str, "%I%p")).time()
+        naive  = datetime.combine(dt_date, dt_time)
         offset = -4 if 3 <= dt_date.month <= 11 else -5
         return naive.replace(tzinfo=timezone(timedelta(hours=offset))).astimezone(timezone.utc)
     except Exception:
@@ -376,7 +589,7 @@ async def news_scheduler():
     while True:
         try:
             events = await fetch_news_calendar()
-            now = datetime.now(timezone.utc)
+            now    = datetime.now(timezone.utc)
             for event in events:
                 if not is_index_relevant(event):
                     continue
@@ -388,9 +601,9 @@ async def news_scheduler():
                 if WARN_MINUTES - 1 <= minutes_until <= WARN_MINUTES + 1 and key not in news_alerted:
                     news_alerted.add(key)
                     await send_news_alert(event, event_time, round(minutes_until))
-                key30 = f"30min_{key}"
+                key30      = f"30min_{key}"
                 title_lower = (event.get("title") or "").lower()
-                is_speech = any(w in title_lower for w in ["speech","fomc","powell","fed chair","testimony"])
+                is_speech  = any(w in title_lower for w in ["speech","fomc","powell","fed chair","testimony"])
                 if is_speech and 29 <= minutes_until <= 31 and key30 not in news_alerted:
                     news_alerted.add(key30)
                     await send_news_alert(event, event_time, round(minutes_until))
@@ -405,10 +618,10 @@ async def send_news_alert(event: dict, event_time: datetime, minutes: int):
     forecast = event.get("forecast", "")
     previous = event.get("previous", "")
     et_offset = -4 if 3 <= event_time.month <= 11 else -5
-    et_time = event_time + timedelta(hours=et_offset)
-    time_str = et_time.strftime("%I:%M %p ET")
-    tl = title.lower()
-    guidance = ""
+    et_time   = event_time + timedelta(hours=et_offset)
+    time_str  = et_time.strftime("%I:%M %p ET")
+    tl        = title.lower()
+    guidance  = ""
     if any(w in tl for w in ["fomc","fed","powell","interest rate"]):
         guidance = "⚡ <b>Fed event — expect high volatility.</b>\n"
     elif any(w in tl for w in ["non-farm","nfp","payroll"]):
@@ -429,7 +642,7 @@ async def send_news_alert(event: dict, event_time: datetime, minutes: int):
     logger.info(f"News alert: {title} in {minutes} min")
 
 
-# ── In-memory store (account state only, NOT trades) ─────────────────────────
+# ── In-memory store (live account state only — trades go to DB) ───────────────
 account_data_store: dict = {}
 
 
@@ -449,22 +662,26 @@ async def telegram_webhook(request: Request):
         await handle_journal(chat_id)
     elif text in ["/news", "/news@talitrade_bot"]:
         await handle_news(chat_id)
+    elif text in ["/summary", "/summary@talitrade_bot"]:
+        today_str = date.today().isoformat()
+        await send_daily_summary(today_str)
     elif text in ["/help", "/help@talitrade_bot"]:
         await send_telegram(
             "🤖 <b>TaliTrade Commands</b>\n\n"
-            "/status — Live risk snapshot\n"
-            "/today — Today's trades & P&L\n"
+            "/status  — Live risk snapshot\n"
+            "/today   — Today's trades & P&L\n"
             "/journal — Last 10 trades\n"
-            "/news — Upcoming high-impact news\n"
-            "/help — This message",
+            "/news    — Upcoming high-impact news\n"
+            "/summary — Today's recap (on demand)\n"
+            "/help    — This message",
             chat_id=chat_id
         )
     return {"ok": True}
 
 
 async def handle_news(chat_id: str):
-    events  = await fetch_news_calendar()
-    now     = datetime.now(timezone.utc)
+    events   = await fetch_news_calendar()
+    now      = datetime.now(timezone.utc)
     upcoming = []
     for event in events:
         if not is_index_relevant(event):
@@ -482,9 +699,9 @@ async def handle_news(chat_id: str):
     lines = []
     for mins, event, event_time in upcoming[:8]:
         et_offset = -4 if 3 <= event_time.month <= 11 else -5
-        et_time = event_time + timedelta(hours=et_offset)
-        time_str = et_time.strftime("%I:%M %p")
-        when = f"in {round(mins)}m" if mins < 60 else f"in {round(mins/60,1)}h"
+        et_time   = event_time + timedelta(hours=et_offset)
+        time_str  = et_time.strftime("%I:%M %p")
+        when      = f"in {round(mins)}m" if mins < 60 else f"in {round(mins/60,1)}h"
         lines.append(f"🔴 <b>{event.get('title','?')}</b> — {time_str} ET ({when})")
     await send_telegram(
         f"📅 <b>Upcoming High-Impact News</b>\n<i>DJI30, NAS100, SP500</i>\n{'─'*28}\n\n"
@@ -498,17 +715,17 @@ async def handle_status(chat_id: str):
     if not account_data_store:
         await send_telegram("📡 No data — open FundingPips in your browser first.", chat_id=chat_id)
         return
-    acct_id = "1917136" if "1917136" in account_data_store else list(account_data_store.keys())[0]
-    acct    = account_data_store[acct_id]
-    balance = acct.get("balance") or 0
-    equity  = acct.get("equity")  or 0
-    profit  = acct.get("profit")  or 0
-    risk    = acct.get("riskPerTradeIdea") or {}
-    daily   = acct.get("dailyLoss")        or {}
-    overall = acct.get("overallLoss")      or {}
+    acct_id   = "1917136" if "1917136" in account_data_store else list(account_data_store.keys())[0]
+    acct      = account_data_store[acct_id]
+    balance   = acct.get("balance") or 0
+    equity    = acct.get("equity")  or 0
+    profit    = acct.get("profit")  or 0
+    risk      = acct.get("riskPerTradeIdea") or {}
+    daily     = acct.get("dailyLoss")        or {}
+    overall   = acct.get("overallLoss")      or {}
     acct_type = acct.get("accountType", "unknown")
     acct_size = acct.get("accountSize", 10000)
-    last = (acct.get("last_updated") or "")[:19].replace("T", " ")
+    last      = (acct.get("last_updated") or "")[:19].replace("T", " ")
 
     def bar(pct):
         f = round((pct or 0) / 10)
@@ -545,9 +762,9 @@ async def handle_status(chat_id: str):
 
 
 async def handle_today(chat_id: str):
-    today_trades_raw = await db_get_trades_today(account_id="1917136")
-    today_trades = [row_to_trade(r) for r in today_trades_raw]
-    today = date.today().isoformat()
+    today        = date.today().isoformat()
+    today_rows   = await db_get_trades_today(account_id="1917136")
+    today_trades = [row_to_trade(r) for r in today_rows]
     if not today_trades:
         await send_telegram(f"📅 No trades logged today ({today}).", chat_id=chat_id)
         return
@@ -570,13 +787,13 @@ async def handle_today(chat_id: str):
 
 
 async def handle_journal(chat_id: str):
-    recent_raw = await db_get_trades(account_id="1917136", limit=10)
-    recent = [row_to_trade(r) for r in recent_raw]
+    recent_rows = await db_get_trades(account_id="1917136", limit=10)
+    recent      = [row_to_trade(r) for r in recent_rows]
     if not recent:
         await send_telegram("📒 No trades in journal yet.", chat_id=chat_id)
         return
     total_pnl = sum(t.get("pnl") or 0 for t in recent)
-    wins = len([t for t in recent if (t.get("pnl") or 0) > 0])
+    wins      = len([t for t in recent if (t.get("pnl") or 0) > 0])
     lines = [
         f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} <b>{t.get('symbol','?')}</b> "
         f"{t.get('direction','?')} {'+'if(t.get('pnl')or 0)>=0 else ''}{(t.get('pnl')or 0):.2f} | "
@@ -615,8 +832,8 @@ class ExtensionData(BaseModel):
 
 @app.post("/extension/data")
 async def receive_extension_data(data: ExtensionData):
-    account_id = data.accountId or "unknown"
-    prev = account_data_store.get(account_id, {})
+    account_id  = data.accountId or "unknown"
+    prev        = account_data_store.get(account_id, {})
     account_data_store[account_id] = {**data.dict(), "last_updated": datetime.utcnow().isoformat()}
     for alert in data.alerts:
         await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>")
@@ -664,9 +881,7 @@ class TradeData(BaseModel):
 
 @app.post("/extension/trade")
 async def log_trade(trade: TradeData):
-    # Persist to Neon
     await db_insert_trade(trade.dict())
-
     pnl         = trade.pnl or 0
     icon        = "✅" if pnl > 0 else "❌"
     daily_pct   = round((trade.dailyLossUsed   or 0) / (trade.dailyLossLimit   or 500)  * 100)
@@ -694,8 +909,8 @@ async def extension_status():
 
 @app.get("/extension/news")
 async def get_news():
-    events  = await fetch_news_calendar()
-    now     = datetime.now(timezone.utc)
+    events   = await fetch_news_calendar()
+    now      = datetime.now(timezone.utc)
     upcoming = []
     for event in events:
         if not is_index_relevant(event):
@@ -706,7 +921,7 @@ async def get_news():
         minutes_until = (event_time - now).total_seconds() / 60
         if -60 < minutes_until < 480:
             et_offset = -4 if 3 <= event_time.month <= 11 else -5
-            et_time = event_time + timedelta(hours=et_offset)
+            et_time   = event_time + timedelta(hours=et_offset)
             upcoming.append({
                 "title":         event.get("title"),
                 "currency":      event.get("country"),
@@ -723,8 +938,16 @@ async def get_news():
 # ── Test endpoints ────────────────────────────────────────────────────────────
 @app.get("/test/telegram")
 async def test_telegram():
-    await send_telegram("🚀 <b>TaliTrade v3 live!</b>\nJournal now persisted to Neon ✅")
+    await send_telegram("🚀 <b>TaliTrade v3.1 live!</b>\nDaily summary active ✅")
     return {"status": "sent"}
+
+
+@app.get("/test/summary")
+async def test_summary():
+    """Force-send today's summary right now."""
+    today_str = date.today().isoformat()
+    await send_daily_summary(today_str)
+    return {"status": "sent", "date": today_str}
 
 
 @app.get("/test/news")
@@ -755,8 +978,7 @@ async def test_weekend():
 
 @app.get("/test/db")
 async def test_db():
-    """Confirm trades table exists and show row count."""
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT COUNT(*) FROM trades"))
-        count = result.scalar()
+        count  = result.scalar()
     return {"status": "ok", "trades_in_db": count}
