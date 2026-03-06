@@ -90,6 +90,14 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .chip-warn{color:var(--orange);border-color:rgba(232,146,74,0.28);background:var(--orange-dim);}
 .chip-soft{color:#e07a4a;border-color:rgba(224,122,74,0.22);background:rgba(224,122,74,0.08);}
 .chip-hard{color:var(--red);border-color:rgba(224,92,92,0.3);background:var(--red-dim);}
+/* ── SKELETON ── */
+@keyframes shimmer{0%{background-position:-600px 0;}100%{background-position:600px 0;}}
+.skel{background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 50%,var(--s2) 75%);background-size:1200px 100%;animation:shimmer 1.8s ease-in-out infinite;border-radius:6px;flex-shrink:0;}
+.skel-r{border-radius:100px;}
+.sk-fade{transition:opacity .38s var(--out),transform .38s var(--out);}
+.sk-fade.sk-out{opacity:0;transform:translateY(5px);pointer-events:none;position:absolute;width:100%;}
+.sk-fade.sk-in{opacity:1;transform:translateY(0);}
+.sk-wrap{position:relative;}
 .acct-card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:10px;position:relative;overflow:hidden;transition:border-color .25s;}
 .acct-card:hover{border-color:var(--border2);}
 .acct-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),rgba(42,171,238,0.3),transparent);}
@@ -393,16 +401,32 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <!-- DASHBOARD -->
 <div id="page-dash" class="page active">
   <div class="sec-head"><div class="sec-label">Overview</div><div class="sec-meta" id="clock">--:--:--</div></div>
-  <div class="acct-card rip">
-    <div class="grid-t"></div>
-    <div class="acct-top">
-      <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">1917136</div></div>
-      <div class="acct-badge rip" id="acctBadge">10K Master</div>
+  <div class="sk-wrap" style="min-height:160px;margin-bottom:10px">
+    <!-- SKELETON -->
+    <div class="acct-card sk-fade sk-in" id="skelAcct" style="margin-bottom:0">
+      <div class="grid-t"></div>
+      <div class="acct-top">
+        <div><div class="skel skel-r" style="width:80px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:120px;height:22px"></div></div>
+        <div class="skel skel-r" style="width:86px;height:26px"></div>
+      </div>
+      <div class="m4">
+        <div class="mbox"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:90px;height:20px"></div></div>
+        <div class="mbox"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:90px;height:20px"></div></div>
+        <div class="mbox" style="grid-column:span 2"><div class="skel skel-r" style="width:60px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:110px;height:20px"></div></div>
+      </div>
     </div>
-    <div class="m4">
-      <div class="mbox rip"><div class="mbox-label">Balance</div><div class="mbox-val txt-green" id="mBal">$—</div><div class="mbox-sub">Starting $<span id="mBalStart">10,000</span></div></div>
-      <div class="mbox rip"><div class="mbox-label">Equity</div><div class="mbox-val txt-blue" id="mEq">$—</div><div class="mbox-sub">Floating P&L</div></div>
-      <div class="mbox rip" style="grid-column:span 2"><div class="mbox-label">Open P&L</div><div class="mbox-val" id="mPL">$—</div><div class="mbox-sub" id="mPLSub">waiting...</div></div>
+    <!-- REAL -->
+    <div class="acct-card rip sk-fade sk-out" id="realAcct" style="margin-bottom:0">
+      <div class="grid-t"></div>
+      <div class="acct-top">
+        <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">1917136</div></div>
+        <div class="acct-badge rip" id="acctBadge">10K Master</div>
+      </div>
+      <div class="m4">
+        <div class="mbox rip"><div class="mbox-label">Balance</div><div class="mbox-val txt-green" id="mBal">$—</div><div class="mbox-sub">Starting $<span id="mBalStart">10,000</span></div></div>
+        <div class="mbox rip"><div class="mbox-label">Equity</div><div class="mbox-val txt-blue" id="mEq">$—</div><div class="mbox-sub">Floating P&L</div></div>
+        <div class="mbox rip" style="grid-column:span 2"><div class="mbox-label">Open P&L</div><div class="mbox-val" id="mPL">$—</div><div class="mbox-sub" id="mPLSub">waiting...</div></div>
+      </div>
     </div>
   </div>
   <div class="ticker-wrap">
@@ -420,27 +444,72 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     </div>
   </div>
   <div class="sec-head"><div class="sec-label">Risk Parameters</div><div class="sec-meta" id="riskMeta">10K 2-Step</div></div>
-  <div class="risk-stack">
-    <div class="rcard breach rip" id="rcard1">
-      <div class="rcard-head"><div class="rcard-icon" style="background:var(--red-dim);color:var(--red)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="rcard-info"><div class="rcard-title">Risk per Trade</div><div class="rcard-sub" id="r1sub">Max $300</div></div><div class="rcard-right"><div class="rpct txt-red"><span id="rp1">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-red" style="margin-top:3px" id="r1tag">—</div></div></div>
-      <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r1usedLbl">$0 used</span><span id="r1leftLbl">$300 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-red" id="rb1" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
-      <div class="divider"></div>
-      <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r1usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r1remVal">$300.00</div></div></div>
-      <div class="divider"></div><div class="chip-row" id="r1chips"></div>
+  <div class="sk-wrap" style="min-height:340px">
+    <!-- SKELETON risk stack -->
+    <div class="risk-stack sk-fade sk-in" id="skelRisk" style="position:relative">
+      <div class="rcard" style="padding:14px 16px 14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <div class="skel" style="width:34px;height:34px;border-radius:9px"></div>
+          <div style="flex:1"><div class="skel skel-r" style="width:110px;height:13px;margin-bottom:7px"></div><div class="skel skel-r" style="width:70px;height:10px"></div></div>
+          <div class="skel" style="width:50px;height:34px;border-radius:8px"></div>
+        </div>
+        <div class="skel skel-r" style="width:100%;height:5px;margin-bottom:10px"></div>
+        <div style="height:1px;background:var(--border);margin:0 -16px 0"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;margin:0 -16px">
+          <div style="padding:10px 16px;border-right:1px solid var(--border)"><div class="skel skel-r" style="width:40px;height:9px;margin-bottom:7px"></div><div class="skel" style="width:70px;height:14px"></div></div>
+          <div style="padding:10px 16px"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:7px"></div><div class="skel" style="width:70px;height:14px"></div></div>
+        </div>
+      </div>
+      <div class="rcard" style="padding:14px 16px 14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <div class="skel" style="width:34px;height:34px;border-radius:9px"></div>
+          <div style="flex:1"><div class="skel skel-r" style="width:120px;height:13px;margin-bottom:7px"></div><div class="skel skel-r" style="width:65px;height:10px"></div></div>
+          <div class="skel" style="width:50px;height:34px;border-radius:8px"></div>
+        </div>
+        <div class="skel skel-r" style="width:100%;height:5px;margin-bottom:10px"></div>
+        <div style="height:1px;background:var(--border);margin:0 -16px 0"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;margin:0 -16px">
+          <div style="padding:10px 16px;border-right:1px solid var(--border)"><div class="skel skel-r" style="width:40px;height:9px;margin-bottom:7px"></div><div class="skel" style="width:70px;height:14px"></div></div>
+          <div style="padding:10px 16px"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:7px"></div><div class="skel" style="width:70px;height:14px"></div></div>
+        </div>
+      </div>
+      <div class="rcard" style="padding:14px 16px 14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+          <div class="skel" style="width:34px;height:34px;border-radius:9px"></div>
+          <div style="flex:1"><div class="skel skel-r" style="width:130px;height:13px;margin-bottom:7px"></div><div class="skel skel-r" style="width:75px;height:10px"></div></div>
+          <div class="skel" style="width:50px;height:34px;border-radius:8px"></div>
+        </div>
+        <div class="skel skel-r" style="width:100%;height:5px;margin-bottom:10px"></div>
+        <div style="height:1px;background:var(--border);margin:0 -16px 0"></div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;margin:0 -16px">
+          <div style="padding:10px 16px;border-right:1px solid var(--border)"><div class="skel skel-r" style="width:40px;height:9px;margin-bottom:7px"></div><div class="skel" style="width:70px;height:14px"></div></div>
+          <div style="padding:10px 16px"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:7px"></div><div class="skel" style="width:70px;height:14px"></div></div>
+        </div>
+      </div>
     </div>
-    <div class="rcard breach rip" id="rcard2">
-      <div class="rcard-head"><div class="rcard-icon" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></div><div class="rcard-info"><div class="rcard-title">Daily Loss Limit</div><div class="rcard-sub" id="r2sub">Max $500</div></div><div class="rcard-right"><div class="rpct txt-orange"><span id="rp2">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-orange" style="margin-top:3px" id="r2tag">—</div></div></div>
-      <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r2usedLbl">$0 used</span><span id="r2leftLbl">$500 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-orange" id="rb2" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
-      <div class="divider"></div>
-      <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r2usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r2remVal">$500.00</div></div></div>
-      <div class="divider"></div><div class="chip-row" id="r2chips"></div>
-    </div>
-    <div class="rcard safe-c rip" id="rcard3">
-      <div class="rcard-head"><div class="rcard-icon" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="rcard-info"><div class="rcard-title">Overall Loss Limit</div><div class="rcard-sub" id="r3sub">Max $1,000</div></div><div class="rcard-right"><div class="rpct txt-dim"><span id="rp3">0</span><span style="font-size:14px;opacity:.5">%</span></div><div class="tag tag-blue" style="margin-top:3px" id="r3tag">Safe</div></div></div>
-      <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r3usedLbl" style="color:var(--t3)">$0 used</span><span id="r3leftLbl">$1,000 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-blue" id="rb3" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
-      <div class="divider"></div>
-      <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val txt-dim" id="r3usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r3remVal">$1,000.00</div></div></div>
-      <div class="divider"></div><div class="chip-row" id="r3chips"></div>
+    <!-- REAL risk stack -->
+    <div class="risk-stack sk-fade sk-out" id="realRisk">
+      <div class="rcard breach rip" id="rcard1">
+        <div class="rcard-head"><div class="rcard-icon" style="background:var(--red-dim);color:var(--red)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="rcard-info"><div class="rcard-title">Risk per Trade</div><div class="rcard-sub" id="r1sub">Max $300</div></div><div class="rcard-right"><div class="rpct txt-red"><span id="rp1">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-red" style="margin-top:3px" id="r1tag">—</div></div></div>
+        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r1usedLbl">$0 used</span><span id="r1leftLbl">$300 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-red" id="rb1" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
+        <div class="divider"></div>
+        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r1usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r1remVal">$300.00</div></div></div>
+        <div class="divider"></div><div class="chip-row" id="r1chips"></div>
+      </div>
+      <div class="rcard breach rip" id="rcard2">
+        <div class="rcard-head"><div class="rcard-icon" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></div><div class="rcard-info"><div class="rcard-title">Daily Loss Limit</div><div class="rcard-sub" id="r2sub">Max $500</div></div><div class="rcard-right"><div class="rpct txt-orange"><span id="rp2">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-orange" style="margin-top:3px" id="r2tag">—</div></div></div>
+        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r2usedLbl">$0 used</span><span id="r2leftLbl">$500 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-orange" id="rb2" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
+        <div class="divider"></div>
+        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r2usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r2remVal">$500.00</div></div></div>
+        <div class="divider"></div><div class="chip-row" id="r2chips"></div>
+      </div>
+      <div class="rcard safe-c rip" id="rcard3">
+        <div class="rcard-head"><div class="rcard-icon" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="rcard-info"><div class="rcard-title">Overall Loss Limit</div><div class="rcard-sub" id="r3sub">Max $1,000</div></div><div class="rcard-right"><div class="rpct txt-dim"><span id="rp3">0</span><span style="font-size:14px;opacity:.5">%</span></div><div class="tag tag-blue" style="margin-top:3px" id="r3tag">Safe</div></div></div>
+        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r3usedLbl" style="color:var(--t3)">$0 used</span><span id="r3leftLbl">$1,000 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-blue" id="rb3" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
+        <div class="divider"></div>
+        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val txt-dim" id="r3usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r3remVal">$1,000.00</div></div></div>
+        <div class="divider"></div><div class="chip-row" id="r3chips"></div>
+      </div>
     </div>
   </div>
   <div class="alert-bar rip" id="alertBar">
@@ -461,11 +530,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <!-- ANALYTICS -->
 <div id="page-analytics" class="page">
   <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta">All trades</div></div>
-  <div class="stat-row">
-    <div class="stat-box"><div class="stat-box-label">Win Rate</div><div class="stat-box-val txt-green" id="wr">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
-    <div class="stat-box"><div class="stat-box-label">Profit Factor</div><div class="stat-box-val txt-blue" id="pf">—</div><div class="stat-box-sub">gross profit / loss</div></div>
-    <div class="stat-box"><div class="stat-box-label">Net P&L</div><div class="stat-box-val txt-green" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
-    <div class="stat-box"><div class="stat-box-label">Total Trades</div><div class="stat-box-val" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
+  <div class="stat-row" id="analyticsStats">
+    <div class="stat-box"><div class="stat-box-label">Win Rate</div><div class="skel skel-r sk-fade sk-in" id="skelWr" style="width:70px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="wr" style="position:absolute">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
+    <div class="stat-box"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf" style="position:absolute">—</div><div class="stat-box-sub">gross profit / loss</div></div>
+    <div class="stat-box"><div class="stat-box-label">Net P&L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl" style="position:absolute">—</div><div class="stat-box-sub">closed trades only</div></div>
+    <div class="stat-box"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades" style="position:absolute">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
   </div>
   <div class="chart-card">
     <div class="chart-label">Equity Curve</div>
@@ -710,7 +779,24 @@ document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',()=>t
 function usd(v){if(v==null)return'$—';return'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function pnl(v){if(v==null)return'$—';return(v>=0?'+$':'-$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
-// RISK STATUS
+// SKELETON REVEAL
+let dashRevealed=false;
+function revealDash(){
+  if(dashRevealed)return;
+  dashRevealed=true;
+  // small stagger: account card first, risk stack 120ms later
+  ['skelAcct','realAcct'].forEach(id=>document.getElementById(id)&&document.getElementById(id).classList.toggle('sk-out')&&document.getElementById(id).classList.toggle('sk-in'));
+  const sa=document.getElementById('skelAcct'),ra=document.getElementById('realAcct');
+  if(sa){sa.classList.remove('sk-in');sa.classList.add('sk-out');}
+  if(ra){ra.classList.remove('sk-out');ra.classList.add('sk-in');}
+  setTimeout(()=>{
+    const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
+    if(sr){sr.classList.remove('sk-in');sr.classList.add('sk-out');}
+    if(rr){rr.classList.remove('sk-out');rr.classList.add('sk-in');}
+  },120);
+}
+
+
 function getRiskStatus(pct){
   if(pct>=90)return{cls:'breach',tagCls:'tag-red',tagTxt:'Critical',pctCls:'txt-red',barCls:'bar-red'};
   if(pct>=75)return{cls:'warn-c',tagCls:'tag-orange',tagTxt:'Warning',pctCls:'txt-orange',barCls:'bar-orange'};
@@ -744,6 +830,7 @@ async function fetchStatus(){
     const statusEl=document.getElementById('tb-status');
     if(!acct){statusEl.textContent='waiting for extension...';statusEl.style.color='var(--t3)';return;}
     statusEl.textContent='live · syncing';statusEl.style.color='var(--blue)';
+    revealDash();
     const{balance,equity,profit,accountType,accountSize,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
     liveBalance=balance||10000;
     document.getElementById('mBal').textContent=usd(balance);
@@ -952,6 +1039,12 @@ async function fetchAnalytics(){
     const res=await fetch(API+'/extension/journal?account_id='+ACCT+'&limit=500');
     const data=await res.json();
     const trades=data.trades||[];if(!trades.length)return;
+    // reveal analytics skeletons
+    ['Wr','Pf','Netpl','Trades'].forEach(k=>{
+      const s=document.getElementById('skel'+k),r=document.getElementById(k==='Wr'?'wr':k==='Pf'?'pf':k==='Netpl'?'netpl':'totalTrades');
+      if(s){s.classList.remove('sk-in');s.classList.add('sk-out');}
+      if(r){r.classList.remove('sk-out');r.classList.add('sk-in');r.style.position='';}
+    });
     const wins=trades.filter(t=>(t.pnl||0)>0),losses=trades.filter(t=>(t.pnl||0)<=0);
     const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
     const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0),wr=Math.round(wins.length/trades.length*100);
