@@ -1004,6 +1004,29 @@ function cacheBalance(id,bal){
   if(document.getElementById('acct-sheet').classList.contains('open'))renderAcctSheet();
 }
 
+
+function inferBalanceFromTrades(trades, accountSize){
+  if(!trades||!trades.length) return accountSize||null;
+  const withBal=trades.find(t=>t.balanceAfter!=null);
+  if(withBal&&withBal.balanceAfter!=null) return withBal.balanceAfter;
+  const net=trades.reduce((s,t)=>s+(Number(t.pnl)||0),0);
+  return (accountSize||0)+net;
+}
+
+async function fetchAllTrades(accountId, pageSize=200){
+  const out=[];
+  for(let page=0;page<100;page++){
+    const offset=page*pageSize;
+    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc`);
+    const data=await res.json();
+    const chunk=data.trades||[];
+    out.push(...chunk);
+    if(chunk.length<pageSize) break;
+  }
+  tradesCache[accountId]=out;
+  return out;
+}
+
 // CLOCK
 function tick(){const t=new Date().toLocaleTimeString('en-US',{hour12:false});['clock','footerTime'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=t;});}
 tick();setInterval(tick,1000);
@@ -1068,22 +1091,25 @@ async function fetchStatus(){
     statusEl.textContent='live · syncing';statusEl.style.color='var(--blue)';
     revealDash();
     const{balance,equity,profit,accountType,accountSize,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
-    liveBalance=balance||10000;
-    cacheBalance(activeAcct,balance);
-    document.getElementById('mBal').textContent=usd(balance);
-    document.getElementById('mEq').textContent=usd(equity);
+    const sz=accountSize||10000;
+    const cachedTrades=tradesCache[activeAcct]||[];
+    const fallbackBalance=balance ?? acctBalances[activeAcct] ?? inferBalanceFromTrades(cachedTrades, sz);
+    const resolvedEquity=equity ?? ((fallbackBalance!=null && profit!=null)?fallbackBalance+profit:null);
+    liveBalance=fallbackBalance ?? 10000;
+    if(fallbackBalance!=null)cacheBalance(activeAcct,fallbackBalance);
+    document.getElementById('mBal').textContent=usd(fallbackBalance);
+    document.getElementById('mEq').textContent=usd(resolvedEquity);
     const plEl=document.getElementById('mPL');
     plEl.textContent=pnl(profit);
     plEl.className='mbox-val '+(profit>0?'txt-green':profit<0?'txt-red':'txt-dim');
     document.getElementById('mPLSub').textContent=acct.hasPositions?(acct.openPositionCount+' position(s) open'):'No open positions';
-    const sz=accountSize||10000;
     document.getElementById('mBalStart').textContent=(sz/1000)+'K';
     const typeStr=(accountType||'').replace(/_/g,' ');
     document.getElementById('acctBadge').textContent='$'+(sz/1000)+'K '+typeStr;
     document.getElementById('footerAcct').textContent=(sz/1000)+'K '+typeStr;
     document.getElementById('riskMeta').textContent=(sz/1000)+'K '+typeStr;
     document.getElementById('sgRulesSub').textContent='$'+(sz/1000)+'K '+typeStr;
-    document.getElementById('lbProfit').textContent=pnl(balance-sz);
+    document.getElementById('lbProfit').textContent=pnl((fallbackBalance??sz)-sz);
     // update rules sheet with live account data
     updateRulesSheet(accountType||'2_step', sz, '$'+(sz/1000)+'K '+typeStr);
     if(ri&&ri.applicable){
@@ -1822,9 +1848,7 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
 // JOURNAL
 async function fetchJournal(){
   try{
-    const res=await fetch(API+'/extension/journal?account_id='+activeAcct+'&limit=50');
-    const data=await res.json();
-    const trades=data.trades||[];
+    const trades=await fetchAllTrades(activeAcct);
     document.getElementById('journalMeta').textContent=trades.length+' trades';
     const el=document.getElementById('journalEntries');
     if(!trades.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.4" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No trades logged yet</div>';return;}
@@ -1852,9 +1876,7 @@ async function fetchJournal(){
 // ANALYTICS
 async function fetchAnalytics(){
   try{
-    const res=await fetch(API+'/extension/journal?account_id='+activeAcct+'&limit=500');
-    const data=await res.json();
-    const trades=data.trades||[];if(!trades.length)return;
+    const trades=await fetchAllTrades(activeAcct);if(!trades.length)return;
     // reveal analytics skeletons
     ['Wr','Pf','Netpl','Trades'].forEach(k=>{
       const s=document.getElementById('skel'+k),r=document.getElementById(k==='Wr'?'wr':k==='Pf'?'pf':k==='Netpl'?'netpl':'totalTrades');
@@ -1862,6 +1884,8 @@ async function fetchAnalytics(){
       if(r){r.classList.remove('sk-out');r.classList.add('sk-in');}
     });
     const wins=trades.filter(t=>(t.pnl||0)>0),losses=trades.filter(t=>(t.pnl||0)<=0);
+    const inferredBal=inferBalanceFromTrades(trades, trades[0]?.accountSize||10000);
+    if(inferredBal!=null) cacheBalance(activeAcct, inferredBal);
     const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
     const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0),wr=Math.round(wins.length/trades.length*100);
     const pf=gl>0?(gp/gl).toFixed(2):'∞';
@@ -1873,8 +1897,9 @@ async function fetchAnalytics(){
     document.getElementById('netpl').className='stat-box-val '+(netPnl>=0?'txt-green':'txt-red');
     document.getElementById('totalTrades').textContent=trades.length;
     document.getElementById('wlSub').textContent='W:'+wins.length+' L:'+losses.length;
-    let running=liveBalance-netPnl;
-    const pts=trades.slice().reverse().map(t=>{running+=(t.pnl||0);return running;});
+    const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.logged_at||0)-new Date(b.closedAt||b.logged_at||0));
+    let running=(inferredBal??liveBalance)-netPnl;
+    const pts=curveTrades.map(t=>{running+=(t.pnl||0);return running;});
     if(pts.length>1){
       const mn=Math.min(...pts),mx=Math.max(...pts),rng=mx-mn||1;
       const xs=pts.map((_,i)=>i/(pts.length-1)*400);
@@ -1884,7 +1909,8 @@ async function fetchAnalytics(){
       document.getElementById('equityFill').setAttribute('d',d+' L400,80 L0,80 Z');
     }
     const el=document.getElementById('recentTradesEl');
-    el.innerHTML=trades.slice(0,10).map(t=>{
+    const recent=trades.slice().sort((a,b)=>new Date(b.closedAt||b.logged_at||0)-new Date(a.closedAt||a.logged_at||0)).slice(0,10);
+    el.innerHTML=recent.map(t=>{
       const win=(t.pnl||0)>0;
       const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
       return`<div class="trade-row rip">
