@@ -183,6 +183,34 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .news-pill-now{background:var(--red-dim);color:var(--red);border:1px solid rgba(224,92,92,0.2);}
 .news-pill-soon{background:var(--orange-dim);color:var(--orange);border:1px solid rgba(232,146,74,0.2);}
 .news-pill-later{background:var(--s3);color:var(--t3);border:1px solid var(--border);}
+/* ── NOTIFICATION DRAWER ── */
+#notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:300;pointer-events:none;transition:background .3s;}
+#notif-overlay.open{background:rgba(0,0,0,0.55);pointer-events:all;}
+#notif-drawer{position:fixed;bottom:0;left:0;right:0;z-index:301;background:var(--s1);border-top:1px solid var(--border);border-radius:20px 20px 0 0;max-height:82vh;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .38s var(--out);max-width:680px;margin:0 auto;}
+#notif-drawer.open{transform:translateY(0);}
+.drawer-handle{width:36px;height:4px;border-radius:100px;background:var(--s3);margin:12px auto 0;}
+.drawer-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;}
+.drawer-title{font-size:15px;font-weight:700;color:var(--text);}
+.drawer-close{width:30px;height:30px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t2);transition:background .18s,transform .2s var(--spring);}
+.drawer-close:hover{background:var(--s2);transform:scale(1.1);color:var(--text);}
+.drawer-tabs{display:flex;gap:6px;padding:0 18px 12px;border-bottom:1px solid var(--border);}
+.drawer-tab{font-size:11px;font-weight:600;padding:5px 14px;border-radius:100px;border:1px solid var(--border);color:var(--t3);transition:all .2s;}
+.drawer-tab.active{background:var(--blue-dim);border-color:var(--border2);color:var(--blue);}
+.drawer-tab.red-active{background:var(--red-dim);border-color:rgba(224,92,92,0.3);color:var(--red);}
+.drawer-body{overflow-y:auto;padding:12px 14px calc(16px + env(safe-area-inset-bottom));flex:1;}
+.drawer-body::-webkit-scrollbar{width:2px;}
+.notif-item{display:flex;align-items:flex-start;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border);transition:opacity .2s;}
+.notif-item:last-child{border-bottom:none;}
+.notif-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
+.notif-icon svg{width:16px;height:16px;stroke:currentColor;fill:none;}
+.notif-content{flex:1;}
+.notif-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;line-height:1.3;}
+.notif-sub{font-size:11px;color:var(--t3);line-height:1.4;}
+.notif-time{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--t3);margin-top:4px;}
+.notif-pill{display:inline-flex;align-items:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;padding:2px 8px;border-radius:100px;margin-top:4px;}
+.notif-empty{text-align:center;padding:36px 16px;color:var(--t3);}
+.notif-empty svg{display:block;margin:0 auto 10px;opacity:.3;}
+.notif-empty p{font-size:12px;}
 /* ── ACCOUNT / PAYOUT ── */
 .payout-hero{background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.15);border-radius:var(--r);padding:20px;margin-bottom:10px;position:relative;overflow:hidden;}
 .payout-hero::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),rgba(42,171,238,0.3),transparent);}
@@ -329,6 +357,29 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 </head>
 <body>
 <div id="cur"></div><div id="cur-ring"></div>
+
+<!-- NOTIFICATION DRAWER -->
+<div id="notif-overlay"></div>
+<div id="notif-drawer">
+  <div class="drawer-handle"></div>
+  <div class="drawer-header">
+    <div class="drawer-title">Notifications</div>
+    <div class="drawer-close rip" id="drawerClose">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="drawer-tabs">
+    <div class="drawer-tab active rip" id="dtabAll" data-tab="all">All</div>
+    <div class="drawer-tab rip" id="dtabAlerts" data-tab="alerts">Risk Alerts</div>
+    <div class="drawer-tab rip" id="dtabNews" data-tab="news">News</div>
+  </div>
+  <div class="drawer-body" id="drawerBody">
+    <div class="notif-empty">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+      <p>Loading notifications...</p>
+    </div>
+  </div>
+</div>
 
 <div class="topbar">
   <div class="tb-avatar">T</div>
@@ -642,11 +693,7 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
     if(p==='news')fetchNews();
   });
 });
-// Topbar: bell → news, profile → account
-document.getElementById('btnBell').addEventListener('click',()=>{
-  document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
-  showPage('news');fetchNews();
-});
+// Topbar: profile → account
 document.getElementById('btnProfile').addEventListener('click',()=>{
   document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
   showPage('account');fetchPayout();
@@ -720,6 +767,7 @@ async function fetchStatus(){
     if(ol)setBar(3,ol.pct,ol.used,ol.limit,ol.remaining,[{cls:'warn',label:'⚠ '+usd(ol.limit*.5)},{cls:'soft',label:'● '+usd(ol.limit*.8)},{cls:'hard',label:'⛔ '+usd(ol.limit)}]);
     const aBar=document.getElementById('alertBar'),aIco=document.getElementById('alertIco');
     const aTitle=document.getElementById('alertTitle'),aSub=document.getElementById('alertSub'),aPill=document.getElementById('alertPill');
+    pushAlertsToDrawer(alerts,acct);
     if(alerts&&alerts.length){
       const a=alerts[0],w=a.level==='warn';
       aBar.style.borderColor=w?'rgba(232,146,74,0.3)':'rgba(224,92,92,0.3)';
@@ -747,6 +795,7 @@ async function fetchStatus(){
   }
 }
 fetchStatus();setInterval(fetchStatus,5000);
+fetchNews(); // populate drawer on load
 
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
@@ -944,6 +993,7 @@ async function fetchNews(){
     const res=await fetch(API+'/extension/news');
     const data=await res.json();
     const events=data.events||[];
+    pushNewsToDrawer(events);
     const el=document.getElementById('newsList');
     if(!events.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">No high-impact events in the next 8 hours</div>';return;}
     el.innerHTML=events.map(e=>{
@@ -1069,6 +1119,119 @@ function updateDepth(){
 updateDepth();
 setInterval(()=>{if(document.getElementById('page-chart').classList.contains('active'))updateDepth();},2200);
 updateRiskCalc();
+
+// ── NOTIFICATION DRAWER ──────────────────────────────────────────────────────
+let drawerNotifs={alerts:[],news:[]};
+let drawerTab='all';
+
+function openDrawer(){
+  document.getElementById('notif-overlay').classList.add('open');
+  document.getElementById('notif-drawer').classList.add('open');
+  document.body.style.overflow='hidden';
+  renderDrawer();
+}
+function closeDrawer(){
+  document.getElementById('notif-overlay').classList.remove('open');
+  document.getElementById('notif-drawer').classList.remove('open');
+  document.body.style.overflow='';
+}
+document.getElementById('drawerClose').addEventListener('click',closeDrawer);
+document.getElementById('notif-overlay').addEventListener('click',closeDrawer);
+
+let touchStartY=0;
+document.getElementById('notif-drawer').addEventListener('touchstart',e=>{touchStartY=e.touches[0].clientY;},{passive:true});
+document.getElementById('notif-drawer').addEventListener('touchend',e=>{
+  if(e.changedTouches[0].clientY-touchStartY>60)closeDrawer();
+},{passive:true});
+
+document.querySelectorAll('.drawer-tab').forEach(tab=>{
+  tab.addEventListener('click',()=>{
+    drawerTab=tab.dataset.tab;
+    document.querySelectorAll('.drawer-tab').forEach(t=>{t.classList.remove('active','red-active');});
+    if(drawerTab==='alerts'&&drawerNotifs.alerts.length)tab.classList.add('red-active');
+    else tab.classList.add('active');
+    renderDrawer();
+  });
+});
+
+function renderDrawer(){
+  const body=document.getElementById('drawerBody');
+  const items=getFilteredItems();
+  if(!items.length){
+    const msg=drawerTab==='alerts'?'No active risk alerts':drawerTab==='news'?'No upcoming news events':'All clear — nothing to report';
+    body.innerHTML=`<div class="notif-empty"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><p>${msg}</p></div>`;
+    return;
+  }
+  body.innerHTML=items.map(renderNotifItem).join('');
+}
+
+function getFilteredItems(){
+  if(drawerTab==='alerts')return drawerNotifs.alerts;
+  if(drawerTab==='news')return drawerNotifs.news;
+  return[...drawerNotifs.alerts,...drawerNotifs.news].sort((a,b)=>a.urgency-b.urgency);
+}
+
+function renderNotifItem(item){
+  if(item.type==='alert'){
+    const isCrit=item.level==='critical',isWarn=item.level==='warn';
+    const bg=isCrit?'var(--red-dim)':isWarn?'var(--orange-dim)':'var(--blue-dim)';
+    const col=isCrit?'var(--red)':isWarn?'var(--orange)':'var(--blue)';
+    const border=isCrit?'rgba(224,92,92,0.3)':isWarn?'rgba(232,146,74,0.3)':'rgba(42,171,238,0.2)';
+    const icon=isCrit
+      ?`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+      :`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
+    return`<div class="notif-item"><div class="notif-icon" style="background:${bg};color:${col}">${icon}</div><div class="notif-content"><div class="notif-title">${item.title}</div><div class="notif-sub">${item.sub}</div><div class="notif-pill" style="background:${bg};color:${col};border:1px solid ${border}">${item.tag}</div></div></div>`;
+  }
+  if(item.type==='news'){
+    const isNow=item.minutes<=15,isSoon=item.minutes<=60;
+    const col=isNow?'var(--red)':isSoon?'var(--orange)':'var(--t3)';
+    const bg=isNow?'var(--red-dim)':isSoon?'var(--orange-dim)':'var(--s3)';
+    const border=isNow?'rgba(224,92,92,0.3)':isSoon?'rgba(232,146,74,0.3)':'var(--border)';
+    const when=item.minutes<60?item.minutes+'m away':Math.round(item.minutes/60*10)/10+'h away';
+    return`<div class="notif-item"><div class="notif-icon" style="background:${bg};color:${col}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="notif-content"><div class="notif-title">${item.title}</div><div class="notif-sub">${item.time}${item.forecast?' · F: '+item.forecast:''}</div><div class="notif-pill" style="background:${bg};color:${col};border:1px solid ${border}">${when}</div></div></div>`;
+  }
+  return'';
+}
+
+function updateBellDot(){
+  const hasAlerts=drawerNotifs.alerts.length>0;
+  const urgentNews=drawerNotifs.news.filter(n=>n.minutes<=60);
+  const dot=document.getElementById('bellDot');
+  if(hasAlerts||urgentNews.length){
+    dot.style.display='block';
+    dot.style.background=hasAlerts?'var(--red)':'var(--orange)';
+  } else {
+    dot.style.display='none';
+  }
+  const alertTab=document.getElementById('dtabAlerts');
+  const newsTab=document.getElementById('dtabNews');
+  alertTab.textContent=drawerNotifs.alerts.length?`Risk Alerts (${drawerNotifs.alerts.length})`:'Risk Alerts';
+  newsTab.textContent=urgentNews.length?`News (${urgentNews.length})`:'News';
+}
+
+function pushAlertsToDrawer(alerts,acctData){
+  drawerNotifs.alerts=[];
+  (alerts||[]).forEach(a=>{
+    drawerNotifs.alerts.push({type:'alert',urgency:a.level==='critical'?0:1,level:a.level,title:a.message||'Risk Alert',sub:a.detail||'Check your risk parameters',tag:a.level==='critical'?'CRITICAL':a.level==='warn'?'WARNING':'INFO'});
+  });
+  [{label:'Risk per Trade',pct:acctData?.riskPerTradeIdea?.pct,applicable:acctData?.riskPerTradeIdea?.applicable},
+   {label:'Daily Loss Limit',pct:acctData?.dailyLoss?.pct,applicable:true},
+   {label:'Overall Loss Limit',pct:acctData?.overallLoss?.pct,applicable:true}
+  ].forEach(c=>{
+    if(!c.applicable)return;const p=c.pct||0;
+    if(p>=80&&!drawerNotifs.alerts.find(a=>a.title.startsWith(c.label)))
+      drawerNotifs.alerts.push({type:'alert',urgency:2,level:p>=90?'critical':'warn',title:c.label+' '+(p>=90?'Critical':'Warning'),sub:Math.round(p)+'% of limit reached — take caution',tag:p>=90?'CRITICAL':'80% WARNING'});
+  });
+  updateBellDot();
+  if(document.getElementById('notif-drawer').classList.contains('open'))renderDrawer();
+}
+
+function pushNewsToDrawer(events){
+  drawerNotifs.news=(events||[]).map(e=>({type:'news',urgency:e.minutes_until,minutes:e.minutes_until,title:e.title,time:e.time_et,forecast:e.forecast})).sort((a,b)=>a.minutes-b.minutes);
+  updateBellDot();
+  if(document.getElementById('notif-drawer').classList.contains('open'))renderDrawer();
+}
+
 </script>
 </body>
 </html>
