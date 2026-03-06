@@ -217,6 +217,36 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .news-pill-now{background:var(--red-dim);color:var(--red);border:1px solid rgba(224,92,92,0.2);}
 .news-pill-soon{background:var(--orange-dim);color:var(--orange);border:1px solid rgba(232,146,74,0.2);}
 .news-pill-later{background:var(--s3);color:var(--t3);border:1px solid var(--border);}
+/* ── ACCOUNT SWITCHER ── */
+.switch-hint{display:inline-flex;align-items:center;gap:5px;background:var(--s3);border:1px solid var(--border);border-radius:100px;padding:4px 10px;font-size:9px;font-weight:600;letter-spacing:.5px;color:var(--t2);transition:background .2s,border-color .2s,color .2s;flex-shrink:0;}
+.acct-card:hover .switch-hint,.switch-hint:hover{background:var(--blue-dim);border-color:var(--border2);color:var(--blue);}
+.switch-hint svg{width:10px;height:10px;stroke:currentColor;fill:none;}
+#acct-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:350;pointer-events:none;transition:background .3s;}
+#acct-overlay.open{background:rgba(0,0,0,0.6);pointer-events:all;}
+#acct-sheet{position:fixed;bottom:0;left:0;right:0;z-index:351;background:var(--s1);border-top:1px solid var(--border);border-radius:20px 20px 0 0;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .38s var(--out);max-width:680px;margin:0 auto;padding-bottom:max(20px,env(safe-area-inset-bottom));}
+#acct-sheet.open{transform:translateY(0);}
+.as-handle{width:36px;height:4px;border-radius:100px;background:var(--s3);margin:12px auto 0;}
+.as-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;}
+.as-title{font-size:15px;font-weight:700;color:var(--text);}
+.as-close{width:30px;height:30px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t2);transition:background .18s,transform .2s var(--spring);}
+.as-close:hover{background:var(--s2);transform:scale(1.1);color:var(--text);}
+.as-body{padding:4px 14px 8px;}
+.as-acct{display:flex;align-items:center;gap:12px;padding:13px 14px;border-radius:12px;border:1px solid var(--border);background:var(--s2);margin-bottom:8px;transition:border-color .2s,transform .2s var(--spring);position:relative;overflow:hidden;}
+.as-acct:hover{transform:translateY(-1px);}
+.as-acct.active-acct{border-color:var(--border2);background:var(--blue-dim);}
+.as-acct-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;}
+.as-acct-info{flex:1;}
+.as-acct-id{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);}
+.as-acct-label{font-size:11px;color:var(--t3);margin-top:2px;}
+.as-acct-right{text-align:right;}
+.as-acct-bal{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;}
+.as-acct-sub{font-size:10px;margin-top:3px;}
+.as-check{display:none;color:var(--blue);margin-left:6px;flex-shrink:0;}
+.as-acct.active-acct .as-check{display:flex;}
+.as-add{display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;border:1px dashed var(--border);color:var(--t3);transition:border-color .2s,color .2s;margin-bottom:4px;}
+.as-add:hover{border-color:var(--border2);color:var(--blue);}
+.as-add-ico{width:38px;height:38px;border-radius:50%;border:1.5px dashed currentColor;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+
 /* ── NOTIFICATION DRAWER ── */
 #notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:300;pointer-events:none;transition:background .3s;top:56px;}
 #notif-overlay.open{background:rgba(0,0,0,0.55);pointer-events:all;top:0;}
@@ -245,33 +275,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .notif-empty{text-align:center;padding:36px 16px;color:var(--t3);}
 .notif-empty svg{display:block;margin:0 auto 10px;opacity:.3;}
 .notif-empty p{font-size:12px;}
-/* ── ACCOUNT SWITCHER ── */
-#acct-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:350;pointer-events:none;transition:background .3s;}
-#acct-overlay.open{background:rgba(0,0,0,0.6);pointer-events:all;}
-#acct-sheet{position:fixed;bottom:0;left:0;right:0;z-index:351;background:var(--s1);border-top:1px solid var(--border);border-radius:20px 20px 0 0;display:flex;flex-direction:column;transform:translateY(100%);transition:transform .38s var(--out);max-width:680px;margin:0 auto;padding-bottom:max(20px,env(safe-area-inset-bottom));}
-#acct-sheet.open{transform:translateY(0);}
-.as-handle{width:36px;height:4px;border-radius:100px;background:var(--s3);margin:12px auto 0;}
-.as-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;}
-.as-title{font-size:15px;font-weight:700;color:var(--text);}
-.as-close{width:30px;height:30px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t2);transition:background .18s,transform .2s var(--spring);}
-.as-close:hover{background:var(--s2);transform:scale(1.1);color:var(--text);}
-.as-body{padding:4px 14px 8px;}
-.as-acct{display:flex;align-items:center;gap:14px;padding:13px 14px;border-radius:12px;border:1px solid var(--border);background:var(--s2);margin-bottom:8px;transition:border-color .2s,transform .2s var(--spring);position:relative;overflow:hidden;}
-.as-acct:hover{transform:translateY(-1px);}
-.as-acct.active-acct{border-color:var(--border2);background:var(--blue-dim);}
-.as-acct-avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;}
-.as-acct-info{flex:1;}
-.as-acct-id{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);line-height:1.2;}
-.as-acct-label{font-size:11px;color:var(--t3);margin-top:2px;}
-.as-acct-status{display:flex;align-items:center;gap:5px;font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;}
-.as-dot{width:7px;height:7px;border-radius:50%;background:var(--green);}
-.as-dot.offline{background:var(--t3);}
-.as-check{display:none;color:var(--blue);}
-.as-acct.active-acct .as-check{display:flex;}
-.as-add{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:12px;border:1px dashed var(--border);margin-bottom:4px;color:var(--t3);transition:border-color .2s,color .2s;}
-.as-add:hover{border-color:var(--border2);color:var(--blue);}
-.as-add-ico{width:38px;height:38px;border-radius:50%;border:1.5px dashed currentColor;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
-
+/* ── ACCOUNT / PAYOUT ── */
 .payout-hero{background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.15);border-radius:var(--r);padding:20px;margin-bottom:10px;position:relative;overflow:hidden;}
 .payout-hero::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),rgba(42,171,238,0.3),transparent);}
 .payout-hero.eligible{background:linear-gradient(135deg,rgba(77,205,138,0.1),rgba(77,205,138,0.04));border-color:rgba(77,205,138,0.25);}
@@ -470,7 +474,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <div class="topbar">
   <div class="tb-avatar">T</div>
-  <div class="tb-info"><div class="tb-name">TaliTrade <span id="tbAcctPill" style="font-size:10px;font-weight:500;letter-spacing:.5px;color:var(--blue);background:var(--blue-dim);border:1px solid rgba(42,171,238,0.2);padding:1px 8px;border-radius:100px;vertical-align:middle">1917136</span></div><div class="tb-status" id="tb-status">connecting...</div></div>
+  <div class="tb-info"><div class="tb-name">TaliTrade</div><div class="tb-status" id="tb-status">connecting...</div></div>
   <div style="display:flex;gap:4px;">
     <div class="tb-btn rip" id="btnBell" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div id="bellDot" style="display:none;position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid var(--s1)"></div></div>
     <div class="tb-profile-btn rip" id="btnProfile"><div class="tb-profile-inner">1</div></div>
@@ -495,11 +499,17 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       </div>
     </div>
     <!-- REAL -->
-    <div class="acct-card rip sk-fade sk-out" id="realAcct" style="margin-bottom:0">
+    <div class="acct-card rip sk-fade sk-out" id="realAcct" style="margin-bottom:0" onclick="openAcctSheet()">
       <div class="grid-t"></div>
       <div class="acct-top">
         <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">1917136</div></div>
-        <div class="acct-badge rip" id="acctBadge">10K Master</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          <div class="acct-badge rip" id="acctBadge">10K Master</div>
+          <div class="switch-hint rip">
+            <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
+            Switch account
+          </div>
+        </div>
       </div>
       <div class="m4">
         <div class="mbox rip"><div class="mbox-label">Balance</div><div class="mbox-val txt-green" id="mBal">$—</div><div class="mbox-sub">Starting $<span id="mBalStart">10,000</span></div></div>
@@ -893,11 +903,14 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
     if(p==='news')fetchNews();
   });
 });
-// Topbar: profile → account switcher sheet
-document.getElementById('btnProfile').addEventListener('click', openAcctSheet);
+// Topbar: profile → account page (restored)
+document.getElementById('btnProfile').addEventListener('click',()=>{
+  document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
+  showPage('account');fetchPayout();
+});
 
 // ── ACCOUNT SWITCHER ──────────────────────────────────────────────────────────
-let acctBalances={}; // cache of {id: balance} for display in switcher
+let acctBalances={};
 
 function openAcctSheet(){
   renderAcctSheet();
@@ -910,61 +923,53 @@ function closeAcctSheet(){
   document.getElementById('acct-sheet').classList.remove('open');
   document.body.style.overflow='';
 }
-document.getElementById('acctSheetClose').addEventListener('click', closeAcctSheet);
-document.getElementById('acct-overlay').addEventListener('click', closeAcctSheet);
-
+document.getElementById('acctSheetClose').addEventListener('click',closeAcctSheet);
+document.getElementById('acct-overlay').addEventListener('click',closeAcctSheet);
 let asTouch=0;
 document.getElementById('acct-sheet').addEventListener('touchstart',e=>{asTouch=e.touches[0].clientY;},{passive:true});
-document.getElementById('acct-sheet').addEventListener('touchend',e=>{
-  if(e.changedTouches[0].clientY-asTouch>60)closeAcctSheet();
-},{passive:true});
+document.getElementById('acct-sheet').addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-asTouch>60)closeAcctSheet();},{passive:true});
 
 function renderAcctSheet(){
-  const body=document.getElementById('acctSheetBody');
-  const avatarColors=['linear-gradient(135deg,var(--blue),var(--blue-dark))','linear-gradient(135deg,var(--t3),#3d5a6e)'];
+  const gradients=['linear-gradient(135deg,var(--blue),var(--blue-dark))','linear-gradient(135deg,var(--t3),#3d5a6e)'];
   let html=Object.entries(ACCOUNTS).map(([id,info],i)=>{
     const isActive=id===activeAcct;
     const bal=acctBalances[id];
     const balStr=bal!=null?usd(bal):'—';
-    const statusStr=isActive?'<span style="color:var(--green)">Live · syncing</span>':'<span style="color:var(--t3)">Tap to switch</span>';
+    const balColor=isActive?'var(--green)':'var(--t2)';
+    const subTxt=isActive?'<span style="color:var(--blue)">Live · syncing</span>':'<span style="color:var(--t3)">Tap to switch</span>';
+    const check=isActive?'<div class="as-check"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>':'';
     return`<div class="as-acct rip ${isActive?'active-acct':''}" onclick="switchAccount('${id}')">
-      <div class="as-acct-avatar" style="background:${avatarColors[i]||avatarColors[0]}">${info.idx}</div>
+      <div class="as-acct-avatar" style="background:${gradients[i]||gradients[0]}">${info.idx}</div>
       <div class="as-acct-info">
         <div class="as-acct-id">${id}</div>
         <div class="as-acct-label">${info.label}</div>
       </div>
-      <div style="text-align:right">
-        <div style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:${isActive?'var(--green)':'var(--t2)'}">${balStr}</div>
-        <div style="font-size:10px;margin-top:3px">${statusStr}</div>
+      <div class="as-acct-right">
+        <div class="as-acct-bal" style="color:${balColor}">${balStr}</div>
+        <div class="as-acct-sub">${subTxt}</div>
       </div>
-      <div class="as-check">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-      </div>
+      ${check}
     </div>`;
   }).join('');
   html+=`<div class="as-add rip">
     <div class="as-add-ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
-    <div><div style="font-size:13px;font-weight:500">Add Account</div><div style="font-size:11px;margin-top:2px">Connect another FundingPips account</div></div>
+    <div><div style="font-size:13px;font-weight:500">Add Account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect another FundingPips account</div></div>
   </div>`;
-  body.innerHTML=html;
+  document.getElementById('acctSheetBody').innerHTML=html;
 }
 
 function switchAccount(id){
   if(id===activeAcct){closeAcctSheet();return;}
   closeAcctSheet();
   activeAcct=id;
-  const info=ACCOUNTS[id];
 
-  // Update profile button
-  document.querySelector('.tb-profile-inner').textContent=info.idx;
-
-  // Update topbar pill
-  const pill=document.getElementById('tbAcctPill');
-  if(pill)pill.textContent=id;
-
-  // Update static account ID display
+  // Update account card ID display
   const acctIdEl=document.getElementById('acctId');
   if(acctIdEl)acctIdEl.textContent=id;
+
+  // Update profile button number
+  const info=ACCOUNTS[id];
+  document.querySelector('.tb-profile-inner').textContent=info.idx;
 
   // Reset dashboard skeletons
   dashRevealed=false;
@@ -980,29 +985,24 @@ function switchAccount(id){
   if(sp){sp.classList.remove('sk-out');sp.classList.add('sk-in');}
   if(rp){rp.classList.remove('sk-in');rp.classList.add('sk-out');}
 
-  // Clear analytics + journal
-  const wr=document.getElementById('wr'),pf=document.getElementById('pf');
-  const netpl=document.getElementById('netpl'),tt=document.getElementById('totalTrades');
-  if(wr)wr.textContent='—';if(pf)pf.textContent='—';
-  if(netpl)netpl.textContent='—';if(tt)tt.textContent='—';
+  // Clear analytics & journal
+  ['wr','pf','netpl','totalTrades'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—';});
   const je=document.getElementById('journalEntries');
   if(je)je.innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div>';
   const rt=document.getElementById('recentTradesEl');
   if(rt)rt.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div>';
 
-  // Refetch everything
+  // Refetch everything for new account
   fetchStatus();
   const curPage=document.querySelector('.page.active');
   if(curPage&&curPage.id==='page-account')fetchPayout();
   if(curPage&&curPage.id==='page-analytics'){fetchAnalytics();fetchJournal();}
 }
 
-// Cache balances as they come in from fetchStatus
-function cacheBalance(id, bal){
+function cacheBalance(id,bal){
   acctBalances[id]=bal;
   if(document.getElementById('acct-sheet').classList.contains('open'))renderAcctSheet();
 }
-
 
 // CLOCK
 function tick(){const t=new Date().toLocaleTimeString('en-US',{hour12:false});['clock','footerTime'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent=t;});}
@@ -1069,7 +1069,7 @@ async function fetchStatus(){
     revealDash();
     const{balance,equity,profit,accountType,accountSize,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
     liveBalance=balance||10000;
-    cacheBalance(activeAcct, balance);
+    cacheBalance(activeAcct,balance);
     document.getElementById('mBal').textContent=usd(balance);
     document.getElementById('mEq').textContent=usd(equity);
     const plEl=document.getElementById('mPL');
