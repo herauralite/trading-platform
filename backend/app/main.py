@@ -432,19 +432,43 @@ async def db_insert_trade(trade_dict: dict):
         ]})
 
 
-async def db_get_trades(account_id: str = None, limit: int = 50) -> list:
+async def db_get_trades(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc") -> list:
+    from app.core.database import engine
+    order_sql = "ASC" if order.lower() == "asc" else "DESC"
+    async with engine.connect() as conn:
+        if account_id:
+            result = await conn.execute(
+                text(f"SELECT * FROM trades WHERE account_id=:a ORDER BY logged_at {order_sql} LIMIT :l OFFSET :o"),
+                {"a": account_id, "l": limit, "o": offset}
+            )
+        else:
+            result = await conn.execute(
+                text(f"SELECT * FROM trades ORDER BY logged_at {order_sql} LIMIT :l OFFSET :o"),
+                {"l": limit, "o": offset}
+            )
+        return [dict(r) for r in result.mappings().all()]
+
+
+async def db_get_trade_stats(account_id: str = None) -> dict:
+    """Returns total count and oldest trade date — lightweight, used for payout countdown seeding."""
     from app.core.database import engine
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text("SELECT * FROM trades WHERE account_id=:a ORDER BY logged_at DESC LIMIT :l"),
-                {"a": account_id, "l": limit}
+                text("SELECT COUNT(*) as total, MIN(logged_at) as oldest FROM trades WHERE account_id=:a"),
+                {"a": account_id}
             )
         else:
             result = await conn.execute(
-                text("SELECT * FROM trades ORDER BY logged_at DESC LIMIT :l"), {"l": limit}
+                text("SELECT COUNT(*) as total, MIN(logged_at) as oldest FROM trades")
             )
-        return [dict(r) for r in result.mappings().all()]
+        row = result.mappings().one_or_none()
+        if not row:
+            return {"total": 0, "oldest_trade_date": None}
+        oldest = row["oldest"]
+        if oldest and hasattr(oldest, "isoformat"):
+            oldest = oldest.isoformat()
+        return {"total": row["total"] or 0, "oldest_trade_date": oldest}
 
 
 async def db_get_trades_today(account_id: str = None) -> list:
@@ -981,9 +1005,22 @@ async def log_trade(trade: TradeData):
 
 
 @app.get("/extension/journal")
-async def get_journal(account_id: str = None, limit: int = 50):
-    rows = await db_get_trades(account_id=account_id, limit=limit)
-    return {"trades": [row_to_trade(r) for r in rows], "total": len(rows)}
+async def get_journal(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc"):
+    rows = await db_get_trades(account_id=account_id, limit=limit, offset=offset, order=order)
+    return {"trades": [row_to_trade(r) for r in rows], "total": len(rows), "offset": offset, "limit": limit}
+
+
+@app.get("/extension/journal/stats")
+async def get_journal_stats(account_id: str = None):
+    """Lightweight endpoint — returns total trade count and oldest trade date for payout countdown seeding."""
+    return await db_get_trade_stats(account_id=account_id)
+
+
+# Alias — content.js was posting to /journal/trade instead of /extension/trade.
+# Keep both alive so any existing extension installs don't silently drop trades.
+@app.post("/journal/trade")
+async def log_trade_alias(trade: TradeData):
+    return await log_trade(trade)
 
 
 @app.get("/extension/status")
