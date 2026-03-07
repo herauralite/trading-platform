@@ -130,10 +130,13 @@ SCRAPER_FILTER = " AND (source = 'scraper' OR source IS NULL)"
 
 
 async def ensure_trades_table():
-    """Create table + run idempotent migrations. All steps share ONE connection."""
+    """Create table + run idempotent migrations.
+    Each ALTER TABLE runs in its own connection so a duplicate-column or
+    duplicate-constraint error doesn't abort the transaction for later steps."""
     from app.core.database import engine
+
+    # Step 1: Create table (safe — IF NOT EXISTS never errors)
     async with engine.begin() as conn:
-        # 1. Create table
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trades (
                 id                 SERIAL PRIMARY KEY,
@@ -158,29 +161,28 @@ async def ensure_trades_table():
             )
         """))
 
-        # 2. Dedup constraint — prevents the scraper from inserting the same
-        #    closed trade twice across 60-second polling cycles.
-        try:
+    # Step 2: Dedup constraint — own connection so failure doesn't poison later steps
+    try:
+        async with engine.begin() as conn:
             await conn.execute(text("""
                 ALTER TABLE trades
                 ADD CONSTRAINT trades_dedup
                 UNIQUE (account_id, symbol, direction, closed_at, pnl)
             """))
-            logger.info("trades_dedup constraint added")
-        except Exception:
-            pass  # already exists — safe to ignore
+        logger.info("trades_dedup constraint added")
+    except Exception:
+        pass  # already exists — safe to ignore
 
-        # 3. Source column — added without DEFAULT so existing rows stay NULL
-        #    (NULL rows are treated as 'scraper' by all queries via SCRAPER_FILTER).
-        try:
+    # Step 3: Source column — same isolation pattern
+    try:
+        async with engine.begin() as conn:
             await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
-            logger.info("trades source column added")
-        except Exception:
-            pass  # already exists
+        logger.info("trades source column added")
+    except Exception:
+        pass  # already exists
 
-        # 4. Backfill source for rows that predate this column.
-        #    Discriminator: scraper rows never had balance_after available.
-        # asyncpg requires one statement per execute call
+    # Step 4: Backfill source on pre-migration rows
+    async with engine.begin() as conn:
         await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL AND balance_after IS NULL"))
         await conn.execute(text("UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL"))
         await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL"))
