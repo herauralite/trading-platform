@@ -460,16 +460,6 @@ async def db_insert_trade(trade_dict: dict):
             f"likely close price captured instead of profit"
         )
         return
-    # Sanity guard: reject rows with no closedAt.
-    # The dedup constraint relies on closed_at — NULL != NULL in SQL, so every
-    # duplicate insert would go through if closedAt is missing.
-    if not trade_dict.get("closedAt"):
-        logger.warning(
-            f"db_insert_trade: rejected row with null closedAt for "
-            f"{trade_dict.get('symbol')} {trade_dict.get('direction')} "
-            f"pnl={pnl_val} — date parsing likely failed in scraper"
-        )
-        return
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -638,7 +628,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TaliTrade", version="3.2.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
 
 from app.routers import auth, accounts
 app.include_router(auth.router)
@@ -1248,27 +1238,4 @@ async def purge_corrupt_trades():
         """))
         deleted = [dict(r) for r in result.mappings().all()]
     logger.info(f"purge-corrupt-trades: removed {len(deleted)} rows")
-    return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
-
-
-@app.delete("/admin/purge-null-closedat")
-async def purge_null_closedat():
-    """Cleanup: deletes rows where closed_at IS NULL.
-    These are scraper rows inserted before the date-parsing fix — the scraper
-    failed to parse FundingPips' close time format so closedAt was null.
-    Without a valid closed_at the dedup constraint can't work (NULL != NULL in SQL)
-    and the same trade gets re-inserted on every 60s scrape cycle."""
-    from app.core.database import engine
-    async with engine.begin() as conn:
-        preview = await conn.execute(text("""
-            SELECT COUNT(*) as cnt FROM trades WHERE closed_at IS NULL
-        """))
-        count = preview.scalar()
-        result = await conn.execute(text("""
-            DELETE FROM trades
-            WHERE closed_at IS NULL
-            RETURNING id, account_id, symbol, direction, pnl, logged_at
-        """))
-        deleted = [dict(r) for r in result.mappings().all()]
-    logger.info(f"purge-null-closedat: removed {len(deleted)} rows")
     return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
