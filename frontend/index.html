@@ -1870,7 +1870,9 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
 // JOURNAL
 async function fetchJournal(){
   try{
-    const trades=await fetchAllTrades(activeAcct);
+    let trades=await fetchAllTrades(activeAcct);
+    // Same corrupt-pnl guard as fetchAnalytics — filter out close-price-as-pnl rows
+    trades=trades.filter(t=>Math.abs(t.pnl||0)<=(t.accountSize||10000));
     document.getElementById('journalMeta').textContent=trades.length+' trades';
     const el=document.getElementById('journalEntries');
     if(!trades.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.4" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No trades logged yet</div>';return;}
@@ -1898,7 +1900,19 @@ async function fetchJournal(){
 // ANALYTICS
 async function fetchAnalytics(){
   try{
-    const trades=await fetchAllTrades(activeAcct);
+    let trades=await fetchAllTrades(activeAcct);
+    // Guard: filter out any rows where |pnl| > accountSize.
+    // These are corrupted DB rows from the scraper close-price bug.
+    // Belt-and-suspenders — the backend now rejects these at insert time,
+    // but existing corrupted rows still need filtering on the client side.
+    trades=trades.filter(t=>{
+      const sz=t.accountSize||10000;
+      if(Math.abs(t.pnl||0)>sz){
+        console.warn('fetchAnalytics: filtered corrupt pnl',t.symbol,t.pnl,'(looks like close price)');
+        return false;
+      }
+      return true;
+    });
     if(!trades.length){
       document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">No trades recorded yet</div>';
       return;
