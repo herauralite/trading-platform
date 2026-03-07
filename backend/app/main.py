@@ -383,6 +383,7 @@ def format_payout_status(ev: dict, short: bool = False) -> str:
 async def ensure_trades_table():
     from app.core.database import engine
     async with engine.begin() as conn:
+        # Create table
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trades (
                 id                 SERIAL PRIMARY KEY,
@@ -406,43 +407,33 @@ async def ensure_trades_table():
                 source             TEXT
             )
         """))
-    # Add dedup constraint idempotently — safe to run on every startup
-    try:
-        await conn.execute(text("""
-            ALTER TABLE trades
-            ADD CONSTRAINT trades_dedup
-            UNIQUE (account_id, symbol, direction, closed_at, pnl)
-        """))
-        logger.info("trades dedup constraint added")
-    except Exception:
-        pass  # constraint already exists — ignore
 
-    # Add source column for existing deployments — NO DEFAULT so existing rows stay NULL.
-    # We then backfill based on balance_after (the only reliable signal for old rows).
-    try:
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
-        logger.info("trades source column added")
-    except Exception:
-        pass  # column already exists — safe to ignore
+        # Add dedup constraint idempotently
+        try:
+            await conn.execute(text("""
+                ALTER TABLE trades
+                ADD CONSTRAINT trades_dedup
+                UNIQUE (account_id, symbol, direction, closed_at, pnl)
+            """))
+            logger.info("trades dedup constraint added")
+        except Exception:
+            pass  # already exists
 
-    # Backfill source on existing rows using balance_after as the discriminator:
-    # - Scraper rows never had balance_after (closed positions tab doesn't show it)
-    # - Real-time rows always set balance_after from live balance at detection time
-    # Run inside its own try so a backfill hiccup never blocks startup.
-    try:
-        await conn.execute(text("""
-            UPDATE trades SET source = 'scraper'
-            WHERE source IS NULL AND balance_after IS NULL;
+        # Add source column for existing deployments
+        try:
+            await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
+            logger.info("trades source column added")
+        except Exception:
+            pass  # already exists
 
-            UPDATE trades SET source = 'realtime'
-            WHERE source IS NULL AND balance_after IS NOT NULL;
-
-            UPDATE trades SET source = 'scraper'
-            WHERE source IS NULL;
-        """))
-        logger.info("trades source backfill complete")
-    except Exception as e:
-        logger.warning(f"trades source backfill skipped: {e}")
+        # Backfill source — balance_after=NULL means scraper, NOT NULL means realtime
+        try:
+            await conn.execute(text("UPDATE trades SET source = 'scraper' WHERE source IS NULL AND balance_after IS NULL"))
+            await conn.execute(text("UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL"))
+            await conn.execute(text("UPDATE trades SET source = 'scraper' WHERE source IS NULL"))
+            logger.info("trades source backfill complete")
+        except Exception as e:
+            logger.warning(f"trades source backfill skipped: {e}")
 
     logger.info("trades table ready")
 
