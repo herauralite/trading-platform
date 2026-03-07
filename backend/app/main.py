@@ -216,7 +216,7 @@ async def db_insert_trade(trade_dict: dict):
                 :dailyLossUsed, :dailyLossLimit,
                 :overallLossUsed, :overallLossLimit, :closedAt, :source
             )
-            ON CONFLICT ON CONSTRAINT trades_dedup DO NOTHING
+            ON CONFLICT (account_id, symbol, direction, closed_at, pnl) DO NOTHING
         """), {k: trade_dict.get(k) for k in [
             "accountId", "accountType", "accountSize", "symbol", "direction", "volume",
             "openPrice", "closePrice", "pnl", "balanceAfter", "equityAfter",
