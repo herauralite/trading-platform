@@ -911,6 +911,7 @@ document.getElementById('btnProfile').addEventListener('click',()=>{
 
 // ── ACCOUNT SWITCHER ──────────────────────────────────────────────────────────
 let acctBalances={};
+let tradesCache={};
 
 function openAcctSheet(){
   renderAcctSheet();
@@ -985,7 +986,10 @@ function switchAccount(id){
   if(sp){sp.classList.remove('sk-out');sp.classList.add('sk-in');}
   if(rp){rp.classList.remove('sk-in');rp.classList.add('sk-out');}
 
-  // Clear analytics & journal
+  // Invalidate cached trades for new account so fetchAnalytics gets fresh data
+  delete tradesCache[id];
+  delete tradesCache[id+'_ts'];
+  // Clear analytics & journal display
   ['wr','pf','netpl','totalTrades'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—';});
   const je=document.getElementById('journalEntries');
   if(je)je.innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div>';
@@ -1014,16 +1018,22 @@ function inferBalanceFromTrades(trades, accountSize){
 }
 
 async function fetchAllTrades(accountId, pageSize=200){
+  // Return cached data if available and not stale (< 30s old)
+  if(tradesCache[accountId]&&tradesCache[accountId+'_ts']&&(Date.now()-tradesCache[accountId+'_ts'])<30000){
+    return tradesCache[accountId];
+  }
   const out=[];
   for(let page=0;page<100;page++){
     const offset=page*pageSize;
     const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc`);
+    if(!res.ok) throw new Error('Journal fetch failed: '+res.status);
     const data=await res.json();
     const chunk=data.trades||[];
     out.push(...chunk);
     if(chunk.length<pageSize) break;
   }
   tradesCache[accountId]=out;
+  tradesCache[accountId+'_ts']=Date.now();
   return out;
 }
 
@@ -1043,8 +1053,7 @@ let dashRevealed=false;
 function revealDash(){
   if(dashRevealed)return;
   dashRevealed=true;
-  // small stagger: account card first, risk stack 120ms later
-  ['skelAcct','realAcct'].forEach(id=>document.getElementById(id)&&document.getElementById(id).classList.toggle('sk-out')&&document.getElementById(id).classList.toggle('sk-in'));
+  // stagger: account card first, risk stack 120ms later
   const sa=document.getElementById('skelAcct'),ra=document.getElementById('realAcct');
   if(sa){sa.classList.remove('sk-in');sa.classList.add('sk-out');}
   if(ra){ra.classList.remove('sk-out');ra.classList.add('sk-in');}
@@ -1148,6 +1157,19 @@ async function fetchStatus(){
 }
 fetchStatus();setInterval(fetchStatus,5000);
 fetchNews(); // populate drawer on load
+// Pre-load trades on boot so balance inferral works from the start
+// and analytics tab shows data instantly when first tapped
+fetchAllTrades(activeAcct).then(trades=>{
+  if(!trades.length) return;
+  const sz=trades[0]?.accountSize||10000;
+  const inferredBal=inferBalanceFromTrades(trades,sz);
+  if(inferredBal!=null){
+    cacheBalance(activeAcct,inferredBal);
+    // If the extension isn't live yet, fill balance box from trade history
+    const balEl=document.getElementById('mBal');
+    if(balEl&&balEl.textContent==='$—') balEl.textContent=usd(inferredBal);
+  }
+}).catch(()=>{});
 
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
@@ -1876,7 +1898,11 @@ async function fetchJournal(){
 // ANALYTICS
 async function fetchAnalytics(){
   try{
-    const trades=await fetchAllTrades(activeAcct);if(!trades.length)return;
+    const trades=await fetchAllTrades(activeAcct);
+    if(!trades.length){
+      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">No trades recorded yet</div>';
+      return;
+    }
     // reveal analytics skeletons
     ['Wr','Pf','Netpl','Trades'].forEach(k=>{
       const s=document.getElementById('skel'+k),r=document.getElementById(k==='Wr'?'wr':k==='Pf'?'pf':k==='Netpl'?'netpl':'totalTrades');
@@ -1919,7 +1945,10 @@ async function fetchAnalytics(){
         <div class="trade-pl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(t.pnl)}</div>
       </div>`;
     }).join('');
-  }catch(e){}
+  }catch(e){
+    console.error('fetchAnalytics error:',e);
+    document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Error loading analytics — tap to retry</div>';
+  }
 }
 
 // NEWS
