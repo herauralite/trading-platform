@@ -405,6 +405,16 @@ async def ensure_trades_table():
                 logged_at          TIMESTAMPTZ DEFAULT NOW()
             )
         """))
+    # Add dedup constraint idempotently — safe to run on every startup
+    try:
+        await conn.execute(text("""
+            ALTER TABLE trades
+            ADD CONSTRAINT trades_dedup
+            UNIQUE (account_id, symbol, direction, closed_at, pnl)
+        """))
+        logger.info("trades dedup constraint added")
+    except Exception:
+        pass  # constraint already exists — ignore
     logger.info("trades table ready")
 
 
@@ -425,6 +435,7 @@ async def db_insert_trade(trade_dict: dict):
                 :dailyLossUsed, :dailyLossLimit,
                 :overallLossUsed, :overallLossLimit, :closedAt
             )
+            ON CONFLICT ON CONSTRAINT trades_dedup DO NOTHING
         """), {k: trade_dict.get(k) for k in [
             "accountId","accountType","accountSize","symbol","direction","volume",
             "openPrice","closePrice","pnl","balanceAfter","equityAfter",
@@ -438,12 +449,12 @@ async def db_get_trades(account_id: str = None, limit: int = 50, offset: int = 0
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text(f"SELECT * FROM trades WHERE account_id=:a ORDER BY logged_at {order_sql} LIMIT :l OFFSET :o"),
+                text(f"SELECT * FROM trades WHERE account_id=:a ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
                 {"a": account_id, "l": limit, "o": offset}
             )
         else:
             result = await conn.execute(
-                text(f"SELECT * FROM trades ORDER BY logged_at {order_sql} LIMIT :l OFFSET :o"),
+                text(f"SELECT * FROM trades ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
                 {"l": limit, "o": offset}
             )
         return [dict(r) for r in result.mappings().all()]
@@ -635,7 +646,7 @@ async def daily_summary_scheduler():
 
 
 async def send_daily_summary(summary_date: str):
-    acct_id   = "1917136"
+    acct_id   = "1917136" if "1917136" in account_data_store else (list(account_data_store.keys())[0] if account_data_store else "1917136")
     rows      = await db_get_trades_for_date(summary_date, account_id=acct_id)
     trades    = [row_to_trade(r) for r in rows]
     acct      = account_data_store.get(acct_id, {})
@@ -847,7 +858,7 @@ async def telegram_webhook(request: Request):
 
 
 async def handle_payout(chat_id: str):
-    acct_id = "1917136"; acct = account_data_store.get(acct_id)
+    acct_id = list(account_data_store.keys())[0] if account_data_store else "1917136"; acct = account_data_store.get(acct_id)
     if not acct:
         await send_telegram("📡 No data — open FundingPips in your browser first.", chat_id=chat_id); return
     ev = await evaluate_payout_eligibility(acct_id, acct)
@@ -962,9 +973,13 @@ class ExtensionData(BaseModel):
 async def receive_extension_data(data: ExtensionData):
     account_id = data.accountId or "unknown"
     prev       = account_data_store.get(account_id, {})
+    prev_alerts = {a.get("type"): a.get("level") for a in (prev.get("alerts") or [])}
     account_data_store[account_id] = {**data.dict(), "last_updated": datetime.utcnow().isoformat()}
     for alert in data.alerts:
-        await send_telegram(alert.get("message","") + f"\n\n<i>Account: {account_id}</i>")
+        # Only send Telegram if this alert type/level is new vs previous poll
+        # This prevents spam when extension restarts and re-fires all stored alerts
+        if prev_alerts.get(alert.get("type")) != alert.get("level"):
+            await send_telegram(alert.get("message","") + f"\n\n<i>Account: {account_id}</i>")
     prev_profit = prev.get("profit"); curr_profit = data.profit
     if curr_profit is not None and prev_profit is not None:
         if prev_profit - curr_profit >= 10:
