@@ -192,16 +192,6 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .trade-sym{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;width:70px;}
 .trade-time{font-size:10px;color:var(--t3);flex:1;}
 .trade-pl{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;text-align:right;}
-.day-group{margin-bottom:8px;}
-.day-header{display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--s2);border-radius:var(--rs);margin-bottom:2px;cursor:pointer;user-select:none;transition:background .15s;}
-.day-header:hover{background:var(--s3);}
-.day-label{font-size:12px;font-weight:600;color:var(--t2);}
-.day-meta{display:flex;align-items:center;gap:10px;}
-.day-count{font-size:11px;color:var(--t3);}
-.day-pnl{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
-.day-trades{background:var(--s1);border:1px solid var(--border);border-radius:var(--rs);padding:0 12px;overflow:hidden;transition:max-height .3s var(--out),opacity .25s;max-height:2000px;opacity:1;}
-.day-trades.collapsed{max-height:0;opacity:0;border-color:transparent;padding-top:0;padding-bottom:0;}
-.trade-dir{font-size:10px;color:var(--t3);}
 .journal-entry{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:8px;transition:border-color .25s,transform .3s var(--out);}
 .journal-entry:hover{transform:translateY(-2px);border-color:var(--border2);}
 .je-head{display:flex;align-items:center;padding:13px 16px;gap:10px;}
@@ -628,12 +618,12 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <!-- ANALYTICS -->
 <div id="page-analytics" class="page">
-  <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta" id="analyticsMeta">—</div></div>
+  <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta">All trades</div></div>
   <div class="stat-row" id="analyticsStats">
-    <div class="stat-box"><div class="stat-box-label">Win Rate</div><div class="stat-box-val" id="wr">—</div><div class="stat-box-sub" id="wrSub">— trades</div></div>
-    <div class="stat-box"><div class="stat-box-label">Profit Factor</div><div class="stat-box-val txt-blue" id="pf">—</div><div class="stat-box-sub">gross P / L</div></div>
-    <div class="stat-box"><div class="stat-box-label">Net P&L</div><div class="stat-box-val" id="netpl">—</div><div class="stat-box-sub">closed trades</div></div>
-    <div class="stat-box"><div class="stat-box-label">Total Trades</div><div class="stat-box-val" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Win Rate</div><div class="skel skel-r sk-fade sk-in" id="skelWr" style="width:70px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="wr">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf">—</div><div class="stat-box-sub">gross profit / loss</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
   </div>
   <div class="chart-card">
     <div class="chart-label">Equity Curve</div>
@@ -645,8 +635,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       </svg>
     </div>
   </div>
-  <div class="sec-head"><div class="sec-label">Trade History</div></div>
-  <div id="tradeHistoryEl"><div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div></div>
+  <div class="sec-head"><div class="sec-label">Recent Trades</div></div>
+  <div class="card card-p" id="recentTradesEl"><div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div></div>
   <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Analytics</span></div>
 </div>
 
@@ -908,7 +898,7 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
     item.classList.add('active');
     showPage(p);
     if(p==='chart')setTimeout(initChart,200);
-    if(p==='analytics'){fetchAnalytics();}
+    if(p==='analytics'){fetchAnalytics();fetchJournal();}
     if(p==='account')fetchPayout();
     if(p==='news')fetchNews();
   });
@@ -922,6 +912,7 @@ document.getElementById('btnProfile').addEventListener('click',()=>{
 // ── ACCOUNT SWITCHER ──────────────────────────────────────────────────────────
 let acctBalances={};
 let tradesCache={};
+let liveAccountsCache={};  // stores last-seen data for all accounts, for the sheet
 
 function openAcctSheet(){
   renderAcctSheet();
@@ -947,7 +938,19 @@ function renderAcctSheet(){
     const bal=acctBalances[id];
     const balStr=bal!=null?usd(bal):'—';
     const balColor=isActive?'var(--green)':'var(--t2)';
-    const subTxt=isActive?'<span style="color:var(--blue)">Live · syncing</span>':'<span style="color:var(--t3)">Tap to switch</span>';
+    const liveAcct=liveAccountsCache[id];
+    const lastSeen=liveAcct?.last_updated;
+    let subTxt;
+    if(isActive){
+      subTxt='<span style="color:var(--blue)">Live · syncing</span>';
+    } else if(lastSeen){
+      const ageMins=Math.round((Date.now()-new Date(lastSeen).getTime())/60000);
+      subTxt=ageMins<5
+        ?'<span style="color:var(--t2)">Tap to switch · '+ageMins+'m ago</span>'
+        :'<span style="color:var(--t3)">Last seen '+ageMins+'m ago</span>';
+    } else {
+      subTxt='<span style="color:var(--t3)">Tap to switch</span>';
+    }
     const check=isActive?'<div class="as-check"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>':'';
     return`<div class="as-acct rip ${isActive?'active-acct':''}" onclick="switchAccount('${id}')">
       <div class="as-acct-avatar" style="background:${gradients[i]||gradients[0]}">${info.idx}</div>
@@ -999,16 +1002,18 @@ function switchAccount(id){
   // Invalidate cached trades for new account so fetchAnalytics gets fresh data
   delete tradesCache[id];
   delete tradesCache[id+'_ts'];
-  // Clear analytics display
+  // Clear analytics & journal display
   ['wr','pf','netpl','totalTrades'].forEach(id=>{const el=document.getElementById(id);if(el)el.textContent='—';});
-  const th=document.getElementById('tradeHistoryEl');
-  if(th)th.innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div>';
+  const je=document.getElementById('journalEntries');
+  if(je)je.innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div>';
+  const rt=document.getElementById('recentTradesEl');
+  if(rt)rt.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div>';
 
   // Refetch everything for new account
   fetchStatus();
   const curPage=document.querySelector('.page.active');
   if(curPage&&curPage.id==='page-account')fetchPayout();
-  if(curPage&&curPage.id==='page-analytics'){fetchAnalytics();}
+  if(curPage&&curPage.id==='page-analytics'){fetchAnalytics();fetchJournal();}
 }
 
 function cacheBalance(id,bal){
@@ -1103,8 +1108,16 @@ async function fetchStatus(){
     const res=await fetch(API+'/extension/status');
     const data=await res.json();
     const acct=data.accounts&&data.accounts[activeAcct];
+    // Track all accounts received (live ones) for sheet display
+    if(data.accounts) Object.assign(liveAccountsCache, data.accounts);
     const statusEl=document.getElementById('tb-status');
-    if(!acct){statusEl.textContent='waiting for extension...';statusEl.style.color='var(--t3)';return;}
+    if(!acct){
+      // Check if we ever had data for this account
+      const hadData=liveAccountsCache[activeAcct];
+      statusEl.textContent=hadData?'extension offline':'waiting for extension...';
+      statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
+      return;
+    }
     statusEl.textContent='live · syncing';statusEl.style.color='var(--blue)';
     revealDash();
     const{balance,equity,profit,accountType,accountSize,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
@@ -1875,31 +1888,68 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
   buildRulesSheet(modelType, accountSize, accountLabel);
 }
 
+// JOURNAL
+async function fetchJournal(){
+  try{
+    let trades=await fetchAllTrades(activeAcct);
+    // Same corrupt-pnl guard as fetchAnalytics — filter out close-price-as-pnl rows
+    trades=trades.filter(t=>Math.abs(t.pnl||0)<=(t.accountSize||10000));
+    document.getElementById('journalMeta').textContent=trades.length+' trades';
+    const el=document.getElementById('journalEntries');
+    if(!trades.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.4" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No trades logged yet</div>';return;}
+    const winIco='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="17" x2="17" y2="7"/><polyline points="7 7 17 7 17 17"/></svg>';
+    const lossIco='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="7" y1="7" x2="17" y2="17"/><polyline points="17 7 17 17 7 17"/></svg>';
+    el.innerHTML=trades.map(t=>{
+      const win=(t.pnl||0)>0;
+      const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
+      return`<div class="journal-entry rip">
+        <div class="je-head">
+          <div class="je-ico" style="background:${win?'var(--green-dim)':'var(--red-dim)'};color:${win?'var(--green)':'var(--red)'}">${win?winIco:lossIco}</div>
+          <div class="je-info"><div class="je-sym" style="color:${win?'var(--green)':'var(--red)'}">${t.symbol||'?'} · ${t.direction||'?'}</div><div class="je-date">${dt}</div></div>
+          <div class="je-pl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(t.pnl)}</div>
+        </div>
+        <div class="je-stats">
+          <div class="je-stat-cell"><div class="je-stat-l">Volume</div><div class="je-stat-v">${t.volume||'?'} lot</div></div>
+          <div class="je-stat-cell"><div class="je-stat-l">Balance</div><div class="je-stat-v">${usd(t.balanceAfter)}</div></div>
+          <div class="je-stat-cell"><div class="je-stat-l">Daily Used</div><div class="je-stat-v">${t.dailyPct!=null?Math.round(t.dailyPct)+'%':'—'}</div></div>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){document.getElementById('journalEntries').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Error loading journal</div>';}
+}
+
 // ANALYTICS
 async function fetchAnalytics(){
-  const histEl=document.getElementById('tradeHistoryEl');
-  const metaEl=document.getElementById('analyticsMeta');
   try{
-    // Single source of truth — scraper trades only, newest first
-    const trades=await fetchAllTrades(activeAcct);
-
+    let trades=await fetchAllTrades(activeAcct);
+    // Guard: filter out any rows where |pnl| > accountSize.
+    // These are corrupted DB rows from the scraper close-price bug.
+    // Belt-and-suspenders — the backend now rejects these at insert time,
+    // but existing corrupted rows still need filtering on the client side.
+    trades=trades.filter(t=>{
+      const sz=t.accountSize||10000;
+      if(Math.abs(t.pnl||0)>sz){
+        console.warn('fetchAnalytics: filtered corrupt pnl',t.symbol,t.pnl,'(looks like close price)');
+        return false;
+      }
+      return true;
+    });
     if(!trades.length){
-      metaEl.textContent='0 trades';
-      ['wr','pf','netpl','totalTrades'].forEach(id=>document.getElementById(id).textContent='—');
-      histEl.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2">No trades recorded yet<br>Trades appear after you close a position</div>';
+      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">No trades recorded yet</div>';
       return;
     }
-
-    // ── Stats ──────────────────────────────────────────────────────
-    const wins=trades.filter(t=>(t.pnl||0)>0);
-    const losses=trades.filter(t=>(t.pnl||0)<0);
-    const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0);
-    const gp=wins.reduce((s,t)=>s+(t.pnl||0),0);
-    const gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
-    const wr=Math.round(wins.length/trades.length*100);
+    // reveal analytics skeletons
+    ['Wr','Pf','Netpl','Trades'].forEach(k=>{
+      const s=document.getElementById('skel'+k),r=document.getElementById(k==='Wr'?'wr':k==='Pf'?'pf':k==='Netpl'?'netpl':'totalTrades');
+      if(s){s.classList.remove('sk-in');s.classList.add('sk-out');}
+      if(r){r.classList.remove('sk-out');r.classList.add('sk-in');}
+    });
+    const wins=trades.filter(t=>(t.pnl||0)>0),losses=trades.filter(t=>(t.pnl||0)<=0);
+    const inferredBal=inferBalanceFromTrades(trades, trades[0]?.accountSize||10000);
+    if(inferredBal!=null) cacheBalance(activeAcct, inferredBal);
+    const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
+    const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0),wr=Math.round(wins.length/trades.length*100);
     const pf=gl>0?(gp/gl).toFixed(2):'∞';
-
-    metaEl.textContent=trades.length+' trades';
     document.getElementById('wr').textContent=wr+'%';
     document.getElementById('wr').className='stat-box-val '+(wr>=50?'txt-green':'txt-red');
     document.getElementById('wrSub').textContent=wins.length+' of '+trades.length+' trades';
@@ -1908,12 +1958,9 @@ async function fetchAnalytics(){
     document.getElementById('netpl').className='stat-box-val '+(netPnl>=0?'txt-green':'txt-red');
     document.getElementById('totalTrades').textContent=trades.length;
     document.getElementById('wlSub').textContent='W:'+wins.length+' L:'+losses.length;
-
-    // ── Equity curve ───────────────────────────────────────────────
-    const sorted=trades.slice().sort((a,b)=>new Date(a.closedAt||0)-new Date(b.closedAt||0));
-    const accountSize=trades[0]?.accountSize||10000;
-    let running=accountSize-netPnl;
-    const pts=sorted.map(t=>{running+=(t.pnl||0);return running;});
+    const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.logged_at||0)-new Date(b.closedAt||b.logged_at||0));
+    let running=(inferredBal??liveBalance)-netPnl;
+    const pts=curveTrades.map(t=>{running+=(t.pnl||0);return running;});
     if(pts.length>1){
       const mn=Math.min(...pts),mx=Math.max(...pts),rng=mx-mn||1;
       const xs=pts.map((_,i)=>i/(pts.length-1)*400);
@@ -1922,56 +1969,22 @@ async function fetchAnalytics(){
       document.getElementById('equityPath').setAttribute('d',d);
       document.getElementById('equityFill').setAttribute('d',d+' L400,80 L0,80 Z');
     }
-
-    // ── Day-grouped trade history ──────────────────────────────────
-    // trades already sorted newest-first from API
-    const byDay={};
-    trades.forEach(t=>{
-      const d=t.closedAt?new Date(t.closedAt).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}):'Unknown';
-      if(!byDay[d])byDay[d]=[];
-      byDay[d].push(t);
-    });
-
-    histEl.innerHTML=Object.entries(byDay).map(([day,dayTrades],gi)=>{
-      const dayPnl=dayTrades.reduce((s,t)=>s+(t.pnl||0),0);
-      const dayWins=dayTrades.filter(t=>(t.pnl||0)>0).length;
-      const pnlColor=dayPnl>=0?'var(--green)':'var(--red)';
-      const rows=dayTrades.map(t=>{
-        const win=(t.pnl||0)>0;
-        const time=t.closedAt?new Date(t.closedAt).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}):'—';
-        return`<div class="trade-row rip">
-          <div class="trade-sym">${t.symbol||'?'}</div>
-          <div style="flex:1">
-            <div style="font-size:12px;font-weight:500;color:var(--t2)">${t.direction||'?'} · ${t.volume||'?'} lot</div>
-            <div class="trade-time">${time}</div>
-          </div>
-          <div class="trade-pl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(t.pnl)}</div>
-        </div>`;
-      }).join('');
-
-      return`<div class="day-group">
-        <div class="day-header rip" onclick="toggleDayGroup(this)">
-          <div class="day-label">${day}</div>
-          <div class="day-meta">
-            <span class="day-count">${dayTrades.length} trade${dayTrades.length!==1?'s':''} · ${dayWins}W ${dayTrades.length-dayWins}L</span>
-            <span class="day-pnl" style="color:${pnlColor}">${pnl(dayPnl)}</span>
-          </div>
-        </div>
-        <div class="day-trades${gi>2?' collapsed':''}">${rows}</div>
+    const el=document.getElementById('recentTradesEl');
+    const recent=trades.slice().sort((a,b)=>new Date(b.closedAt||b.logged_at||0)-new Date(a.closedAt||a.logged_at||0)).slice(0,10);
+    el.innerHTML=recent.map(t=>{
+      const win=(t.pnl||0)>0;
+      const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
+      return`<div class="trade-row rip">
+        <div class="trade-sym">${t.symbol||'?'}</div>
+        <div><div style="font-size:12px;font-weight:500">${t.direction||'?'} · ${t.volume||'?'} lot</div><div class="trade-time">${dt}</div></div>
+        <div class="trade-pl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(t.pnl)}</div>
       </div>`;
     }).join('');
-
   }catch(e){
     console.error('fetchAnalytics error:',e);
-    histEl.innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Error loading analytics</div>';
+    document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Error loading analytics — tap to retry</div>';
   }
 }
-
-function toggleDayGroup(header){
-  const trades=header.nextElementSibling;
-  trades.classList.toggle('collapsed');
-}
-
 
 // NEWS
 async function fetchNews(){
