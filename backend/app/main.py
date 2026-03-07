@@ -180,11 +180,10 @@ async def ensure_trades_table():
 
         # 4. Backfill source for rows that predate this column.
         #    Discriminator: scraper rows never had balance_after available.
-        await conn.execute(text("""
-            UPDATE trades SET source = 'scraper'  WHERE source IS NULL AND balance_after IS NULL;
-            UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL;
-            UPDATE trades SET source = 'scraper'  WHERE source IS NULL;
-        """))
+        # asyncpg requires one statement per execute call
+        await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL AND balance_after IS NULL"))
+        await conn.execute(text("UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL"))
+        await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL"))
 
     logger.info("trades table ready")
 
