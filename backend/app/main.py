@@ -383,7 +383,6 @@ def format_payout_status(ev: dict, short: bool = False) -> str:
 async def ensure_trades_table():
     from app.core.database import engine
     async with engine.begin() as conn:
-        # Create table
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trades (
                 id                 SERIAL PRIMARY KEY,
@@ -407,33 +406,43 @@ async def ensure_trades_table():
                 source             TEXT
             )
         """))
+    # Add dedup constraint idempotently — safe to run on every startup
+    try:
+        await conn.execute(text("""
+            ALTER TABLE trades
+            ADD CONSTRAINT trades_dedup
+            UNIQUE (account_id, symbol, direction, closed_at, pnl)
+        """))
+        logger.info("trades dedup constraint added")
+    except Exception:
+        pass  # constraint already exists — ignore
 
-        # Add dedup constraint idempotently
-        try:
-            await conn.execute(text("""
-                ALTER TABLE trades
-                ADD CONSTRAINT trades_dedup
-                UNIQUE (account_id, symbol, direction, closed_at, pnl)
-            """))
-            logger.info("trades dedup constraint added")
-        except Exception:
-            pass  # already exists
+    # Add source column for existing deployments — NO DEFAULT so existing rows stay NULL.
+    # We then backfill based on balance_after (the only reliable signal for old rows).
+    try:
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
+        logger.info("trades source column added")
+    except Exception:
+        pass  # column already exists — safe to ignore
 
-        # Add source column for existing deployments
-        try:
-            await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
-            logger.info("trades source column added")
-        except Exception:
-            pass  # already exists
+    # Backfill source on existing rows using balance_after as the discriminator:
+    # - Scraper rows never had balance_after (closed positions tab doesn't show it)
+    # - Real-time rows always set balance_after from live balance at detection time
+    # Run inside its own try so a backfill hiccup never blocks startup.
+    try:
+        await conn.execute(text("""
+            UPDATE trades SET source = 'scraper'
+            WHERE source IS NULL AND balance_after IS NULL;
 
-        # Backfill source — balance_after=NULL means scraper, NOT NULL means realtime
-        try:
-            await conn.execute(text("UPDATE trades SET source = 'scraper' WHERE source IS NULL AND balance_after IS NULL"))
-            await conn.execute(text("UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL"))
-            await conn.execute(text("UPDATE trades SET source = 'scraper' WHERE source IS NULL"))
-            logger.info("trades source backfill complete")
-        except Exception as e:
-            logger.warning(f"trades source backfill skipped: {e}")
+            UPDATE trades SET source = 'realtime'
+            WHERE source IS NULL AND balance_after IS NOT NULL;
+
+            UPDATE trades SET source = 'scraper'
+            WHERE source IS NULL;
+        """))
+        logger.info("trades source backfill complete")
+    except Exception as e:
+        logger.warning(f"trades source backfill skipped: {e}")
 
     logger.info("trades table ready")
 
@@ -449,6 +458,16 @@ async def db_insert_trade(trade_dict: dict):
             f"db_insert_trade: rejected suspicious pnl={pnl_val} for "
             f"{trade_dict.get('symbol')} (exceeds accountSize={account_size}) — "
             f"likely close price captured instead of profit"
+        )
+        return
+    # Sanity guard: reject rows with no closedAt.
+    # The dedup constraint relies on closed_at — NULL != NULL in SQL, so every
+    # duplicate insert would go through if closedAt is missing.
+    if not trade_dict.get("closedAt"):
+        logger.warning(
+            f"db_insert_trade: rejected row with null closedAt for "
+            f"{trade_dict.get('symbol')} {trade_dict.get('direction')} "
+            f"pnl={pnl_val} — date parsing likely failed in scraper"
         )
         return
     from app.core.database import engine
@@ -1229,4 +1248,27 @@ async def purge_corrupt_trades():
         """))
         deleted = [dict(r) for r in result.mappings().all()]
     logger.info(f"purge-corrupt-trades: removed {len(deleted)} rows")
+    return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
+
+
+@app.delete("/admin/purge-null-closedat")
+async def purge_null_closedat():
+    """Cleanup: deletes rows where closed_at IS NULL.
+    These are scraper rows inserted before the date-parsing fix — the scraper
+    failed to parse FundingPips' close time format so closedAt was null.
+    Without a valid closed_at the dedup constraint can't work (NULL != NULL in SQL)
+    and the same trade gets re-inserted on every 60s scrape cycle."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        preview = await conn.execute(text("""
+            SELECT COUNT(*) as cnt FROM trades WHERE closed_at IS NULL
+        """))
+        count = preview.scalar()
+        result = await conn.execute(text("""
+            DELETE FROM trades
+            WHERE closed_at IS NULL
+            RETURNING id, account_id, symbol, direction, pnl, logged_at
+        """))
+        deleted = [dict(r) for r in result.mappings().all()]
+    logger.info(f"purge-null-closedat: removed {len(deleted)} rows")
     return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
