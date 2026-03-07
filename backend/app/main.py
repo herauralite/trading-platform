@@ -402,7 +402,8 @@ async def ensure_trades_table():
                 overall_loss_used  FLOAT,
                 overall_loss_limit FLOAT,
                 closed_at          TIMESTAMPTZ,
-                logged_at          TIMESTAMPTZ DEFAULT NOW()
+                logged_at          TIMESTAMPTZ DEFAULT NOW(),
+                source             TEXT
             )
         """))
     # Add dedup constraint idempotently — safe to run on every startup
@@ -415,6 +416,34 @@ async def ensure_trades_table():
         logger.info("trades dedup constraint added")
     except Exception:
         pass  # constraint already exists — ignore
+
+    # Add source column for existing deployments — NO DEFAULT so existing rows stay NULL.
+    # We then backfill based on balance_after (the only reliable signal for old rows).
+    try:
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
+        logger.info("trades source column added")
+    except Exception:
+        pass  # column already exists — safe to ignore
+
+    # Backfill source on existing rows using balance_after as the discriminator:
+    # - Scraper rows never had balance_after (closed positions tab doesn't show it)
+    # - Real-time rows always set balance_after from live balance at detection time
+    # Run inside its own try so a backfill hiccup never blocks startup.
+    try:
+        await conn.execute(text("""
+            UPDATE trades SET source = 'scraper'
+            WHERE source IS NULL AND balance_after IS NULL;
+
+            UPDATE trades SET source = 'realtime'
+            WHERE source IS NULL AND balance_after IS NOT NULL;
+
+            UPDATE trades SET source = 'scraper'
+            WHERE source IS NULL;
+        """))
+        logger.info("trades source backfill complete")
+    except Exception as e:
+        logger.warning(f"trades source backfill skipped: {e}")
+
     logger.info("trades table ready")
 
 
@@ -439,35 +468,43 @@ async def db_insert_trade(trade_dict: dict):
                 symbol, direction, volume, open_price, close_price, pnl,
                 balance_after, equity_after,
                 daily_loss_used, daily_loss_limit,
-                overall_loss_used, overall_loss_limit, closed_at
+                overall_loss_used, overall_loss_limit, closed_at, source
             ) VALUES (
                 :accountId, :accountType, :accountSize,
                 :symbol, :direction, :volume, :openPrice, :closePrice, :pnl,
                 :balanceAfter, :equityAfter,
                 :dailyLossUsed, :dailyLossLimit,
-                :overallLossUsed, :overallLossLimit, :closedAt
+                :overallLossUsed, :overallLossLimit, :closedAt, :source
             )
             ON CONFLICT ON CONSTRAINT trades_dedup DO NOTHING
         """), {k: trade_dict.get(k) for k in [
             "accountId","accountType","accountSize","symbol","direction","volume",
             "openPrice","closePrice","pnl","balanceAfter","equityAfter",
-            "dailyLossUsed","dailyLossLimit","overallLossUsed","overallLossLimit","closedAt"
+            "dailyLossUsed","dailyLossLimit","overallLossUsed","overallLossLimit","closedAt","source"
         ]})
 
 
-async def db_get_trades(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc") -> list:
+async def db_get_trades(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc", source: str = "scraper") -> list:
     from app.core.database import engine
     order_sql = "ASC" if order.lower() == "asc" else "DESC"
+    # Default to scraper-only — analytics should never show real-time duplicate rows.
+    # Pass source=None or source=all to bypass filtering (admin use only).
+    # Include NULL-source rows when querying scraper — they are pre-migration scraper rows
+    source_clause = "" if not source or source == "all" else " AND (source = :src OR (source IS NULL AND :src = 'scraper'))"
     async with engine.connect() as conn:
+        params: dict = {"l": limit, "o": offset}
+        if source and source != "all":
+            params["src"] = source
         if account_id:
+            params["a"] = account_id
             result = await conn.execute(
-                text(f"SELECT * FROM trades WHERE account_id=:a ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
-                {"a": account_id, "l": limit, "o": offset}
+                text(f"SELECT * FROM trades WHERE account_id=:a{source_clause} ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
+                params
             )
         else:
             result = await conn.execute(
-                text(f"SELECT * FROM trades ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
-                {"l": limit, "o": offset}
+                text(f"SELECT * FROM trades WHERE 1=1{source_clause} ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
+                params
             )
         return [dict(r) for r in result.mappings().all()]
 
@@ -497,15 +534,17 @@ async def db_get_trade_stats(account_id: str = None) -> dict:
 async def db_get_trades_today(account_id: str = None) -> list:
     from app.core.database import engine
     today = date.today()
+    # Exclude realtime rows — scraper is the source of truth for all analytics/summaries
+    src_filter = " AND (source = 'scraper' OR source IS NULL)"
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text("SELECT * FROM trades WHERE account_id=:a AND logged_at::date=:t ORDER BY logged_at DESC"),
+                text(f"SELECT * FROM trades WHERE account_id=:a AND logged_at::date=:t{src_filter} ORDER BY logged_at DESC"),
                 {"a": account_id, "t": today}
             )
         else:
             result = await conn.execute(
-                text("SELECT * FROM trades WHERE logged_at::date=:t ORDER BY logged_at DESC"), {"t": today}
+                text(f"SELECT * FROM trades WHERE logged_at::date=:t{src_filter} ORDER BY logged_at DESC"), {"t": today}
             )
         return [dict(r) for r in result.mappings().all()]
 
@@ -513,15 +552,17 @@ async def db_get_trades_today(account_id: str = None) -> list:
 async def db_get_trades_for_date(target_date: str, account_id: str = None) -> list:
     from app.core.database import engine
     parsed_date = date.fromisoformat(target_date)
+    # Exclude realtime rows — scraper is the source of truth for all analytics/summaries
+    src_filter = " AND (source = 'scraper' OR source IS NULL)"
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text("SELECT * FROM trades WHERE account_id=:a AND logged_at::date=:d ORDER BY logged_at DESC"),
+                text(f"SELECT * FROM trades WHERE account_id=:a AND logged_at::date=:d{src_filter} ORDER BY logged_at DESC"),
                 {"a": account_id, "d": parsed_date}
             )
         else:
             result = await conn.execute(
-                text("SELECT * FROM trades WHERE logged_at::date=:d ORDER BY logged_at DESC"), {"d": parsed_date}
+                text(f"SELECT * FROM trades WHERE logged_at::date=:d{src_filter} ORDER BY logged_at DESC"), {"d": parsed_date}
             )
         return [dict(r) for r in result.mappings().all()]
 
@@ -569,6 +610,7 @@ def row_to_trade(row: dict) -> dict:
         "dailyPct":         round(daily_used / daily_limit * 100) if daily_limit else 0,
         "closedAt":         closed,
         "logged_at":        logged,
+        "source":           row.get("source") or "realtime",
     }
 
 
@@ -978,6 +1020,7 @@ class ExtensionData(BaseModel):
     accountLabel: str | None = None; isMaster: bool = False; hasPositions: bool = False
     openPositionCount: int = 0; positions: list = []; riskPerTradeIdea: dict | None = None
     dailyLoss: dict | None = None; overallLoss: dict | None = None; alerts: list = []
+    closedTrades: list = []  # real-time detected closes — for Telegram alert only, NOT written to DB
     timestamp: str | None = None; url: str | None = None
 
 
@@ -989,9 +1032,23 @@ async def receive_extension_data(data: ExtensionData):
     account_data_store[account_id] = {**data.dict(), "last_updated": datetime.utcnow().isoformat()}
     for alert in data.alerts:
         # Only send Telegram if this alert type/level is new vs previous poll
-        # This prevents spam when extension restarts and re-fires all stored alerts
         if prev_alerts.get(alert.get("type")) != alert.get("level"):
             await send_telegram(alert.get("message","") + f"\n\n<i>Account: {account_id}</i>")
+    # Real-time trade close notifications — arrive within 5s of close detection
+    # These are NOT written to DB (scraper handles DB persistence with correct close times)
+    for ct in data.closedTrades:
+        pnl = ct.get("pnl") or 0
+        icon = "✅" if pnl > 0 else "❌"
+        daily_pct   = round((ct.get("dailyLossUsed")  or 0) / (ct.get("dailyLossLimit")  or 500)  * 100)
+        overall_pct = round((ct.get("overallLossUsed") or 0) / (ct.get("overallLossLimit") or 1000) * 100)
+        bal = ct.get("balanceAfter")
+        bal_line = f"Balance: ${bal:,.2f}\n" if bal else ""
+        await send_telegram(
+            f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n"
+            f"{ct.get('symbol','?')} {ct.get('direction','?')} | "
+            f"<b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n"
+            f"{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%"
+        )
     prev_profit = prev.get("profit"); curr_profit = data.profit
     if curr_profit is not None and prev_profit is not None:
         if prev_profit - curr_profit >= 10:
@@ -1015,25 +1072,22 @@ class TradeData(BaseModel):
     balanceAfter: float | None = None; equityAfter: float | None = None
     dailyLossUsed: float | None = None; dailyLossLimit: float | None = None
     overallLossUsed: float | None = None; overallLossLimit: float | None = None; closedAt: str | None = None
+    source: str | None = "realtime"  # 'scraper' | 'realtime'
 
 
 @app.post("/extension/trade")
 async def log_trade(trade: TradeData):
+    # DB-only endpoint — no Telegram here.
+    # Real-time close alerts are sent via /extension/data (closedTrades field)
+    # which fires within 5s of close detection with full balance context.
+    # This endpoint is called by the scraper (60s delay) — too late for useful alerts.
     await db_insert_trade(trade.dict())
-    pnl = trade.pnl or 0; icon = "✅" if pnl > 0 else "❌"
-    daily_pct   = round((trade.dailyLossUsed   or 0) / (trade.dailyLossLimit   or 500)  * 100)
-    overall_pct = round((trade.overallLossUsed or 0) / (trade.overallLossLimit or 1000) * 100)
-    await send_telegram(
-        f"{icon} <b>Trade Closed</b>\nAccount: {trade.accountId}\n"
-        f"{trade.symbol} {trade.direction} | <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n"
-        f"Balance: ${trade.balanceAfter:.2f}\nDaily: {daily_pct}% | Overall: {overall_pct}%"
-    )
     return {"status":"ok","persisted":True}
 
 
 @app.get("/extension/journal")
-async def get_journal(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc"):
-    rows = await db_get_trades(account_id=account_id, limit=limit, offset=offset, order=order)
+async def get_journal(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc", source: str = "scraper"):
+    rows = await db_get_trades(account_id=account_id, limit=limit, offset=offset, order=order, source=source)
     return {"trades": [row_to_trade(r) for r in rows], "total": len(rows), "offset": offset, "limit": limit}
 
 
@@ -1121,6 +1175,53 @@ async def test_db():
     async with engine.connect() as conn:
         count = (await conn.execute(text("SELECT COUNT(*) FROM trades"))).scalar()
     return {"status":"ok","trades_in_db":count}
+
+
+@app.get("/admin/dedup-trades/preview")
+async def dedup_trades_preview():
+    """Preview what /admin/dedup-trades DELETE would remove — no data modified."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text("""
+            SELECT id, account_id, symbol, direction, pnl, closed_at, source, balance_after
+            FROM trades
+            WHERE source = 'realtime'
+            ORDER BY closed_at DESC
+            LIMIT 50
+        """))
+        rows = [dict(r) for r in result.mappings().all()]
+        count = await conn.execute(text("SELECT COUNT(*) FROM trades WHERE source = 'realtime'"))
+        total = count.scalar()
+    return {"total_realtime_rows": total, "sample": rows}
+
+
+@app.delete("/admin/dedup-trades")
+async def dedup_trades():
+    """Removes realtime-tagged duplicate rows from the trades table.
+    Safe to run multiple times — only deletes rows explicitly tagged source='realtime'.
+    Pre-migration scraper rows (source IS NULL) are never touched.
+    After running this, analytics shows only closed-position scraper data."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        # First: show a preview of what will be deleted
+        preview = await conn.execute(text("""
+            SELECT COUNT(*) as cnt, source,
+                   MIN(closed_at) as earliest, MAX(closed_at) as latest
+            FROM trades
+            WHERE source = 'realtime'
+            GROUP BY source
+        """))
+        preview_rows = [dict(r) for r in preview.mappings().all()]
+        logger.info(f"dedup-trades preview: {preview_rows}")
+
+        result = await conn.execute(text("""
+            DELETE FROM trades
+            WHERE source = 'realtime'
+            RETURNING id, account_id, symbol, direction, pnl, closed_at
+        """))
+        deleted = [dict(r) for r in result.mappings().all()]
+    logger.info(f"dedup-trades: removed {len(deleted)} realtime rows")
+    return {"status": "ok", "deleted_count": len(deleted), "preview": preview_rows, "deleted_rows": deleted}
 
 
 @app.delete("/admin/purge-corrupt-trades")
