@@ -191,11 +191,11 @@ async def db_count_trading_days(account_id: str = None) -> int:
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text("SELECT COUNT(DISTINCT COALESCE(closed_at, logged_at)::date) FROM trades WHERE account_id = :a"),
+                text("SELECT COUNT(DISTINCT logged_at::date) FROM trades WHERE account_id = :a"),
                 {"a": account_id}
             )
         else:
-            result = await conn.execute(text("SELECT COUNT(DISTINCT COALESCE(closed_at, logged_at)::date) FROM trades"))
+            result = await conn.execute(text("SELECT COUNT(DISTINCT logged_at::date) FROM trades"))
         return result.scalar() or 0
 
 
@@ -406,37 +406,43 @@ async def ensure_trades_table():
                 source             TEXT
             )
         """))
+    # Add dedup constraint idempotently — safe to run on every startup
+    try:
+        await conn.execute(text("""
+            ALTER TABLE trades
+            ADD CONSTRAINT trades_dedup
+            UNIQUE (account_id, symbol, direction, closed_at, pnl)
+        """))
+        logger.info("trades dedup constraint added")
+    except Exception:
+        pass  # constraint already exists — ignore
 
-        try:
-            await conn.execute(text("""
-                ALTER TABLE trades
-                ADD CONSTRAINT trades_dedup
-                UNIQUE (account_id, symbol, direction, closed_at, pnl)
-            """))
-            logger.info("trades dedup constraint added")
-        except Exception:
-            pass
+    # Add source column for existing deployments — NO DEFAULT so existing rows stay NULL.
+    # We then backfill based on balance_after (the only reliable signal for old rows).
+    try:
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
+        logger.info("trades source column added")
+    except Exception:
+        pass  # column already exists — safe to ignore
 
-        try:
-            await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
-            logger.info("trades source column added")
-        except Exception:
-            pass
+    # Backfill source on existing rows using balance_after as the discriminator:
+    # - Scraper rows never had balance_after (closed positions tab doesn't show it)
+    # - Real-time rows always set balance_after from live balance at detection time
+    # Run inside its own try so a backfill hiccup never blocks startup.
+    try:
+        await conn.execute(text("""
+            UPDATE trades SET source = 'scraper'
+            WHERE source IS NULL AND balance_after IS NULL;
 
-        try:
-            await conn.execute(text("""
-                UPDATE trades SET source = 'scraper'
-                WHERE source IS NULL AND balance_after IS NULL;
+            UPDATE trades SET source = 'realtime'
+            WHERE source IS NULL AND balance_after IS NOT NULL;
 
-                UPDATE trades SET source = 'realtime'
-                WHERE source IS NULL AND balance_after IS NOT NULL;
-
-                UPDATE trades SET source = 'scraper'
-                WHERE source IS NULL;
-            """))
-            logger.info("trades source backfill complete")
-        except Exception as e:
-            logger.warning(f"trades source backfill skipped: {e}")
+            UPDATE trades SET source = 'scraper'
+            WHERE source IS NULL;
+        """))
+        logger.info("trades source backfill complete")
+    except Exception as e:
+        logger.warning(f"trades source backfill skipped: {e}")
 
     logger.info("trades table ready")
 
@@ -509,12 +515,12 @@ async def db_get_trade_stats(account_id: str = None) -> dict:
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text("SELECT COUNT(*) as total, MIN(COALESCE(closed_at, logged_at)) as oldest FROM trades WHERE account_id=:a"),
+                text("SELECT COUNT(*) as total, MIN(logged_at) as oldest FROM trades WHERE account_id=:a"),
                 {"a": account_id}
             )
         else:
             result = await conn.execute(
-                text("SELECT COUNT(*) as total, MIN(COALESCE(closed_at, logged_at)) as oldest FROM trades")
+                text("SELECT COUNT(*) as total, MIN(logged_at) as oldest FROM trades")
             )
         row = result.mappings().one_or_none()
         if not row:
@@ -533,12 +539,12 @@ async def db_get_trades_today(account_id: str = None) -> list:
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text(f"SELECT * FROM trades WHERE account_id=:a AND COALESCE(closed_at, logged_at)::date=:t{src_filter} ORDER BY logged_at DESC"),
+                text(f"SELECT * FROM trades WHERE account_id=:a AND logged_at::date=:t{src_filter} ORDER BY logged_at DESC"),
                 {"a": account_id, "t": today}
             )
         else:
             result = await conn.execute(
-                text(f"SELECT * FROM trades WHERE COALESCE(closed_at, logged_at)::date=:t{src_filter} ORDER BY logged_at DESC"), {"t": today}
+                text(f"SELECT * FROM trades WHERE logged_at::date=:t{src_filter} ORDER BY logged_at DESC"), {"t": today}
             )
         return [dict(r) for r in result.mappings().all()]
 
@@ -551,12 +557,12 @@ async def db_get_trades_for_date(target_date: str, account_id: str = None) -> li
     async with engine.connect() as conn:
         if account_id:
             result = await conn.execute(
-                text(f"SELECT * FROM trades WHERE account_id=:a AND COALESCE(closed_at, logged_at)::date=:d{src_filter} ORDER BY logged_at DESC"),
+                text(f"SELECT * FROM trades WHERE account_id=:a AND logged_at::date=:d{src_filter} ORDER BY logged_at DESC"),
                 {"a": account_id, "d": parsed_date}
             )
         else:
             result = await conn.execute(
-                text(f"SELECT * FROM trades WHERE COALESCE(closed_at, logged_at)::date=:d{src_filter} ORDER BY logged_at DESC"), {"d": parsed_date}
+                text(f"SELECT * FROM trades WHERE logged_at::date=:d{src_filter} ORDER BY logged_at DESC"), {"d": parsed_date}
             )
         return [dict(r) for r in result.mappings().all()]
 
@@ -622,7 +628,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="TaliTrade", version="3.2.0", lifespan=lifespan)
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=False, allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"], allow_headers=["*"])
+ALLOWED_ORIGINS = [
+    "https://mtr-platform.fundingpips.com",
+    "https://app.fundingpips.com",
+]
+chrome_extension_id = os.getenv("CHROME_EXTENSION_ID")
+if chrome_extension_id:
+    ALLOWED_ORIGINS.append(f"chrome-extension://{chrome_extension_id}")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 
 from app.routers import auth, accounts
 app.include_router(auth.router)
@@ -1075,13 +1096,8 @@ async def log_trade(trade: TradeData):
     # Real-time close alerts are sent via /extension/data (closedTrades field)
     # which fires within 5s of close detection with full balance context.
     # This endpoint is called by the scraper (60s delay) — too late for useful alerts.
-    try:
-        payload = trade.dict()
-        await db_insert_trade(payload)
-        return {"status":"ok","persisted":True}
-    except Exception as exc:
-        logger.exception(f"extension/trade failed for {trade.accountId} {trade.symbol}: {exc}")
-        return JSONResponse(status_code=500, content={"detail":"trade_persist_failed"})
+    await db_insert_trade(trade.dict())
+    return {"status":"ok","persisted":True}
 
 
 @app.get("/extension/journal")
