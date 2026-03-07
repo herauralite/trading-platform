@@ -419,6 +419,18 @@ async def ensure_trades_table():
 
 
 async def db_insert_trade(trade_dict: dict):
+    # Sanity guard: reject any row where |pnl| > account_size.
+    # This catches the scraper fallback bug where close price (e.g. DJI30 ~47k)
+    # gets stored as pnl instead of the actual profit/loss value.
+    pnl_val      = trade_dict.get("pnl") or 0
+    account_size = trade_dict.get("accountSize") or 10000
+    if abs(pnl_val) > account_size:
+        logger.warning(
+            f"db_insert_trade: rejected suspicious pnl={pnl_val} for "
+            f"{trade_dict.get('symbol')} (exceeds accountSize={account_size}) — "
+            f"likely close price captured instead of profit"
+        )
+        return
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -1109,3 +1121,20 @@ async def test_db():
     async with engine.connect() as conn:
         count = (await conn.execute(text("SELECT COUNT(*) FROM trades"))).scalar()
     return {"status":"ok","trades_in_db":count}
+
+
+@app.delete("/admin/purge-corrupt-trades")
+async def purge_corrupt_trades():
+    """One-time cleanup: deletes rows where |pnl| > account_size.
+    These are rows where the scraper captured the close price instead of profit.
+    Run once after deploying the scraper fix."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        result = await conn.execute(text("""
+            DELETE FROM trades
+            WHERE ABS(pnl) > account_size
+            RETURNING id, account_id, symbol, pnl, account_size
+        """))
+        deleted = [dict(r) for r in result.mappings().all()]
+    logger.info(f"purge-corrupt-trades: removed {len(deleted)} rows")
+    return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
