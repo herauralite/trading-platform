@@ -1025,7 +1025,7 @@ async function fetchAllTrades(accountId, pageSize=200){
   const out=[];
   for(let page=0;page<100;page++){
     const offset=page*pageSize;
-    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc`);
+    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc&source=scraper`);
     if(!res.ok) throw new Error('Journal fetch failed: '+res.status);
     const data=await res.json();
     const chunk=data.trades||[];
