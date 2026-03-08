@@ -205,8 +205,17 @@ async def ensure_users_tables():
     """Create users and prop_accounts tables — separate connections so the FK resolves."""
     from app.core.database import engine
 
-    # Step 1: users table must be committed before prop_accounts can reference it
+    # Step 1: users table — drop and recreate if it exists without the right columns
     async with engine.begin() as conn:
+        # Check if telegram_user_id column exists
+        result = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = 'users' AND column_name = 'telegram_user_id'
+        """))
+        col_exists = result.fetchone()
+        if not col_exists:
+            # Table exists but with wrong schema (empty from failed migration) — drop it
+            await conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 telegram_user_id    TEXT PRIMARY KEY,
