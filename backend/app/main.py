@@ -219,12 +219,12 @@ async def ensure_users_tables():
             )
         """))
 
-    # Step 2: prop_accounts — own connection, users is now visible
+    # Step 2: prop_accounts — no FK constraint to avoid asyncpg pool ordering issues
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS prop_accounts (
                 id               SERIAL PRIMARY KEY,
-                telegram_user_id TEXT NOT NULL REFERENCES users(telegram_user_id) ON DELETE CASCADE,
+                telegram_user_id TEXT NOT NULL,
                 account_id       TEXT NOT NULL,
                 broker           TEXT NOT NULL DEFAULT 'fundingpips',
                 account_type     TEXT,
