@@ -1124,15 +1124,27 @@ async function fetchStatus(){
       statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
       return;
     }
-    statusEl.textContent='live · syncing';statusEl.style.color='var(--blue)';
     revealDash();
-    const{balance,equity,profit,accountType,accountSize,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
+    const{balance,equity,profit,accountType,accountSize,accountId:liveAcctId,accountLabel:liveAcctLabel,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
     const sz=accountSize||10000;
     const cachedTrades=tradesCache[activeAcct]||[];
     const fallbackBalance=balance ?? acctBalances[activeAcct] ?? inferBalanceFromTrades(cachedTrades, sz);
     const resolvedEquity=equity ?? ((fallbackBalance!=null && profit!=null)?fallbackBalance+profit:null);
-    liveBalance=fallbackBalance ?? 10000;
+    liveBalance=fallbackBalance ?? sz;
     if(fallbackBalance!=null)cacheBalance(activeAcct,fallbackBalance);
+
+    // ── Proper account type labels ─────────────────────────────────────────────
+    const TYPE_LABELS={
+      '2step_master':'2-Step Master','2step_eval':'2-Step Eval',
+      '2steppro_master':'2-Step Pro','2steppro_eval':'2-Step Pro Eval',
+      '1step_master':'1-Step Master','zero_master':'FP Zero',
+      'eval':'Evaluation','2_step':'2-Step Master','1_step':'1-Step Master',
+    };
+    const typeStr=TYPE_LABELS[accountType]||(accountType||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
+    const sizeLabel='$'+(sz>=1000?(sz/1000)+'K':sz);
+    const fullLabel=sizeLabel+' '+typeStr;
+
+    // ── Metric boxes ───────────────────────────────────────────────────────────
     document.getElementById('mBal').textContent=usd(fallbackBalance);
     document.getElementById('mEq').textContent=usd(resolvedEquity);
     const plEl=document.getElementById('mPL');
@@ -1140,14 +1152,28 @@ async function fetchStatus(){
     plEl.className='mbox-val '+(profit>0?'txt-green':profit<0?'txt-red':'txt-dim');
     document.getElementById('mPLSub').textContent=acct.hasPositions?(acct.openPositionCount+' position(s) open'):'No open positions';
     document.getElementById('mBalStart').textContent=(sz/1000)+'K';
-    const typeStr=(accountType||'').replace(/_/g,' ');
-    document.getElementById('acctBadge').textContent='$'+(sz/1000)+'K '+typeStr;
-    document.getElementById('footerAcct').textContent=(sz/1000)+'K '+typeStr;
-    document.getElementById('riskMeta').textContent=(sz/1000)+'K '+typeStr;
-    document.getElementById('sgRulesSub').textContent='$'+(sz/1000)+'K '+typeStr;
-    document.getElementById('lbProfit').textContent=pnl((fallbackBalance??sz)-sz);
-    // update rules sheet with live account data
-    updateRulesSheet(accountType||'2_step', sz, '$'+(sz/1000)+'K '+typeStr);
+
+    // ── Labels / badges ────────────────────────────────────────────────────────
+    document.getElementById('acctBadge').textContent=fullLabel;
+    document.getElementById('footerAcct').textContent=fullLabel;
+    document.getElementById('riskMeta').textContent=fullLabel;
+    document.getElementById('sgRulesSub').textContent=fullLabel;
+    statusEl.textContent='live · '+typeStr;statusEl.style.color='var(--blue)';
+
+    // ── Account ID fields ──────────────────────────────────────────────────────
+    const resolvedId=liveAcctId||activeAcct;
+    const acctIdEl=document.getElementById('acctId');
+    if(acctIdEl)acctIdEl.textContent=resolvedId;
+    const lbIdEl=document.getElementById('lbId');
+    if(lbIdEl)lbIdEl.textContent=resolvedId;
+    const lbSubEl=document.getElementById('lbSub');
+    if(lbSubEl)lbSubEl.textContent=sizeLabel+' · '+(accountType&&accountType.includes('master')?'Master':'Eval');
+
+    // ── Leaderboard profit — guard null balance ────────────────────────────────
+    document.getElementById('lbProfit').textContent=fallbackBalance!=null?pnl(fallbackBalance-sz):'$—';
+
+    // ── Rules sheet ────────────────────────────────────────────────────────────
+    updateRulesSheet(accountType||'2_step', sz, fullLabel);
     if(ri&&ri.applicable){
       setBar(1,ri.pct,ri.combined,ri.limit,ri.remaining,[{cls:'warn',label:'⚠ '+usd(ri.limit*.5)},{cls:'soft',label:'● '+usd(ri.limit*.8)},{cls:'hard',label:'⛔ '+usd(ri.limit)}]);
     } else {document.getElementById('r1sub').textContent='N/A';document.getElementById('rp1').textContent='—';}
@@ -1752,7 +1778,7 @@ const RULES={
 function buildRulesSheet(modelType, accountSize, accountLabel){
   const modelKey=modelType.includes('zero')||modelType.includes('fp_zero')?'fp_zero'
     :modelType.includes('pro')?'2_step_pro'
-    :modelType.includes('1_step')?'1_step'
+    :(modelType.includes('1_step')||modelType.includes('1step'))?'1_step'
     :'2_step';
   const r=RULES[modelKey];
   const sz=accountSize||10000;
