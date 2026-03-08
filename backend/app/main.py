@@ -541,8 +541,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TaliTrade", version="4.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], allow_credentials=True,
-    allow_methods=["*"], allow_headers=["*"],
+    allow_origins=[
+        "https://mtr-platform.fundingpips.com",
+        "https://app.fundingpips.com",
+    ],
+    allow_origin_regex=r"chrome-extension://.*",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 from app.routers import auth, accounts
