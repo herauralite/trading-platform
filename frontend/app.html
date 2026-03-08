@@ -342,6 +342,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .leaderboard-item{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;transition:background .15s;}
 .leaderboard-item:last-child{border-bottom:none;}
 .leaderboard-item:hover{background:var(--s2);}
+.leaderboard-you{background:rgba(42,171,238,0.06)!important;border-left:2px solid var(--blue);}
 .lb-rank{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;width:24px;color:var(--t3);}
 .lb-rank.gold{color:var(--gold);}.lb-rank.silver{color:#c0c0c0;}.lb-rank.bronze{color:#cd7f32;}
 .lb-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;}
@@ -509,7 +510,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
-const TALI_BOT_USERNAME = 'TaliTradeBot';      // ← replace with your actual bot username
+const TALI_BOT_USERNAME = 'TaliTradeBot';      // ← SET THIS: your bot's @username from BotFather (without @)
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
@@ -806,6 +807,20 @@ function applyUserToTopbar(user) {
 <!-- DASHBOARD -->
 <div id="page-dash" class="page active">
   <div class="sec-head"><div class="sec-label">Overview</div><div class="sec-meta" id="clock">--:--:--</div></div>
+  <!-- ONBOARDING CARD — shown only for new users with no extension data yet -->
+  <div id="onboardCard" style="display:none;background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.2);border-radius:14px;padding:20px;margin-bottom:14px">
+    <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:12px">👋 Get started in 2 steps</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">1</div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Install the Chrome Extension</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Install TaliTrade extension, then open FundingPips in a new tab</div></div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">2</div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Open your account on FundingPips</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Navigate to mtr-platform.fundingpips.com — data syncs automatically</div></div>
+      </div>
+    </div>
+  </div>
   <div class="sk-wrap" id="acctWrap" style="margin-bottom:10px">
     <!-- SKELETON -->
     <div class="acct-card sk-fade sk-in" id="skelAcct" style="margin-bottom:0">
@@ -940,12 +955,19 @@ function applyUserToTopbar(user) {
 
 <!-- ANALYTICS -->
 <div id="page-analytics" class="page">
-  <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta">All trades</div></div>
+  <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta" id="analyticsMeta">All trades</div></div>
   <div class="stat-row" id="analyticsStats">
     <div class="stat-box" style="position:relative"><div class="stat-box-label">Win Rate</div><div class="skel skel-r sk-fade sk-in" id="skelWr" style="width:70px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="wr">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
-    <div class="stat-box" style="position:relative"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf">—</div><div class="stat-box-sub">gross profit / loss</div></div>
-    <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf">—</div><div class="stat-box-sub">gross P / gross L</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&amp;L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
     <div class="stat-box" style="position:relative"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
+  </div>
+  <!-- Row 2: Avg Win / Avg Loss / Best Symbol / Streak -->
+  <div class="stat-row sk-fade sk-out" id="analyticsRow2" style="margin-top:0">
+    <div class="stat-box"><div class="stat-box-label">Avg Win</div><div class="stat-box-val txt-green" id="avgWin">—</div><div class="stat-box-sub">per winning trade</div></div>
+    <div class="stat-box"><div class="stat-box-label">Avg Loss</div><div class="stat-box-val txt-red" id="avgLoss">—</div><div class="stat-box-sub">per losing trade</div></div>
+    <div class="stat-box"><div class="stat-box-label">Best Symbol</div><div class="stat-box-val txt-green" id="bestSym">—</div><div class="stat-box-sub" id="bestSymPnl">—</div></div>
+    <div class="stat-box"><div class="stat-box-label">Green Streak</div><div class="stat-box-val" id="greenStreak">—</div><div class="stat-box-sub" id="greenStreakSub">—</div></div>
   </div>
   <div class="chart-card">
     <div class="chart-label">Equity Curve</div>
@@ -957,9 +979,9 @@ function applyUserToTopbar(user) {
       </svg>
     </div>
   </div>
-  <div class="sec-head"><div class="sec-label">Recent Trades</div></div>
+  <div class="sec-head"><div class="sec-label">Recent Trades</div><div class="sec-meta" id="recentTradesMeta"></div></div>
   <div class="card card-p" id="recentTradesEl"><div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div></div>
-  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Analytics</span></div>
+  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v1.0</span><span></span><span>Analytics</span></div>
 </div>
 
 <!-- JOURNAL (merged into analytics, hidden standalone) -->
@@ -1080,11 +1102,8 @@ function applyUserToTopbar(user) {
   <div class="challenge-card featured rip"><div class="cc-head"><div><div class="tag tag-gold" style="margin-bottom:8px">Most Popular</div><div class="cc-size">$10,000</div><div style="font-size:11px;color:var(--t3);margin-top:3px">2-Step Master Challenge</div></div><div><div class="cc-price">$97</div><div class="cc-price-sub">one-time fee</div></div></div><div class="cc-rules"><div class="cc-rule"><div class="cc-rule-l">Profit Target</div><div class="cc-rule-v txt-green">8% / 5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Daily Loss</div><div class="cc-rule-v txt-red">5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Loss</div><div class="cc-rule-v txt-red">10%</div></div><div class="cc-rule"><div class="cc-rule-l">Payout Split</div><div class="cc-rule-v txt-blue">80%</div></div></div><div style="padding:0 16px 16px"><div class="btn btn-blue btn-full rip">Start Challenge — $97</div></div></div>
   <div class="challenge-card rip"><div class="cc-head"><div><div class="cc-size">$25,000</div><div style="font-size:11px;color:var(--t3);margin-top:3px">2-Step Master</div></div><div><div class="cc-price">$197</div><div class="cc-price-sub">one-time fee</div></div></div><div class="cc-rules"><div class="cc-rule"><div class="cc-rule-l">Profit Target</div><div class="cc-rule-v txt-green">8% / 5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Daily Loss</div><div class="cc-rule-v txt-red">5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Loss</div><div class="cc-rule-v txt-red">10%</div></div><div class="cc-rule"><div class="cc-rule-l">Payout Split</div><div class="cc-rule-v txt-blue">80%</div></div></div><div style="padding:0 16px 16px"><div class="btn btn-ghost btn-full rip">Start Challenge — $197</div></div></div>
   <div class="sec-head" style="margin-top:4px"><div class="sec-label">Leaderboard</div><div class="tag tag-gold">Live</div></div>
-  <div class="card">
-    <div class="leaderboard-item rip"><div class="lb-rank gold">1</div><div class="lb-avatar" style="background:linear-gradient(135deg,#f5c842,#e8924a)">A</div><div class="lb-name">Alex_trades<div style="font-size:10px;color:var(--t3)">$10K · Day 18</div></div><span>🇺🇸</span><div class="lb-profit txt-green">+$1,840</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank silver">2</div><div class="lb-avatar" style="background:linear-gradient(135deg,#94a3b8,#64748b)">S</div><div class="lb-name">SniperFX<div style="font-size:10px;color:var(--t3)">$25K · Day 12</div></div><span>🇬🇧</span><div class="lb-profit txt-green">+$1,620</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank bronze">3</div><div class="lb-avatar" style="background:linear-gradient(135deg,#cd7f32,#a0522d)">M</div><div class="lb-name">MarketMage<div style="font-size:10px;color:var(--t3)">$50K · Day 7</div></div><span>🇦🇪</span><div class="lb-profit txt-green">+$1,240</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank">4</div><div class="lb-avatar" style="background:linear-gradient(135deg,var(--blue),var(--blue-dark))">Y</div><div class="lb-name">You · <span id="lbId">—</span><div style="font-size:10px;color:var(--blue)" id="lbSub">—</div></div><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg><div class="lb-profit txt-green" id="lbProfit">+$0</div></div>
+  <div class="card" id="leaderboardList">
+    <div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading leaderboard…</div>
   </div>
   <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Challenges</span></div>
 </div>
@@ -1144,7 +1163,7 @@ function applyUserToTopbar(user) {
           <div><div class="rp-label">Margin</div><div class="rp-val" id="marginReq">$241</div></div>
           <div><div class="rp-label">Limit Left</div><div class="rp-val txt-orange" id="tradeRiskLeft">$300</div></div>
         </div>
-        <button class="exec-btn buy-btn rip" id="execBtn"><span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;NQ/USD &nbsp;@ &nbsp;<span id="execPrice">17,234.25</span></button>
+        <button class="exec-btn buy-btn rip" id="execBtn" style="opacity:0.5;pointer-events:none;cursor:not-allowed" title="Coming soon"><span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;NQ/USD &nbsp;@ &nbsp;<span id="execPrice">17,234.25</span><span style="font-size:10px;margin-left:8px;opacity:0.8;font-weight:500">(coming soon)</span></button>
       </div>
     </div>
     <div class="depth-card">
@@ -1436,9 +1455,20 @@ async function fetchStatus(){
       const hadData=liveAccountsCache[activeAcct];
       statusEl.textContent=hadData?'extension offline':'waiting for extension...';
       statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
+      // Show onboarding card if completely new (no account data, no cached trades)
+      if(!hadData&&!activeAcct){
+        const balEl=document.getElementById('mBal');
+        if(balEl&&balEl.textContent==='$—'){
+          const onboardCard=document.getElementById('onboardCard');
+          if(onboardCard)onboardCard.style.display='block';
+        }
+      }
       return;
     }
     revealDash();
+    // Hide onboarding card now that we have live data
+    const oc=document.getElementById('onboardCard');
+    if(oc)oc.style.display='none';
     const{balance,equity,profit,accountType,accountSize,accountId:liveAcctId,accountLabel:liveAcctLabel,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
     const sz=accountSize||10000;
     const cachedTrades=tradesCache[activeAcct]||[];
@@ -1484,7 +1514,8 @@ async function fetchStatus(){
     if(lbSubEl)lbSubEl.textContent=sizeLabel+' · '+(accountType&&accountType.includes('master')?'Master':'Eval');
 
     // ── Leaderboard profit — guard null balance ────────────────────────────────
-    document.getElementById('lbProfit').textContent=fallbackBalance!=null?pnl(fallbackBalance-sz):'$—';
+    const lbProfitEl=document.getElementById('lbProfit');
+    if(lbProfitEl)lbProfitEl.textContent=fallbackBalance!=null?pnl(fallbackBalance-sz):'$—';
 
     // ── Rules sheet ────────────────────────────────────────────────────────────
     updateRulesSheet(accountType||'2_step', sz, fullLabel);
@@ -1537,6 +1568,51 @@ if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
     if(balEl&&balEl.textContent==='$—') balEl.textContent=usd(inferredBal);
   }
 }).catch(()=>{});
+
+// ── LEADERBOARD ───────────────────────────────────────────────────────────────
+async function fetchLeaderboard(){
+  try{
+    const res=await fetch(API+'/leaderboard?limit=10');
+    if(!res.ok)throw new Error('status '+res.status);
+    const data=await res.json();
+    const rows=data.leaderboard||[];
+    const el=document.getElementById('leaderboardList');
+    if(!el)return;
+    if(!rows.length){
+      el.innerHTML='<div style="text-align:center;padding:24px;color:var(--t3);font-size:12px">No traders on the board yet.<br>Trade to claim your spot!</div>';
+      return;
+    }
+    const medals=['gold','silver','bronze'];
+    const gradients=[
+      'linear-gradient(135deg,#f5c842,#e8924a)',
+      'linear-gradient(135deg,#94a3b8,#64748b)',
+      'linear-gradient(135deg,#cd7f32,#a0522d)',
+    ];
+    const you=getTaliUser();
+    el.innerHTML=rows.map((r,i)=>{
+      const isYou=you&&r.accountId===activeAcct;
+      const rankCls=medals[i]||'';
+      const grad=gradients[i]||'linear-gradient(135deg,var(--s3),var(--s2))';
+      const initial=(r.displayName||'T').charAt(0).toUpperCase();
+      const sz=r.accountSize||10000;
+      const szLabel='$'+(sz>=1000?(sz/1000)+'K':sz);
+      const winRateLabel=r.tradeCount>0?r.winRate+'% WR':'';
+      return`<div class="leaderboard-item rip${isYou?' leaderboard-you':''}">
+        <div class="lb-rank ${rankCls}">${r.rank}</div>
+        <div class="lb-avatar" style="background:${isYou?'linear-gradient(135deg,var(--blue),#1a8bc4)':grad}">${isYou?'You':initial}</div>
+        <div class="lb-name">${isYou?'You':'Trader'}<div style="font-size:10px;color:var(--t3)">${szLabel} · ${winRateLabel||r.tradeCount+' trades'}</div></div>
+        <div class="lb-profit ${r.totalPnl>=0?'txt-green':'txt-red'}">${r.totalPnl>=0?'+':''}\$${Math.abs(r.totalPnl).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    const el=document.getElementById('leaderboardList');
+    if(el)el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Leaderboard loading…</div>';
+  }
+}
+// Load leaderboard when challenges page is shown, and on nav to it
+document.querySelectorAll('.bnav-item').forEach(item=>{
+  if(item.dataset.page==='challenges') item.addEventListener('click',()=>fetchLeaderboard());
+});
 
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
@@ -2269,9 +2345,6 @@ async function fetchAnalytics(){
   try{
     let trades=await fetchAllTrades(activeAcct);
     // Guard: filter out any rows where |pnl| > accountSize.
-    // These are corrupted DB rows from the scraper close-price bug.
-    // Belt-and-suspenders — the backend now rejects these at insert time,
-    // but existing corrupted rows still need filtering on the client side.
     trades=trades.filter(t=>{
       const sz=t.accountSize||10000;
       if(Math.abs(t.pnl||0)>sz){
@@ -2280,8 +2353,9 @@ async function fetchAnalytics(){
       }
       return true;
     });
+    document.getElementById('analyticsMeta').textContent=trades.length+' trades';
     if(!trades.length){
-      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">No trades recorded yet</div>';
+      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>No trades recorded yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>';
       return;
     }
     // reveal analytics skeletons
@@ -2290,12 +2364,35 @@ async function fetchAnalytics(){
       if(s){s.classList.remove('sk-in');s.classList.add('sk-out');}
       if(r){r.classList.remove('sk-out');r.classList.add('sk-in');}
     });
+    const r2=document.getElementById('analyticsRow2');
+    if(r2){r2.classList.remove('sk-out');r2.classList.add('sk-in');}
+
     const wins=trades.filter(t=>(t.pnl||0)>0),losses=trades.filter(t=>(t.pnl||0)<=0);
     const inferredBal=inferBalanceFromTrades(trades, trades[0]?.accountSize||10000);
     if(inferredBal!=null) cacheBalance(activeAcct, inferredBal);
     const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
     const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0),wr=Math.round(wins.length/trades.length*100);
     const pf=gl>0?(gp/gl).toFixed(2):'∞';
+    const avgW=wins.length?gp/wins.length:0;
+    const avgL=losses.length?gl/losses.length:0;
+
+    // Best/worst symbol
+    const symPnl={};
+    trades.forEach(t=>{const s=t.symbol||'?';symPnl[s]=(symPnl[s]||0)+(t.pnl||0);});
+    const syms=Object.entries(symPnl);
+    const bestSym=syms.length?syms.reduce((a,b)=>b[1]>a[1]?b:a):null;
+
+    // Green streak (days) — look backwards through sorted dates
+    const dayPnl={};
+    trades.forEach(t=>{
+      const d=(t.closedAt||t.loggedAt||'').slice(0,10);
+      if(d)dayPnl[d]=(dayPnl[d]||0)+(t.pnl||0);
+    });
+    const sortedDays=Object.keys(dayPnl).sort().reverse();
+    let streak=0;
+    for(const d of sortedDays){if(dayPnl[d]>0)streak++;else break;}
+
+    // Populate stat boxes
     document.getElementById('wr').textContent=wr+'%';
     document.getElementById('wr').className='stat-box-val '+(wr>=50?'txt-green':'txt-red');
     document.getElementById('wrSub').textContent=wins.length+' of '+trades.length+' trades';
@@ -2304,19 +2401,45 @@ async function fetchAnalytics(){
     document.getElementById('netpl').className='stat-box-val '+(netPnl>=0?'txt-green':'txt-red');
     document.getElementById('totalTrades').textContent=trades.length;
     document.getElementById('wlSub').textContent='W:'+wins.length+' L:'+losses.length;
-    const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.logged_at||0)-new Date(b.closedAt||b.logged_at||0));
+
+    const avgWEl=document.getElementById('avgWin');
+    const avgLEl=document.getElementById('avgLoss');
+    const bsEl=document.getElementById('bestSym');
+    const bspEl=document.getElementById('bestSymPnl');
+    const gsEl=document.getElementById('greenStreak');
+    const gsSubEl=document.getElementById('greenStreakSub');
+    if(avgWEl)avgWEl.textContent=wins.length?'+$'+avgW.toFixed(2):'—';
+    if(avgLEl)avgLEl.textContent=losses.length?'-$'+avgL.toFixed(2):'—';
+    if(bsEl)bsEl.textContent=bestSym?bestSym[0]:'—';
+    if(bspEl)bspEl.textContent=bestSym?pnl(bestSym[1]):'—';
+    if(gsEl){gsEl.textContent=streak>0?streak+'d':'0';gsEl.className='stat-box-val '+(streak>=3?'txt-green':streak>0?'txt-blue':'txt-dim');}
+    if(gsSubEl)gsSubEl.textContent=streak>=3?'🔥 on fire!':streak>0?'keep it going':'start a streak';
+
+    // Equity curve
+    const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.loggedAt||0)-new Date(b.closedAt||b.loggedAt||0));
     let running=(inferredBal??liveBalance)-netPnl;
     const pts=curveTrades.map(t=>{running+=(t.pnl||0);return running;});
     if(pts.length>1){
       const mn=Math.min(...pts),mx=Math.max(...pts),rng=mx-mn||1;
+      const isGreen=pts[pts.length-1]>=pts[0];
+      const lineColor=isGreen?'var(--green)':'var(--red)';
       const xs=pts.map((_,i)=>i/(pts.length-1)*400);
       const ys=pts.map(v=>70-(v-mn)/rng*60);
       const d=xs.map((x,i)=>(i===0?'M':'L')+x.toFixed(1)+','+ys[i].toFixed(1)).join(' ');
-      document.getElementById('equityPath').setAttribute('d',d);
-      document.getElementById('equityFill').setAttribute('d',d+' L400,80 L0,80 Z');
+      const ep=document.getElementById('equityPath');
+      const ef=document.getElementById('equityFill');
+      if(ep){ep.setAttribute('d',d);ep.setAttribute('stroke',lineColor);}
+      if(ef)ef.setAttribute('d',d+' L400,80 L0,80 Z');
+      // update gradient color
+      const cgStop=document.querySelector('#cg stop:first-child');
+      if(cgStop)cgStop.setAttribute('stop-color',isGreen?'#4dcd8a':'#e05c5c');
     }
+
+    // Recent trades list
     const el=document.getElementById('recentTradesEl');
-    const recent=trades.slice().sort((a,b)=>new Date(b.closedAt||b.logged_at||0)-new Date(a.closedAt||a.logged_at||0)).slice(0,10);
+    const rtMeta=document.getElementById('recentTradesMeta');
+    const recent=trades.slice().sort((a,b)=>new Date(b.closedAt||b.loggedAt||0)-new Date(a.closedAt||a.loggedAt||0)).slice(0,20);
+    if(rtMeta)rtMeta.textContent='Last '+recent.length;
     el.innerHTML=recent.map(t=>{
       const win=(t.pnl||0)>0;
       const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
