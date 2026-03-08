@@ -618,6 +618,9 @@ window.onTelegramAuth = async function(tgUser) {
     });
     if (linkedAccounts.length > 0) {
       activeAcct = linkedAccounts[0].accountId;
+    } else {
+      activeAcct = '';
+      renderNoAccountState();
     }
 
     // 2. Persist user
@@ -738,6 +741,9 @@ function applyUserToTopbar(user) {
     };
   }
 }
+
+const existingTaliUser=getTaliUser();
+if(existingTaliUser) applyUserToTopbar(existingTaliUser);
 </script>
 <!-- ═══════════════════════════════════════════════════════════ -->
 
@@ -1400,6 +1406,84 @@ document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',()=>t
 function usd(v){if(v==null)return'$—';return'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function pnl(v){if(v==null)return'$—';return(v>=0?'+$':'-$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
+function hasLinkedAccounts(){
+  return Object.keys(ACCOUNTS).length > 0;
+}
+
+function showOnboardingCard(show=true){
+  const el=document.getElementById('onboardCard');
+  if(el)el.style.display=show?'block':'none';
+}
+
+function renderNoAccountState(kind='default'){
+  const statusEl=document.getElementById('tb-status');
+  if(statusEl){
+    statusEl.textContent='waiting for extension...';
+    statusEl.style.color='var(--t3)';
+  }
+  showOnboardingCard(true);
+
+  const analyticsMeta=document.getElementById('analyticsMeta');
+  if(analyticsMeta)analyticsMeta.textContent='No account connected';
+  const journalMeta=document.getElementById('journalMeta');
+  if(journalMeta)journalMeta.textContent='No account connected';
+  const payoutMeta=document.getElementById('payoutMeta');
+  if(payoutMeta)payoutMeta.textContent='No account connected';
+
+  const analyticsEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>No account connected yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>`;
+  const journalEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.35" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No journal yet.<br><span style="font-size:11px">Closed trades appear here after the extension syncs your FundingPips history.</span></div>`;
+  const recentEmpty=`<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">No trade history yet</div>`;
+
+  const journalEntries=document.getElementById('journalEntries');
+  if(journalEntries)journalEntries.innerHTML=journalEmpty;
+  const recentTrades=document.getElementById('recentTradesEl');
+  if(recentTrades)recentTrades.innerHTML=recentEmpty;
+
+  ['wr','pf','netpl','totalTrades','avgWin','avgLoss','bestSym','bestSymPnl','greenStreak'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.textContent='—';
+  });
+  const wrSub=document.getElementById('wrSub'); if(wrSub)wrSub.textContent='Connect an account';
+  const wlSub=document.getElementById('wlSub'); if(wlSub)wlSub.textContent='Waiting for first sync';
+  const greenStreakSub=document.getElementById('greenStreakSub'); if(greenStreakSub)greenStreakSub.textContent='Waiting for first green day';
+  const analyticsHost=document.getElementById('recentTradesEl');
+  if(analyticsHost && !document.getElementById('analyticsNoAcct')) {
+    analyticsHost.innerHTML=recentEmpty;
+  }
+  const analyticsStats=document.getElementById('analyticsStats');
+  if(analyticsStats && kind==='analytics') {
+    const host=document.getElementById('recentTradesEl');
+    if(host)host.innerHTML=recentEmpty;
+  }
+
+  const analyticsCard=document.getElementById('recentTradesEl');
+  if(analyticsCard && kind!=='journal') {
+    const holder=document.getElementById('analyticsMeta');
+    if(holder)holder.textContent='No account connected';
+  }
+
+  const payoutChecks=document.getElementById('payoutChecks');
+  if(payoutChecks){
+    payoutChecks.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid var(--border);border-radius:var(--rs)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg><span style="font-size:12px;color:var(--t3)">Connect a FundingPips account to unlock payout tracking.</span></div>`;
+  }
+  const payoutHero=document.getElementById('payoutHero');
+  const skelPayout=document.getElementById('skelPayout');
+  if(skelPayout){skelPayout.classList.remove('sk-in');skelPayout.classList.add('sk-out');}
+  if(payoutHero){payoutHero.classList.remove('sk-out');payoutHero.classList.add('sk-in');}
+  const payoutHeroLabel=document.getElementById('payoutHeroLabel'); if(payoutHeroLabel)payoutHeroLabel.textContent='Payout Status';
+  const payoutHeroAmt=document.getElementById('payoutHeroAmt'); if(payoutHeroAmt){payoutHeroAmt.textContent='$—';payoutHeroAmt.className='ph-hero-amount txt-dim';}
+  const payoutHeroSplit=document.getElementById('payoutHeroSplit'); if(payoutHeroSplit)payoutHeroSplit.textContent='Waiting for first account sync';
+  const payoutBadge=document.getElementById('payoutBadge'); if(payoutBadge){payoutBadge.textContent='No account';payoutBadge.className='ph-badge not-yet';}
+  const payoutCountdown=document.getElementById('payoutCountdownCard'); if(payoutCountdown)payoutCountdown.innerHTML='';
+  const rewardSplitsGrid=document.getElementById('rewardSplitsGrid'); if(rewardSplitsGrid)rewardSplitsGrid.innerHTML='';
+  const phaseProgress=document.getElementById('phaseProgressGrid'); if(phaseProgress)phaseProgress.innerHTML='';
+
+  const analyticsEmptyHost=document.getElementById('recentTradesEl');
+  if(analyticsEmptyHost && kind==='analytics') {
+    analyticsEmptyHost.innerHTML='<div id="analyticsNoAcct">'+analyticsEmpty+'</div>';
+  }
+}
+
 // SKELETON REVEAL
 let dashRevealed=false;
 function revealDash(){
@@ -1452,17 +1536,10 @@ async function fetchStatus(){
     const statusEl=document.getElementById('tb-status');
     if(!acct){
       // Check if we ever had data for this account
-      const hadData=liveAccountsCache[activeAcct];
+      const hadData=activeAcct?liveAccountsCache[activeAcct]:null;
       statusEl.textContent=hadData?'extension offline':'waiting for extension...';
       statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
-      // Show onboarding card if completely new (no account data, no cached trades)
-      if(!hadData&&!activeAcct){
-        const balEl=document.getElementById('mBal');
-        if(balEl&&balEl.textContent==='$—'){
-          const onboardCard=document.getElementById('onboardCard');
-          if(onboardCard)onboardCard.style.display='block';
-        }
-      }
+      if(!activeAcct||!hasLinkedAccounts()) renderNoAccountState();
       return;
     }
     revealDash();
@@ -1616,6 +1693,10 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
 
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
+  if(!activeAcct||!hasLinkedAccounts()){
+    renderNoAccountState('payout');
+    return;
+  }
   try{
     const res=await fetch(API+'/extension/payout?account_id='+activeAcct);
     if(!res.ok)throw new Error('status '+res.status);
@@ -2312,6 +2393,10 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
 
 // JOURNAL
 async function fetchJournal(){
+  if(!activeAcct||!hasLinkedAccounts()){
+    renderNoAccountState('journal');
+    return;
+  }
   try{
     let trades=await fetchAllTrades(activeAcct);
     // Same corrupt-pnl guard as fetchAnalytics — filter out close-price-as-pnl rows
@@ -2342,6 +2427,10 @@ async function fetchJournal(){
 
 // ANALYTICS
 async function fetchAnalytics(){
+  if(!activeAcct||!hasLinkedAccounts()){
+    renderNoAccountState('analytics');
+    return;
+  }
   try{
     let trades=await fetchAllTrades(activeAcct);
     // Guard: filter out any rows where |pnl| > accountSize.
