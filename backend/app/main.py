@@ -2,6 +2,9 @@ import os
 import logging
 import httpx
 import asyncio
+import hashlib
+import hmac
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from dotenv import load_dotenv
@@ -187,7 +190,129 @@ async def ensure_trades_table():
         await conn.execute(text("UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL"))
         await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL"))
 
+    # Step 5: telegram_user_id column on trades
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE trades ADD COLUMN telegram_user_id TEXT"))
+        logger.info("trades telegram_user_id column added")
+    except Exception:
+        pass  # already exists
+
     logger.info("trades table ready")
+
+
+async def ensure_users_tables():
+    """Create users and prop_accounts tables."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS users (
+                telegram_user_id    TEXT PRIMARY KEY,
+                telegram_username   TEXT,
+                first_name          TEXT,
+                last_name           TEXT,
+                photo_url           TEXT,
+                created_at          TIMESTAMPTZ DEFAULT NOW(),
+                last_seen_at        TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS prop_accounts (
+                id              SERIAL PRIMARY KEY,
+                telegram_user_id TEXT NOT NULL REFERENCES users(telegram_user_id) ON DELETE CASCADE,
+                account_id      TEXT NOT NULL,
+                broker          TEXT NOT NULL DEFAULT 'fundingpips',
+                account_type    TEXT,
+                account_size    INTEGER,
+                label           TEXT,
+                is_active       BOOLEAN DEFAULT TRUE,
+                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE(telegram_user_id, account_id)
+            )
+        """))
+    logger.info("users + prop_accounts tables ready")
+
+
+async def db_upsert_user(tg_data: dict) -> dict:
+    """Insert or update a user from Telegram login data. Returns the user row."""
+    from app.core.database import engine
+    tg_id = str(tg_data.get("id", ""))
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO users (telegram_user_id, telegram_username, first_name, last_name, photo_url, last_seen_at)
+            VALUES (:tg_id, :username, :first_name, :last_name, :photo_url, NOW())
+            ON CONFLICT (telegram_user_id) DO UPDATE SET
+                telegram_username = EXCLUDED.telegram_username,
+                first_name        = EXCLUDED.first_name,
+                last_name         = EXCLUDED.last_name,
+                photo_url         = COALESCE(EXCLUDED.photo_url, users.photo_url),
+                last_seen_at      = NOW()
+        """), {
+            "tg_id":      tg_id,
+            "username":   tg_data.get("username"),
+            "first_name": tg_data.get("first_name"),
+            "last_name":  tg_data.get("last_name"),
+            "photo_url":  tg_data.get("photo_url"),
+        })
+        result = await conn.execute(
+            text("SELECT * FROM users WHERE telegram_user_id = :tg_id"),
+            {"tg_id": tg_id}
+        )
+        return dict(result.mappings().first() or {})
+
+
+async def db_get_user_accounts(telegram_user_id: str) -> list:
+    """Return all prop accounts linked to a Telegram user."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT * FROM prop_accounts WHERE telegram_user_id = :uid AND is_active = TRUE ORDER BY created_at"),
+            {"uid": telegram_user_id}
+        )
+        return [dict(r) for r in result.mappings().all()]
+
+
+async def db_link_account(telegram_user_id: str, account_id: str, account_type: str = None,
+                           account_size: int = None, label: str = None, broker: str = "fundingpips"):
+    """Link a prop account to a Telegram user. Safe to call multiple times."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO prop_accounts (telegram_user_id, account_id, broker, account_type, account_size, label)
+            VALUES (:uid, :acct_id, :broker, :acct_type, :acct_size, :label)
+            ON CONFLICT (telegram_user_id, account_id) DO UPDATE SET
+                account_type = COALESCE(EXCLUDED.account_type, prop_accounts.account_type),
+                account_size = COALESCE(EXCLUDED.account_size, prop_accounts.account_size),
+                label        = COALESCE(EXCLUDED.label, prop_accounts.label),
+                is_active    = TRUE
+        """), {
+            "uid":       telegram_user_id,
+            "acct_id":   account_id,
+            "broker":    broker,
+            "acct_type": account_type,
+            "acct_size": account_size,
+            "label":     label,
+        })
+
+
+def verify_telegram_auth(data: dict) -> bool:
+    """Verify Telegram Login Widget data using HMAC-SHA256."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        return False
+    check_hash = data.get("hash", "")
+    data_check = {k: v for k, v in data.items() if k != "hash"}
+    data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data_check.items()))
+    secret_key = hashlib.sha256(token.encode()).digest()
+    computed   = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+    # Also check auth_date is not older than 24h
+    try:
+        auth_age = datetime.now(timezone.utc).timestamp() - int(data.get("auth_date", 0))
+        if auth_age > 86400:
+            return False
+    except Exception:
+        pass
+    return hmac.compare_digest(computed, check_hash)
 
 
 async def db_insert_trade(trade_dict: dict):
@@ -526,6 +651,7 @@ def format_payout_status(ev: dict, short: bool = False) -> str:
 async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
     await ensure_trades_table()
+    await ensure_users_tables()
     await setup_telegram_webhook()
     tasks = [
         asyncio.create_task(news_scheduler()),
@@ -544,6 +670,8 @@ app.add_middleware(
     allow_origins=[
         "https://mtr-platform.fundingpips.com",
         "https://app.fundingpips.com",
+        "https://talitrade.com",
+        "https://www.talitrade.com",
     ],
     allow_origin_regex=r"chrome-extension://.*",
     allow_credentials=True,
@@ -565,6 +693,87 @@ async def health_db():
     async with engine.connect() as conn:
         await conn.execute(text("SELECT 1"))
     return {"status": "ok", "database": "connected"}
+
+
+
+# ─── Telegram Auth ────────────────────────────────────────────────────────────
+class TelegramAuthData(BaseModel):
+    id: int
+    first_name: str | None = None
+    last_name: str | None = None
+    username: str | None = None
+    photo_url: str | None = None
+    auth_date: int
+    hash: str
+
+
+@app.post("/auth/telegram")
+async def telegram_login(data: TelegramAuthData):
+    """
+    Verify Telegram Login Widget callback data and upsert the user.
+    Returns user profile + their linked prop accounts.
+    Called from the web app after the Telegram Login Widget fires.
+    """
+    payload = data.dict()
+    if not verify_telegram_auth(payload):
+        return JSONResponse(status_code=401, content={"detail": "Invalid Telegram auth data"})
+
+    user = await db_upsert_user({"id": data.id, "username": data.username,
+                                  "first_name": data.first_name, "last_name": data.last_name,
+                                  "photo_url": data.photo_url})
+    accounts = await db_get_user_accounts(str(data.id))
+    logger.info(f"Telegram login: {data.username or data.id} ({len(accounts)} accounts)")
+    return {
+        "ok": True,
+        "user": {
+            "telegramUserId": str(data.id),
+            "username":       data.username,
+            "firstName":      data.first_name,
+            "lastName":       data.last_name,
+            "photoUrl":       data.photo_url,
+        },
+        "accounts": [
+            {
+                "accountId":   a["account_id"],
+                "broker":      a["broker"],
+                "accountType": a["account_type"],
+                "accountSize": a["account_size"],
+                "label":       a["label"],
+            }
+            for a in accounts
+        ],
+    }
+
+
+@app.get("/auth/me")
+async def get_me(telegram_user_id: str):
+    """Return user profile and linked accounts by telegram_user_id."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text("SELECT * FROM users WHERE telegram_user_id = :uid"),
+            {"uid": telegram_user_id}
+        )
+        user = dict(result.mappings().first() or {})
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "User not found"})
+    accounts = await db_get_user_accounts(telegram_user_id)
+    return {"user": user, "accounts": accounts}
+
+
+@app.post("/auth/link-account")
+async def link_account(
+    telegram_user_id: str,
+    account_id: str,
+    account_type: str = None,
+    account_size: int = None,
+    label: str = None,
+    broker: str = "fundingpips",
+):
+    """Link a prop account to a Telegram user. Called by the extension after detecting account info."""
+    await db_link_account(telegram_user_id, account_id, account_type, account_size, label, broker)
+    accounts = await db_get_user_accounts(telegram_user_id)
+    return {"ok": True, "accounts": accounts}
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -865,13 +1074,61 @@ def get_primary_account_id() -> str:
     return list(account_data_store.keys())[0] if account_data_store else PRIMARY_ACCOUNT
 
 
+async def get_user_primary_account(telegram_user_id: str) -> str:
+    """Get the first active prop account for a Telegram user, fall back to global primary."""
+    if not telegram_user_id:
+        return get_primary_account_id()
+    accounts = await db_get_user_accounts(telegram_user_id)
+    if accounts:
+        # Prefer an account that's currently live in the store
+        for a in accounts:
+            if get_live_account(a["account_id"]):
+                return a["account_id"]
+        return accounts[0]["account_id"]
+    return get_primary_account_id()
+
+
 # ─── Telegram bot commands ────────────────────────────────────────────────────
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
-    body    = await request.json()
-    message = body.get("message", {})
-    text    = message.get("text", "").strip().lower()
-    chat_id = str(message.get("chat", {}).get("id", ""))
+    body     = await request.json()
+    message  = body.get("message", {})
+    cmd      = message.get("text", "").strip().lower()
+    chat_id  = str(message.get("chat", {}).get("id", ""))
+    tg_from  = message.get("from", {})
+    tg_uid   = str(tg_from.get("id", "")) if tg_from else chat_id
+
+    # ── /start — register or welcome back ────────────────────────────────────
+    if cmd in ["/start", "/start@talitrade_bot"]:
+        user = await db_upsert_user({
+            "id":         tg_from.get("id"),
+            "username":   tg_from.get("username"),
+            "first_name": tg_from.get("first_name"),
+            "last_name":  tg_from.get("last_name"),
+        })
+        accounts = await db_get_user_accounts(tg_uid)
+        name     = tg_from.get("first_name") or tg_from.get("username") or "Trader"
+        if accounts:
+            acct_lines = "\n".join(
+                f"  • {a['account_id']} ({a['account_type'] or a['broker']}, ${(a['account_size'] or 0):,})"
+                for a in accounts
+            )
+            await send_telegram(
+                f"👋 Welcome back, <b>{name}</b>!\n\n"
+                f"Your linked accounts:\n{acct_lines}\n\n"
+                f"Use /status to check your live risk.", chat_id=chat_id
+            )
+        else:
+            await send_telegram(
+                f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\n"
+                f"Your Telegram account is registered. To get started:\n\n"
+                f"1️⃣ Open the platform at talitrade.com/app\n"
+                f"2️⃣ Log in with Telegram\n"
+                f"3️⃣ Install the Chrome extension on FundingPips\n\n"
+                f"Your trading data will automatically link to this account.\n\n"
+                f"/help — see all commands", chat_id=chat_id
+            )
+        return {"ok": True}
 
     dispatch = {
         "/status":  handle_status,
@@ -879,13 +1136,13 @@ async def telegram_webhook(request: Request):
         "/journal": handle_journal,
         "/news":    handle_news,
     }
-    for cmd, fn in dispatch.items():
-        if text in [cmd, f"{cmd}@talitrade_bot"]:
-            await fn(chat_id); return {"ok": True}
+    for c, fn in dispatch.items():
+        if cmd in [c, f"{c}@talitrade_bot"]:
+            await fn(chat_id, tg_uid=tg_uid); return {"ok": True}
 
-    if text in ["/payout",  "/payout@talitrade_bot"]:   await handle_payout(chat_id)
-    elif text in ["/summary", "/summary@talitrade_bot"]: await send_daily_summary(date.today().isoformat())
-    elif text in ["/help",    "/help@talitrade_bot"]:
+    if cmd in ["/payout",  "/payout@talitrade_bot"]:    await handle_payout(chat_id, tg_uid=tg_uid)
+    elif cmd in ["/summary", "/summary@talitrade_bot"]:  await send_daily_summary(date.today().isoformat(), tg_uid=tg_uid)
+    elif cmd in ["/help",    "/help@talitrade_bot"]:
         await send_telegram(
             "🤖 <b>TaliTrade Commands</b>\n\n"
             "/status  — Live risk snapshot\n/today   — Today's trades & P&L\n"
@@ -896,8 +1153,8 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
-async def handle_payout(chat_id: str):
-    acct_id = get_primary_account_id()
+async def handle_payout(chat_id: str, tg_uid: str = None):
+    acct_id = await get_user_primary_account(tg_uid) if tg_uid else get_primary_account_id()
     acct    = get_live_account(acct_id)
     if not acct:
         await send_telegram("📡 No live data — open FundingPips in your browser first.", chat_id=chat_id)
@@ -937,8 +1194,8 @@ async def handle_news(chat_id: str):
     )
 
 
-async def handle_status(chat_id: str):
-    acct_id = get_primary_account_id()
+async def handle_status(chat_id: str, tg_uid: str = None):
+    acct_id = await get_user_primary_account(tg_uid) if tg_uid else get_primary_account_id()
     acct    = get_live_account(acct_id)
     if not acct:
         await send_telegram("📡 No live data — open FundingPips in your browser first.", chat_id=chat_id)
@@ -986,8 +1243,8 @@ async def handle_status(chat_id: str):
     )
 
 
-async def handle_today(chat_id: str):
-    acct_id      = get_primary_account_id()
+async def handle_today(chat_id: str, tg_uid: str = None):
+    acct_id      = await get_user_primary_account(tg_uid) if tg_uid else get_primary_account_id()
     today        = date.today().isoformat()
     rows         = await db_get_trades_today(account_id=acct_id)
     today_trades = [row_to_trade(r) for r in rows]
@@ -1010,8 +1267,8 @@ async def handle_today(chat_id: str):
     )
 
 
-async def handle_journal(chat_id: str):
-    acct_id = get_primary_account_id()
+async def handle_journal(chat_id: str, tg_uid: str = None):
+    acct_id = await get_user_primary_account(tg_uid) if tg_uid else get_primary_account_id()
     rows    = await db_get_trades(account_id=acct_id, limit=10)
     recent  = [row_to_trade(r) for r in rows]
     if not recent:
@@ -1051,6 +1308,7 @@ class ExtensionData(BaseModel):
     closedTrades: list = []  # real-time detected closes — Telegram only, NOT written to DB
     timestamp: str | None = None
     url: str | None = None
+    telegramUserId: str | None = None  # set by extension after user logs in
 
 
 class TradeData(BaseModel):
@@ -1091,6 +1349,20 @@ async def receive_extension_data(data: ExtensionData):
         **data.dict(),
         "last_updated": datetime.utcnow().isoformat(),
     }
+
+    # Auto-link account to telegram user if telegram_user_id is provided
+    tg_uid = data.dict().get("telegramUserId")
+    if tg_uid and account_id != "unknown":
+        try:
+            await db_link_account(
+                telegram_user_id=tg_uid,
+                account_id=account_id,
+                account_type=data.accountType,
+                account_size=data.accountSize,
+                label=data.accountLabel,
+            )
+        except Exception as e:
+            logger.warning(f"Auto-link account failed: {e}")
 
     # Rule violation alerts — only fire when level changes (prevents spam on restart)
     for alert in data.alerts:
