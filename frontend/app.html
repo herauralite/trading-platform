@@ -514,21 +514,15 @@ const TALI_BOT_USERNAME = 'TaliTradeBot';      // ← replace with your actual b
 
 const TALI_USER_KEY    = 'tali_user_v1';
 const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each browser session
+const TALI_TG_DONE_KEY = 'tali_tg_done';       // sessionStorage — require Telegram every session
 
 // ── On load: check what gates have already been passed ───────────────────────
 (function() {
-  const pwOk   = sessionStorage.getItem(TALI_PW_KEY) === '1';
-  const tgUser = getTaliUser();
+  const pwOk = sessionStorage.getItem(TALI_PW_KEY) === '1';
+  // Telegram is ALWAYS required every session — no skipping via localStorage
 
-  if (pwOk && tgUser) {
-    // Both done — hide gate immediately
-    document.getElementById('gate').style.display = 'none';
-    requestAnimationFrame(() => applyUserToTopbar(tgUser));
-    return;
-  }
-
-  if (pwOk && !tgUser) {
-    // Password already done this session — skip to Telegram step
+  if (pwOk) {
+    // Password already done this session — skip straight to Telegram step
     document.getElementById('gate-step1').style.display = 'none';
     document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
     showTelegramStep();
@@ -606,6 +600,24 @@ window.onTelegramAuth = async function(tgUser) {
     if (!data.ok) throw new Error('auth_rejected');
 
     const user = data.user;
+
+    // Populate ACCOUNTS map dynamically from this user's linked accounts
+    const linkedAccounts = data.accounts || [];
+    Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]); // clear any stale data
+    const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
+    linkedAccounts.forEach((acct, i) => {
+      const sizeK = acct.accountSize ? Math.round(acct.accountSize/1000)+'K' : '';
+      const typeLabel = (acct.accountType||'').includes('master') ? 'Master' : 'Eval';
+      ACCOUNTS[acct.accountId] = {
+        label: acct.label || (sizeK ? sizeK+' '+typeLabel : acct.accountId),
+        short: typeLabel,
+        color: colors[i % colors.length],
+        idx:   i + 1
+      };
+    });
+    if (linkedAccounts.length > 0) {
+      activeAcct = linkedAccounts[0].accountId;
+    }
 
     // 2. Persist user
     localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
@@ -812,7 +824,7 @@ function applyUserToTopbar(user) {
     <div class="acct-card rip sk-fade sk-out" id="realAcct" style="margin-bottom:0" onclick="openAcctSheet()">
       <div class="grid-t"></div>
       <div class="acct-top">
-        <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">1917136</div></div>
+        <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">—</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
           <div class="acct-badge rip" id="acctBadge">10K Master</div>
           <div class="switch-hint rip">
@@ -1072,7 +1084,7 @@ function applyUserToTopbar(user) {
     <div class="leaderboard-item rip"><div class="lb-rank gold">1</div><div class="lb-avatar" style="background:linear-gradient(135deg,#f5c842,#e8924a)">A</div><div class="lb-name">Alex_trades<div style="font-size:10px;color:var(--t3)">$10K · Day 18</div></div><span>🇺🇸</span><div class="lb-profit txt-green">+$1,840</div></div>
     <div class="leaderboard-item rip"><div class="lb-rank silver">2</div><div class="lb-avatar" style="background:linear-gradient(135deg,#94a3b8,#64748b)">S</div><div class="lb-name">SniperFX<div style="font-size:10px;color:var(--t3)">$25K · Day 12</div></div><span>🇬🇧</span><div class="lb-profit txt-green">+$1,620</div></div>
     <div class="leaderboard-item rip"><div class="lb-rank bronze">3</div><div class="lb-avatar" style="background:linear-gradient(135deg,#cd7f32,#a0522d)">M</div><div class="lb-name">MarketMage<div style="font-size:10px;color:var(--t3)">$50K · Day 7</div></div><span>🇦🇪</span><div class="lb-profit txt-green">+$1,240</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank">4</div><div class="lb-avatar" style="background:linear-gradient(135deg,var(--blue),var(--blue-dark))">Y</div><div class="lb-name">You · <span id="lbId">1917136</span><div style="font-size:10px;color:var(--blue)" id="lbSub">$10K · Master</div></div><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg><div class="lb-profit txt-green" id="lbProfit">+$0</div></div>
+    <div class="leaderboard-item rip"><div class="lb-rank">4</div><div class="lb-avatar" style="background:linear-gradient(135deg,var(--blue),var(--blue-dark))">Y</div><div class="lb-name">You · <span id="lbId">—</span><div style="font-size:10px;color:var(--blue)" id="lbSub">—</div></div><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg><div class="lb-profit txt-green" id="lbProfit">+$0</div></div>
   </div>
   <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Challenges</span></div>
 </div>
@@ -1166,11 +1178,9 @@ function applyUserToTopbar(user) {
 
 <script>
 const API='https://trading-platform-production-70e0.up.railway.app';
-const ACCOUNTS={
-  '1917136':{label:'10K Master',short:'Master',color:'var(--blue)',idx:1},
-  '1886220':{label:'10K Demo',short:'Demo',color:'var(--t3)',idx:2}
-};
-let activeAcct='1917136';
+// ACCOUNTS is populated dynamically after Telegram login from the backend
+const ACCOUNTS={};
+let activeAcct='';
 let liveBalance=10000;
 
 // CURSOR
@@ -1516,7 +1526,7 @@ fetchStatus();setInterval(fetchStatus,5000);
 fetchNews(); // populate drawer on load
 // Pre-load trades on boot so balance inferral works from the start
 // and analytics tab shows data instantly when first tapped
-fetchAllTrades(activeAcct).then(trades=>{
+if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
   if(!trades.length) return;
   const sz=trades[0]?.accountSize||10000;
   const inferredBal=inferBalanceFromTrades(trades,sz);
