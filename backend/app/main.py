@@ -330,6 +330,16 @@ def verify_telegram_auth(data: dict) -> bool:
     return hmac.compare_digest(computed, check_hash)
 
 
+def parse_dt(val):
+    """Parse a datetime string or return as-is if already a datetime."""
+    if val is None or isinstance(val, datetime):
+        return val
+    try:
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except Exception:
+        return None
+
+
 async def db_insert_trade(trade_dict: dict):
     """Insert a closed trade. Rejects price-sized pnl values (close price bug guard)."""
     pnl_val      = trade_dict.get("pnl") or 0
@@ -340,6 +350,8 @@ async def db_insert_trade(trade_dict: dict):
             f"— exceeds accountSize={account_size}, likely a close price not a P&L"
         )
         return
+    # Ensure datetime fields are actual datetime objects, not strings
+    trade_dict = {**trade_dict, "closedAt": parse_dt(trade_dict.get("closedAt"))}
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
