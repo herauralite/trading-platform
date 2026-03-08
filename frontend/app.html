@@ -426,8 +426,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <body>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     DEVELOPER GATE — remove this block when app goes public
-     Password is set in the script below: TALI_DEV_PASSWORD
+     TWO-STEP GATE
+     Step 1: Dev password  (set TALI_DEV_PASSWORD below)
+     Step 2: Telegram link (set TALI_BOT_USERNAME below)
+     Register domain with BotFather: /setdomain → talitrade.com
 ═══════════════════════════════════════════════════════════════ -->
 <div id="gate" style="
   position:fixed;inset:0;z-index:99999;
@@ -435,9 +437,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   display:flex;align-items:center;justify-content:center;
   padding:24px;
 ">
-  <!-- Subtle grid texture -->
   <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(42,171,238,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(42,171,238,0.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;"></div>
-  <!-- Glow orb -->
   <div style="position:absolute;top:20%;left:50%;transform:translateX(-50%);width:500px;height:500px;background:radial-gradient(circle,rgba(42,171,238,0.07),transparent 65%);pointer-events:none;"></div>
 
   <div style="position:relative;width:100%;max-width:380px;">
@@ -447,45 +447,51 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#2aabee,#1a8bc4);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0;box-shadow:0 8px 24px rgba(42,171,238,0.3);">T</div>
       <div>
         <div style="font-size:17px;font-weight:700;color:#e8f4fd;letter-spacing:0.2px;">TaliTrade</div>
-        <div style="font-size:11px;color:#2aabee;letter-spacing:0.4px;font-weight:500;">Developer Access</div>
+        <div id="gate-subtitle" style="font-size:11px;color:#2aabee;letter-spacing:0.4px;font-weight:500;">Developer Access</div>
       </div>
     </div>
 
-    <!-- Card -->
-    <div style="background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
-
+    <!-- ── STEP 1: Password ── -->
+    <div id="gate-step1" style="background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
       <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Private Beta</div>
       <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Enter the access code to continue.</div>
 
-      <!-- Input -->
       <div id="gate-input-wrap" style="display:flex;align-items:center;background:#17212b;border:1.5px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;transition:border-color .2s,box-shadow .2s;margin-bottom:12px;">
         <svg style="margin-left:14px;flex-shrink:0;opacity:0.4;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8bafc7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <input
-          id="gate-input"
-          type="password"
-          placeholder="Access code"
-          autocomplete="off"
-          style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f4fd;font-family:'JetBrains Mono',monospace;caret-color:#2aabee;letter-spacing:2px;"
-        />
+        <input id="gate-input" type="password" placeholder="Access code" autocomplete="off"
+          style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f4fd;font-family:'JetBrains Mono',monospace;caret-color:#2aabee;letter-spacing:2px;" />
         <div id="gate-check" style="padding:0 14px;display:none;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4dcd8a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
       </div>
 
-      <!-- Error -->
-      <div id="gate-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;padding-left:4px;">Incorrect access code. Try again.</div>
+      <div id="gate-pw-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;padding-left:4px;">Incorrect access code. Try again.</div>
 
-      <!-- Button -->
-      <button id="gate-btn" onclick="gateSubmit()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2aabee,#1a8bc4);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;letter-spacing:0.3px;transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s;font-family:'Inter',sans-serif;">
-        Enter Platform →
+      <button onclick="gateSubmit()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2aabee,#1a8bc4);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;letter-spacing:0.3px;transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s;font-family:'Inter',sans-serif;">
+        Continue →
       </button>
-
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
         Not a developer? <a href="https://talitrade.com" style="color:#2aabee;text-decoration:none;">talitrade.com</a>
       </div>
     </div>
 
-    <!-- Footer -->
+    <!-- ── STEP 2: Telegram ── -->
+    <div id="gate-step2" style="display:none;background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
+      <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Link Telegram</div>
+      <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Connect your Telegram account to enable alerts and account linking.</div>
+
+      <div id="tg-widget-wrap" style="display:flex;justify-content:center;margin-bottom:20px;min-height:44px;align-items:center;">
+        <div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>
+      </div>
+
+      <div id="gate-tg-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;text-align:center;">Authentication failed. Please try again.</div>
+      <div id="gate-signing" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
+
+      <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
+        Your Telegram ID is used only for alerts. <a href="https://talitrade.com" style="color:#2aabee;text-decoration:none;">Privacy</a>
+      </div>
+    </div>
+
     <div style="text-align:center;margin-top:24px;font-size:10px;color:#2b3a4d;letter-spacing:0.5px;text-transform:uppercase;">
       TaliTrade Platform v4.0 · Internal Build
     </div>
@@ -493,66 +499,188 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 </div>
 
 <style>
-#gate-input-wrap:focus-within {
-  border-color: rgba(42,171,238,0.45) !important;
-  box-shadow: 0 0 0 3px rgba(42,171,238,0.08) !important;
-}
-#gate-btn:hover { transform: translateY(-2px); filter: brightness(1.1); }
-#gate-btn:active { transform: translateY(0); filter: brightness(0.95); }
-@keyframes gateOut {
-  from { opacity:1; transform:scale(1); }
-  to   { opacity:0; transform:scale(1.04); pointer-events:none; }
-}
+#gate-input-wrap:focus-within { border-color:rgba(42,171,238,0.45)!important; box-shadow:0 0 0 3px rgba(42,171,238,0.08)!important; }
+@keyframes gateOut { from{opacity:1;transform:scale(1);} to{opacity:0;transform:scale(1.04);pointer-events:none;} }
+@keyframes stepIn  { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
 #gate.unlocking { animation: gateOut .45s cubic-bezier(.23,1,.32,1) forwards; }
+#gate-step2.visible { animation: stepIn .3s cubic-bezier(.23,1,.32,1) both; }
 </style>
 
 <script>
+// ── CONFIG ───────────────────────────────────────────────────────────────────
+const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
+const TALI_BOT_USERNAME = 'TaliTradeBot';      // ← replace with your actual bot username
+// ────────────────────────────────────────────────────────────────────────────
+
+const TALI_USER_KEY    = 'tali_user_v1';
+const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each browser session
+
+// ── On load: check what gates have already been passed ───────────────────────
 (function() {
-  // ── Set your password here ──────────────────────────────────
-  const TALI_DEV_PASSWORD = 'tali2024dev';
-  // ───────────────────────────────────────────────────────────
+  const pwOk   = sessionStorage.getItem(TALI_PW_KEY) === '1';
+  const tgUser = getTaliUser();
 
-  const SESSION_KEY = 'tali_dev_unlocked';
-
-  // Already unlocked this session?
-  if (sessionStorage.getItem(SESSION_KEY) === '1') {
+  if (pwOk && tgUser) {
+    // Both done — hide gate immediately
     document.getElementById('gate').style.display = 'none';
+    requestAnimationFrame(() => applyUserToTopbar(tgUser));
+    return;
   }
 
+  if (pwOk && !tgUser) {
+    // Password already done this session — skip to Telegram step
+    showTelegramStep();
+    return;
+  }
+
+  // Default: show password step
   document.getElementById('gate-input').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') gateSubmit();
-    document.getElementById('gate-error').style.display = 'none';
+    document.getElementById('gate-pw-error').style.display = 'none';
     document.getElementById('gate-input-wrap').style.borderColor = '';
   });
-
   document.getElementById('gate-input').addEventListener('input', function() {
-    const valid = this.value.length > 3;
-    document.getElementById('gate-check').style.display = valid ? 'flex' : 'none';
+    document.getElementById('gate-check').style.display = this.value.length > 3 ? 'flex' : 'none';
   });
-
-  window.gateSubmit = function() {
-    const val = document.getElementById('gate-input').value;
-    if (val === TALI_DEV_PASSWORD) {
-      sessionStorage.setItem(SESSION_KEY, '1');
-      const gate = document.getElementById('gate');
-      gate.classList.add('unlocking');
-      setTimeout(() => gate.style.display = 'none', 450);
-    } else {
-      const wrap = document.getElementById('gate-input-wrap');
-      const err = document.getElementById('gate-error');
-      wrap.style.borderColor = 'rgba(224,92,92,0.5)';
-      wrap.style.boxShadow = '0 0 0 3px rgba(224,92,92,0.08)';
-      err.style.display = 'block';
-      document.getElementById('gate-input').value = '';
-      // Shake
-      wrap.style.animation = 'none';
-      wrap.style.transform = 'translateX(-6px)';
-      setTimeout(() => { wrap.style.transform = 'translateX(6px)'; }, 60);
-      setTimeout(() => { wrap.style.transform = 'translateX(-4px)'; }, 120);
-      setTimeout(() => { wrap.style.transform = 'translateX(0)'; wrap.style.transition = 'all .2s'; }, 180);
-    }
-  };
 })();
+
+// ── Step 1: password submit ───────────────────────────────────────────────────
+window.gateSubmit = function() {
+  const val = document.getElementById('gate-input').value;
+  if (val === TALI_DEV_PASSWORD) {
+    sessionStorage.setItem(TALI_PW_KEY, '1');
+    // Slide to step 2
+    document.getElementById('gate-step1').style.display = 'none';
+    document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
+    showTelegramStep();
+  } else {
+    const wrap = document.getElementById('gate-input-wrap');
+    wrap.style.borderColor = 'rgba(224,92,92,0.5)';
+    wrap.style.boxShadow   = '0 0 0 3px rgba(224,92,92,0.08)';
+    document.getElementById('gate-pw-error').style.display = 'block';
+    document.getElementById('gate-input').value = '';
+    wrap.style.transform = 'translateX(-6px)';
+    setTimeout(() => { wrap.style.transform = 'translateX(6px)';  }, 60);
+    setTimeout(() => { wrap.style.transform = 'translateX(-4px)'; }, 120);
+    setTimeout(() => { wrap.style.transform = 'translateX(0)'; wrap.style.transition = 'all .2s'; }, 180);
+  }
+};
+
+// ── Step 2: show Telegram widget ─────────────────────────────────────────────
+function showTelegramStep() {
+  const step2 = document.getElementById('gate-step2');
+  step2.style.display = 'block';
+  step2.classList.add('visible');
+
+  const script = document.createElement('script');
+  script.async = true;
+  script.src   = 'https://telegram.org/js/telegram-widget.js?22';
+  script.setAttribute('data-telegram-login',  TALI_BOT_USERNAME);
+  script.setAttribute('data-size',            'large');
+  script.setAttribute('data-radius',          '10');
+  script.setAttribute('data-onauth',          'onTelegramAuth(user)');
+  script.setAttribute('data-request-access',  'write');
+  script.onload = () => { document.getElementById('tg-widget-loading').style.display = 'none'; };
+  document.getElementById('tg-widget-wrap').appendChild(script);
+}
+
+// ── Called by Telegram widget ─────────────────────────────────────────────────
+window.onTelegramAuth = async function(tgUser) {
+  document.getElementById('gate-tg-error').style.display = 'none';
+  document.getElementById('gate-signing').style.display  = 'block';
+  document.getElementById('tg-widget-wrap').style.opacity = '0.4';
+
+  try {
+    const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
+
+    // 1. Verify with backend + upsert user
+    const res = await fetch(baseUrl + '/auth/telegram', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(tgUser),
+    });
+    if (!res.ok) throw new Error('auth_failed');
+    const data = await res.json();
+    if (!data.ok) throw new Error('auth_rejected');
+
+    const user = data.user;
+
+    // 2. Persist user
+    localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
+
+    // 3. Auto-link known accounts
+    const knownAccounts = [
+      { id: '1917136', type: '2step_master', size: 10000, label: '10K Master' },
+      { id: '1886220', type: '2step_master', size: 10000, label: '10K Demo'   },
+    ];
+    for (const acct of knownAccounts) {
+      try {
+        const params = new URLSearchParams({
+          telegram_user_id: user.telegramUserId,
+          account_id:       acct.id,
+          account_type:     acct.type,
+          account_size:     acct.size,
+          label:            acct.label,
+          broker:           'fundingpips',
+        });
+        await fetch(baseUrl + '/auth/link-account?' + params.toString(), { method: 'POST' });
+      } catch(e) { /* non-fatal */ }
+    }
+
+    // 4. Update topbar
+    applyUserToTopbar(user);
+
+    // 5. Dismiss gate
+    const gate = document.getElementById('gate');
+    gate.classList.add('unlocking');
+    setTimeout(() => gate.style.display = 'none', 450);
+
+  } catch(e) {
+    document.getElementById('gate-signing').style.display  = 'none';
+    document.getElementById('tg-widget-wrap').style.opacity = '1';
+    document.getElementById('gate-tg-error').style.display = 'block';
+    console.error('TaliTrade: Telegram auth failed', e);
+  }
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getTaliUser() {
+  try {
+    const raw = localStorage.getItem(TALI_USER_KEY);
+    if (!raw) return null;
+    const u = JSON.parse(raw);
+    return u?.telegramUserId ? u : null;
+  } catch(e) { localStorage.removeItem(TALI_USER_KEY); return null; }
+}
+
+function applyUserToTopbar(user) {
+  const profileInner = document.querySelector('.tb-profile-inner');
+  const displayName  = user.firstName || user.username || 'Trader';
+
+  if (profileInner) {
+    if (user.photoUrl) {
+      const img = document.createElement('img');
+      img.src = user.photoUrl;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+      profileInner.innerHTML = '';
+      profileInner.appendChild(img);
+    } else {
+      profileInner.textContent = (displayName[0] || 'T').toUpperCase();
+    }
+  }
+
+  const btnProfile = document.getElementById('btnProfile');
+  if (btnProfile) {
+    btnProfile.title   = displayName + ' · tap to sign out';
+    btnProfile.onclick = (e) => {
+      e.stopPropagation();
+      if (confirm('Sign out of TaliTrade?')) {
+        localStorage.removeItem(TALI_USER_KEY);
+        location.reload();
+      }
+    };
+  }
+}
 </script>
 <!-- ═══════════════════════════════════════════════════════════ -->
 
