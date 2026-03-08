@@ -1377,8 +1377,8 @@ async def receive_extension_data(data: ExtensionData):
         "last_updated": datetime.utcnow().isoformat(),
     }
 
-    # Auto-link account to telegram user if telegram_user_id is provided
-    tg_uid = data.dict().get("telegramUserId")
+    # Auto-link account to telegram user if telegramUserId is provided
+    tg_uid = data.telegramUserId
     if tg_uid and account_id != "unknown":
         try:
             await db_link_account(
