@@ -248,6 +248,36 @@ async def ensure_users_tables():
     logger.info("users + prop_accounts tables ready")
 
 
+async def ensure_waitlist_table():
+    """Create waitlist table for landing page signups."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS waitlist (
+                id                SERIAL PRIMARY KEY,
+                telegram_username TEXT UNIQUE NOT NULL,
+                joined_at         TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+    logger.info("waitlist table ready")
+
+
+async def ensure_demo_scores_table():
+    """Create demo_scores table for landing page leaderboard."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS demo_scores (
+                telegram_user_id   TEXT PRIMARY KEY,
+                telegram_username  TEXT NOT NULL,
+                photo_url          TEXT,
+                best_pnl           FLOAT NOT NULL DEFAULT 0,
+                updated_at         TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+    logger.info("demo_scores table ready")
+
+
 async def db_upsert_user(tg_data: dict) -> dict:
     """Insert or update a user from Telegram login data. Returns the user row."""
     from app.core.database import engine
@@ -679,6 +709,8 @@ async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
     await ensure_trades_table()
     await ensure_users_tables()
+    await ensure_waitlist_table()
+    await ensure_demo_scores_table()
     await setup_telegram_webhook()
     tasks = [
         asyncio.create_task(news_scheduler()),
@@ -722,8 +754,87 @@ async def health_db():
     return {"status": "ok", "database": "connected"}
 
 
+# ─── Waitlist ─────────────────────────────────────────────────────────────────
+class WaitlistJoin(BaseModel):
+    telegram_username: str
 
-# ─── Telegram Auth ────────────────────────────────────────────────────────────
+@app.post("/waitlist")
+async def join_waitlist(data: WaitlistJoin):
+    """Add a Telegram username to the waitlist. Returns current total count."""
+    username = data.telegram_username.strip().lstrip("@")
+    if not username or len(username) < 5:
+        return JSONResponse(status_code=422, content={"detail": "Invalid username"})
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO waitlist (telegram_username)
+            VALUES (:u)
+            ON CONFLICT (telegram_username) DO NOTHING
+        """), {"u": username})
+        result = await conn.execute(text("SELECT COUNT(*) FROM waitlist"))
+        count = result.scalar()
+    logger.info(f"Waitlist join: @{username} — total {count}")
+    return {"ok": True, "count": int(count)}
+
+@app.get("/waitlist/count")
+async def waitlist_count():
+    """Return current waitlist size (used by landing page on load)."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text("SELECT COUNT(*) FROM waitlist"))
+        count = result.scalar()
+    return {"count": int(count or 0)}
+
+
+# ─── Demo Leaderboard ─────────────────────────────────────────────────────────
+class DemoScore(BaseModel):
+    telegram_user_id: str
+    telegram_username: str
+    photo_url: str | None = None
+    pnl: float
+
+@app.post("/demo/score")
+async def save_demo_score(data: DemoScore):
+    """
+    Save a demo trade P&L. Only updates the row if the new pnl beats
+    the existing best — so each user appears on the leaderboard once
+    with their personal best score.
+    """
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            INSERT INTO demo_scores (telegram_user_id, telegram_username, photo_url, best_pnl, updated_at)
+            VALUES (:uid, :username, :photo, :pnl, NOW())
+            ON CONFLICT (telegram_user_id) DO UPDATE SET
+                telegram_username = EXCLUDED.telegram_username,
+                photo_url         = COALESCE(EXCLUDED.photo_url, demo_scores.photo_url),
+                best_pnl          = GREATEST(demo_scores.best_pnl, EXCLUDED.best_pnl),
+                updated_at        = CASE
+                    WHEN EXCLUDED.best_pnl > demo_scores.best_pnl THEN NOW()
+                    ELSE demo_scores.updated_at
+                END
+        """), {
+            "uid":      data.telegram_user_id,
+            "username": data.telegram_username,
+            "photo":    data.photo_url,
+            "pnl":      data.pnl,
+        })
+    logger.info(f"Demo score saved: @{data.telegram_username} pnl={data.pnl}")
+    return {"ok": True}
+
+@app.get("/demo/leaderboard")
+async def demo_leaderboard(limit: int = 10):
+    """Return top demo traders by best P&L, one row per Telegram user."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text("""
+            SELECT telegram_user_id, telegram_username, photo_url, best_pnl
+            FROM demo_scores
+            ORDER BY best_pnl DESC
+            LIMIT :lim
+        """), {"lim": min(limit, 50)})
+        rows = [dict(r) for r in result.mappings().all()]
+    return {"leaderboard": rows}
 class TelegramAuthData(BaseModel):
     id: int
     first_name: str | None = None
