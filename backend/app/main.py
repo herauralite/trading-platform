@@ -202,8 +202,10 @@ async def ensure_trades_table():
 
 
 async def ensure_users_tables():
-    """Create users and prop_accounts tables."""
+    """Create users and prop_accounts tables — separate connections so the FK resolves."""
     from app.core.database import engine
+
+    # Step 1: users table must be committed before prop_accounts can reference it
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
@@ -216,20 +218,24 @@ async def ensure_users_tables():
                 last_seen_at        TIMESTAMPTZ DEFAULT NOW()
             )
         """))
+
+    # Step 2: prop_accounts — own connection, users is now visible
+    async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS prop_accounts (
-                id              SERIAL PRIMARY KEY,
+                id               SERIAL PRIMARY KEY,
                 telegram_user_id TEXT NOT NULL REFERENCES users(telegram_user_id) ON DELETE CASCADE,
-                account_id      TEXT NOT NULL,
-                broker          TEXT NOT NULL DEFAULT 'fundingpips',
-                account_type    TEXT,
-                account_size    INTEGER,
-                label           TEXT,
-                is_active       BOOLEAN DEFAULT TRUE,
-                created_at      TIMESTAMPTZ DEFAULT NOW(),
+                account_id       TEXT NOT NULL,
+                broker           TEXT NOT NULL DEFAULT 'fundingpips',
+                account_type     TEXT,
+                account_size     INTEGER,
+                label            TEXT,
+                is_active        BOOLEAN DEFAULT TRUE,
+                created_at       TIMESTAMPTZ DEFAULT NOW(),
                 UNIQUE(telegram_user_id, account_id)
             )
         """))
+
     logger.info("users + prop_accounts tables ready")
 
 
