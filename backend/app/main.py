@@ -854,16 +854,36 @@ async def daily_summary_scheduler():
                 target    = now_et.replace(hour=17, minute=5, second=0, microsecond=0)
                 if abs((now_et - target).total_seconds()) <= 60 and today_key not in daily_summary_sent:
                     daily_summary_sent.add(today_key)
-                    await send_daily_summary(today_key)
+                    # Broadcast to every registered user who has linked accounts
+                    from app.core.database import engine
+                    try:
+                        async with engine.connect() as conn:
+                            result = await conn.execute(text(
+                                "SELECT DISTINCT telegram_user_id FROM prop_accounts WHERE is_active=TRUE"
+                            ))
+                            user_ids = [r[0] for r in result.fetchall()]
+                    except Exception:
+                        user_ids = []
+                    if user_ids:
+                        for uid in user_ids:
+                            try:
+                                await send_daily_summary(today_key, tg_uid=uid)
+                            except Exception as e:
+                                logger.error(f"Daily summary for {uid}: {e}")
+                    else:
+                        await send_daily_summary(today_key)
         except Exception as e:
             logger.error(f"Daily summary scheduler: {e}")
         await asyncio.sleep(60)
 
 
-async def send_daily_summary(summary_date: str):
-    # Use the most active account; fall back to PRIMARY_ACCOUNT env var
-    acct_id  = PRIMARY_ACCOUNT if PRIMARY_ACCOUNT in account_data_store \
-               else (list(account_data_store.keys())[0] if account_data_store else PRIMARY_ACCOUNT)
+async def send_daily_summary(summary_date: str, chat_id: str = None, tg_uid: str = None):
+    # Use the requesting user's primary account if tg_uid is provided, else fall back to global primary
+    if tg_uid:
+        acct_id = await get_user_primary_account(tg_uid)
+    else:
+        acct_id  = PRIMARY_ACCOUNT if PRIMARY_ACCOUNT in account_data_store \
+                   else (list(account_data_store.keys())[0] if account_data_store else PRIMARY_ACCOUNT)
     rows     = await db_get_trades_for_date(summary_date, account_id=acct_id)
     trades   = [row_to_trade(r) for r in rows]
     acct     = account_data_store.get(acct_id, {})
@@ -916,7 +936,8 @@ async def send_daily_summary(summary_date: str):
                     else f"{ri(d_pct)} Daily resets midnight GMT+1 🔄\n{ri(o_pct)} Overall: {o_pct}%  (${o_rem:,.0f} remaining)"
         await send_telegram(
             f"😴 <b>Market Close — {summary_date}</b>\n{'─'*28}\n\nNo trades today.\n\n"
-            f"{bal_line}{'─'*28}\n{wknd_note}\n\n{'─'*28}\n{format_payout_status(ev, short=True)}"
+            f"{bal_line}{'─'*28}\n{wknd_note}\n\n{'─'*28}\n{format_payout_status(ev, short=True)}",
+            chat_id=chat_id,
         )
         return
 
@@ -934,7 +955,8 @@ async def send_daily_summary(summary_date: str):
         f"  Avg W: +{avg_win:.2f}  |  Avg L: {avg_loss:.2f}\n\n<b>Trades</b>\n{trade_lines}\n\n"
         f"{'─'*28}\n<b>Risk Tomorrow</b>\n{ri(d_pct)} Daily: {d_pct}%  {rb(d_pct)}  (${d_rem:,.0f} left)\n"
         f"{ri(o_pct)} Overall: {o_pct}%  {rb(o_pct)}  (${o_rem:,.0f} left)\n\n"
-        f"{bal_line}{'─'*28}\n{format_payout_status(ev, short=True)}\n\nSee you tomorrow 🎯"
+        f"{bal_line}{'─'*28}\n{format_payout_status(ev, short=True)}\n\nSee you tomorrow 🎯",
+        chat_id=chat_id,
     )
     logger.info(f"Daily summary sent: {summary_date} | P&L: {total_pnl:.2f}")
 
@@ -1168,13 +1190,15 @@ async def telegram_webhook(request: Request):
             await fn(chat_id, tg_uid=tg_uid); return {"ok": True}
 
     if cmd in ["/payout",  "/payout@talitrade_bot"]:    await handle_payout(chat_id, tg_uid=tg_uid)
-    elif cmd in ["/summary", "/summary@talitrade_bot"]:  await send_daily_summary(date.today().isoformat(), tg_uid=tg_uid)
+    elif cmd in ["/summary", "/summary@talitrade_bot"]:  await send_daily_summary(date.today().isoformat(), chat_id=chat_id, tg_uid=tg_uid)
+    elif cmd in ["/week",    "/week@talitrade_bot"]:     await send_weekly_summary(chat_id=chat_id, tg_uid=tg_uid)
     elif cmd in ["/help",    "/help@talitrade_bot"]:
         await send_telegram(
             "🤖 <b>TaliTrade Commands</b>\n\n"
             "/status  — Live risk snapshot\n/today   — Today's trades & P&L\n"
             "/journal — Last 10 trades\n/news    — Upcoming high-impact news\n"
             "/payout  — Payout eligibility check\n/summary — Today's market-close recap\n"
+            "/week    — Weekly performance report\n"
             "/help    — This message", chat_id=chat_id,
         )
     return {"ok": True}
@@ -1313,6 +1337,75 @@ async def handle_journal(chat_id: str, tg_uid: str = None):
         + f"\n\n{'─'*28}\nP&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | WR: {round(wins/len(recent)*100)}%",
         chat_id=chat_id,
     )
+
+
+# ─── Weekly summary ────────────────────────────────────────────────────────────
+async def send_weekly_summary(chat_id: str = None, tg_uid: str = None):
+    """Send a weekly P&L and performance digest to the requesting user."""
+    acct_id = await get_user_primary_account(tg_uid) if tg_uid else get_primary_account_id()
+    from app.core.database import engine
+    # Last 7 calendar days
+    week_start = (date.today() - timedelta(days=6)).isoformat()
+    async with engine.connect() as conn:
+        result = await conn.execute(
+            text(f"""
+                SELECT * FROM trades
+                WHERE account_id=:a AND COALESCE(closed_at, logged_at) >= :ws
+                AND (source='scraper' OR source IS NULL)
+                ORDER BY COALESCE(closed_at, logged_at) ASC
+            """),
+            {"a": acct_id, "ws": week_start},
+        )
+        rows = [dict(r) for r in result.mappings().all()]
+    trades = [row_to_trade(r) for r in rows]
+
+    if not trades:
+        await send_telegram(
+            f"📅 <b>Weekly Report</b>\n{'─'*28}\n\nNo trades this week.",
+            chat_id=chat_id,
+        )
+        return
+
+    pnls      = [t.get("pnl") or 0 for t in trades]
+    total_pnl = sum(pnls)
+    wins      = [p for p in pnls if p > 0]
+    losses    = [p for p in pnls if p < 0]
+    win_rate  = round(len(wins) / len(pnls) * 100)
+    gp, gl    = sum(wins), abs(sum(losses))
+    pf        = round(gp / gl, 2) if gl > 0 else "∞"
+
+    # Best and worst symbols
+    sym_pnl: dict = {}
+    for t in trades:
+        s = t.get("symbol") or "?"
+        sym_pnl[s] = sym_pnl.get(s, 0) + (t.get("pnl") or 0)
+    best_sym  = max(sym_pnl, key=sym_pnl.get)
+    worst_sym = min(sym_pnl, key=sym_pnl.get)
+
+    # Distinct trading days this week
+    trading_days = len({(t.get("closedAt") or t.get("loggedAt") or "")[:10] for t in trades if (t.get("closedAt") or t.get("loggedAt"))})
+
+    acct     = account_data_store.get(acct_id, {})
+    acct_sz  = acct.get("accountSize") or 10000
+    acct_typ = (acct.get("accountType") or "").replace("_", " ").title()
+    ev       = await evaluate_payout_eligibility(acct_id, acct)
+    icon     = "🟢" if total_pnl > 0 else ("🔴" if total_pnl < 0 else "⚪")
+
+    await send_telegram(
+        f"{icon} <b>Weekly Report</b>\n"
+        f"<i>{acct_typ} · ${acct_sz//1000}K · {acct_id}</i>\n"
+        f"<i>{week_start} → {date.today().isoformat()}</i>\n{'─'*28}\n\n"
+        f"📊 <b>Performance</b>\n"
+        f"  Net P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b>\n"
+        f"  Trades: {len(trades)}  (W:{len(wins)} L:{len(losses)})\n"
+        f"  Win Rate: {win_rate}%  |  PF: {pf}\n"
+        f"  Trading Days: {trading_days}\n\n"
+        f"🏆 Best Symbol:  {best_sym}  ({'+' if sym_pnl[best_sym]>=0 else ''}{sym_pnl[best_sym]:.2f})\n"
+        f"📉 Worst Symbol: {worst_sym}  ({'+' if sym_pnl[worst_sym]>=0 else ''}{sym_pnl[worst_sym]:.2f})\n\n"
+        f"{'─'*28}\n{format_payout_status(ev, short=True)}",
+        chat_id=chat_id,
+    )
+    logger.info(f"Weekly summary sent: {acct_id} | P&L: {total_pnl:.2f}")
 
 
 # ─── Extension endpoints ──────────────────────────────────────────────────────
@@ -1554,3 +1647,57 @@ async def test_db():
     async with engine.connect() as conn:
         count = (await conn.execute(text("SELECT COUNT(*) FROM trades"))).scalar()
     return {"status": "ok", "trades_in_db": count}
+
+
+# ─── Leaderboard ──────────────────────────────────────────────────────────────
+@app.get("/leaderboard")
+async def get_leaderboard(limit: int = 10):
+    """
+    Return top traders ranked by total realised P&L (scraper source).
+    Names are taken from the users table; anonymised to first-name only.
+    """
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text("""
+            SELECT
+                pa.telegram_user_id,
+                COALESCE(u.first_name, 'Trader') AS display_name,
+                pa.account_id,
+                pa.account_type,
+                pa.account_size,
+                COUNT(t.id)                            AS trade_count,
+                COALESCE(SUM(t.pnl), 0)               AS total_pnl,
+                COALESCE(SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
+                COALESCE(SUM(CASE WHEN t.pnl <= 0 THEN 1 ELSE 0 END), 0) AS losses
+            FROM prop_accounts pa
+            LEFT JOIN trades t
+                   ON t.account_id = pa.account_id
+                  AND (t.source = 'scraper' OR t.source IS NULL)
+            LEFT JOIN users u
+                   ON u.telegram_user_id = pa.telegram_user_id
+            WHERE pa.is_active = TRUE
+            GROUP BY pa.telegram_user_id, u.first_name, pa.account_id, pa.account_type, pa.account_size
+            ORDER BY total_pnl DESC
+            LIMIT :lim
+        """), {"lim": limit})
+        rows = [dict(r) for r in result.mappings().all()]
+
+    leaderboard = []
+    for i, row in enumerate(rows):
+        sz        = row.get("account_size") or 10000
+        total_pnl = float(row.get("total_pnl") or 0)
+        trades    = int(row.get("trade_count") or 0)
+        wins      = int(row.get("wins") or 0)
+        win_rate  = round(wins / trades * 100) if trades else 0
+        leaderboard.append({
+            "rank":         i + 1,
+            "displayName":  row.get("display_name") or "Trader",
+            "accountId":    row.get("account_id"),
+            "accountType":  row.get("account_type"),
+            "accountSize":  sz,
+            "totalPnl":     round(total_pnl, 2),
+            "pnlPct":       round(total_pnl / sz * 100, 2) if sz else 0,
+            "tradeCount":   trades,
+            "winRate":      win_rate,
+        })
+    return {"leaderboard": leaderboard, "total": len(leaderboard)}
