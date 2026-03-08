@@ -605,32 +605,15 @@ window.onTelegramAuth = async function(tgUser) {
 
     const user = data.user;
 
-    // 2. Persist user
+    // 2. Persist user — account linking is handled by the extension,
+    //    which reads the actual account ID from the FundingPips page
+    //    and calls /auth/link-account once it's detected.
     localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
 
-    // 3. Auto-link known accounts
-    const knownAccounts = [
-      { id: '1917136', type: '2step_master', size: 10000, label: '10K Master' },
-      { id: '1886220', type: '2step_master', size: 10000, label: '10K Demo'   },
-    ];
-    for (const acct of knownAccounts) {
-      try {
-        const params = new URLSearchParams({
-          telegram_user_id: user.telegramUserId,
-          account_id:       acct.id,
-          account_type:     acct.type,
-          account_size:     acct.size,
-          label:            acct.label,
-          broker:           'fundingpips',
-        });
-        await fetch(baseUrl + '/auth/link-account?' + params.toString(), { method: 'POST' });
-      } catch(e) { /* non-fatal */ }
-    }
-
-    // 4. Update topbar
+    // 3. Update topbar
     applyUserToTopbar(user);
 
-    // 5. Dismiss gate
+    // 4. Dismiss gate
     const gate = document.getElementById('gate');
     gate.classList.add('unlocking');
     setTimeout(() => gate.style.display = 'none', 450);
