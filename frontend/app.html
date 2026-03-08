@@ -529,6 +529,8 @@ const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each
 
   if (pwOk && !tgUser) {
     // Password already done this session — skip to Telegram step
+    document.getElementById('gate-step1').style.display = 'none';
+    document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
     showTelegramStep();
     return;
   }
@@ -605,15 +607,66 @@ window.onTelegramAuth = async function(tgUser) {
 
     const user = data.user;
 
-    // 2. Persist user — account linking is handled by the extension,
-    //    which reads the actual account ID from the FundingPips page
-    //    and calls /auth/link-account once it's detected.
+    // 2. Persist user
     localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
 
-    // 3. Update topbar
+    // 2b. Push telegramUserId into the extension's chrome.storage.local so
+    //     content.js (which runs on fundingpips.com, a different origin) can
+    //     read it for account linking. Requires:
+    //       - background.js service worker in the extension
+    //       - manifest.json: "externally_connectable": { "matches": ["https://talitrade.com/*"] }
+    //       - TALI_EXTENSION_ID set below to your extension's Chrome ID
+    try {
+      const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
+      if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage(
+          TALI_EXTENSION_ID,
+          { type: 'TALI_SET_UID', telegramUserId: user.telegramUserId },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn('TaliTrade: extension message failed (extension not installed or ID wrong)');
+            } else {
+              console.log('TaliTrade: telegramUserId sent to extension', response);
+            }
+          }
+        );
+      }
+    } catch(e) { /* chrome not available */ }
+
+    // 3. Auto-link accounts currently detected by the extension.
+    //    content.js runs on fundingpips.com — a different origin — so localStorage
+    //    is NOT shared. Instead we read /extension/status (already being populated
+    //    by the extension's 5s heartbeat) and link whatever accounts are live right now.
+    //    The extension will also retry on subsequent polls via /extension/data
+    //    once telegramUserId is propagated through chrome.storage (see content.js).
+    try {
+      const statusRes = await fetch(baseUrl + '/extension/status');
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        const liveAccounts = statusData.accounts || {};
+        for (const [acctId, acct] of Object.entries(liveAccounts)) {
+          const params = new URLSearchParams({
+            telegram_user_id: user.telegramUserId,
+            account_id:       acctId,
+            account_type:     acct.accountType  || '',
+            account_size:     acct.accountSize  || 0,
+            label:            acct.accountLabel || acctId,
+            broker:           'fundingpips',
+          });
+          await fetch(baseUrl + '/auth/link-account?' + params.toString(), { method: 'POST' });
+          console.log(`TaliTrade: linked live account ${acctId} to user ${user.telegramUserId}`);
+        }
+      }
+    } catch(e) {
+      // Non-fatal — extension may not be running at login time.
+      // Accounts will be linked on next extension poll via /extension/data.
+      console.warn('TaliTrade: could not auto-link accounts at login time', e);
+    }
+
+    // 4. Update topbar
     applyUserToTopbar(user);
 
-    // 4. Dismiss gate
+    // 5. Dismiss gate
     const gate = document.getElementById('gate');
     gate.classList.add('unlocking');
     setTimeout(() => gate.style.display = 'none', 450);
@@ -659,6 +712,14 @@ function applyUserToTopbar(user) {
       e.stopPropagation();
       if (confirm('Sign out of TaliTrade?')) {
         localStorage.removeItem(TALI_USER_KEY);
+        sessionStorage.removeItem(TALI_PW_KEY);
+        // Also clear from extension storage if available
+        try {
+          const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';  // ← same ID as above
+          if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+            chrome.runtime.sendMessage(TALI_EXTENSION_ID, { type: 'TALI_CLEAR_UID' }, () => {});
+          }
+        } catch(e) {}
         location.reload();
       }
     };
