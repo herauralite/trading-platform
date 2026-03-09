@@ -846,6 +846,17 @@ async def demo_leaderboard(limit: int = 10):
         """), {"lim": min(limit, 50)})
         rows = [dict(r) for r in result.mappings().all()]
     return {"leaderboard": rows}
+
+
+@app.get("/auth/telegram/config")
+async def telegram_auth_config():
+    """Expose Telegram widget config so frontend is not hardcoded to one bot username."""
+    return {
+        "botUsername": os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@"),
+        "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
+    }
+
+
 class TelegramAuthData(BaseModel):
     id: int
     first_name: str | None = None
