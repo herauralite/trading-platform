@@ -342,6 +342,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .leaderboard-item{display:flex;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);gap:12px;transition:background .15s;}
 .leaderboard-item:last-child{border-bottom:none;}
 .leaderboard-item:hover{background:var(--s2);}
+.leaderboard-you{background:rgba(42,171,238,0.06)!important;border-left:2px solid var(--blue);}
 .lb-rank{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;width:24px;color:var(--t3);}
 .lb-rank.gold{color:var(--gold);}.lb-rank.silver{color:#c0c0c0;}.lb-rank.bronze{color:#cd7f32;}
 .lb-avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;flex-shrink:0;}
@@ -426,8 +427,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <body>
 
 <!-- ═══════════════════════════════════════════════════════════════
-     DEVELOPER GATE — remove this block when app goes public
-     Password is set in the script below: TALI_DEV_PASSWORD
+     TWO-STEP GATE
+     Step 1: Dev password  (set TALI_DEV_PASSWORD below)
+     Step 2: Telegram link (set TALI_BOT_USERNAME below)
+     Register domain with BotFather: /setdomain → talitrade.com
 ═══════════════════════════════════════════════════════════════ -->
 <div id="gate" style="
   position:fixed;inset:0;z-index:99999;
@@ -435,9 +438,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   display:flex;align-items:center;justify-content:center;
   padding:24px;
 ">
-  <!-- Subtle grid texture -->
   <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(42,171,238,0.03) 1px,transparent 1px),linear-gradient(90deg,rgba(42,171,238,0.03) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;"></div>
-  <!-- Glow orb -->
   <div style="position:absolute;top:20%;left:50%;transform:translateX(-50%);width:500px;height:500px;background:radial-gradient(circle,rgba(42,171,238,0.07),transparent 65%);pointer-events:none;"></div>
 
   <div style="position:relative;width:100%;max-width:380px;">
@@ -447,45 +448,51 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#2aabee,#1a8bc4);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0;box-shadow:0 8px 24px rgba(42,171,238,0.3);">T</div>
       <div>
         <div style="font-size:17px;font-weight:700;color:#e8f4fd;letter-spacing:0.2px;">TaliTrade</div>
-        <div style="font-size:11px;color:#2aabee;letter-spacing:0.4px;font-weight:500;">Developer Access</div>
+        <div id="gate-subtitle" style="font-size:11px;color:#2aabee;letter-spacing:0.4px;font-weight:500;">Developer Access</div>
       </div>
     </div>
 
-    <!-- Card -->
-    <div style="background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
-
+    <!-- ── STEP 1: Password ── -->
+    <div id="gate-step1" style="background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
       <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Private Beta</div>
       <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Enter the access code to continue.</div>
 
-      <!-- Input -->
       <div id="gate-input-wrap" style="display:flex;align-items:center;background:#17212b;border:1.5px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;transition:border-color .2s,box-shadow .2s;margin-bottom:12px;">
         <svg style="margin-left:14px;flex-shrink:0;opacity:0.4;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8bafc7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <input
-          id="gate-input"
-          type="password"
-          placeholder="Access code"
-          autocomplete="off"
-          style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f4fd;font-family:'JetBrains Mono',monospace;caret-color:#2aabee;letter-spacing:2px;"
-        />
+        <input id="gate-input" type="password" placeholder="Access code" autocomplete="off"
+          style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f4fd;font-family:'JetBrains Mono',monospace;caret-color:#2aabee;letter-spacing:2px;" />
         <div id="gate-check" style="padding:0 14px;display:none;">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4dcd8a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
         </div>
       </div>
 
-      <!-- Error -->
-      <div id="gate-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;padding-left:4px;">Incorrect access code. Try again.</div>
+      <div id="gate-pw-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;padding-left:4px;">Incorrect access code. Try again.</div>
 
-      <!-- Button -->
-      <button id="gate-btn" onclick="gateSubmit()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2aabee,#1a8bc4);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;letter-spacing:0.3px;transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s;font-family:'Inter',sans-serif;">
-        Enter Platform →
+      <button onclick="gateSubmit()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2aabee,#1a8bc4);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;letter-spacing:0.3px;transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s;font-family:'Inter',sans-serif;">
+        Continue →
       </button>
-
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
         Not a developer? <a href="https://talitrade.com" style="color:#2aabee;text-decoration:none;">talitrade.com</a>
       </div>
     </div>
 
-    <!-- Footer -->
+    <!-- ── STEP 2: Telegram ── -->
+    <div id="gate-step2" style="display:none;background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
+      <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Link Telegram</div>
+      <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Connect your Telegram account to enable alerts and account linking.</div>
+
+      <div id="tg-widget-wrap" style="display:flex;justify-content:center;margin-bottom:20px;min-height:44px;align-items:center;">
+        <div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>
+      </div>
+
+      <div id="gate-tg-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;text-align:center;">Authentication failed. Please try again.</div>
+      <div id="gate-signing" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
+
+      <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
+        Your Telegram ID is used only for alerts. <a href="https://talitrade.com" style="color:#2aabee;text-decoration:none;">Privacy</a>
+      </div>
+    </div>
+
     <div style="text-align:center;margin-top:24px;font-size:10px;color:#2b3a4d;letter-spacing:0.5px;text-transform:uppercase;">
       TaliTrade Platform v4.0 · Internal Build
     </div>
@@ -493,66 +500,335 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 </div>
 
 <style>
-#gate-input-wrap:focus-within {
-  border-color: rgba(42,171,238,0.45) !important;
-  box-shadow: 0 0 0 3px rgba(42,171,238,0.08) !important;
-}
-#gate-btn:hover { transform: translateY(-2px); filter: brightness(1.1); }
-#gate-btn:active { transform: translateY(0); filter: brightness(0.95); }
-@keyframes gateOut {
-  from { opacity:1; transform:scale(1); }
-  to   { opacity:0; transform:scale(1.04); pointer-events:none; }
-}
+#gate-input-wrap:focus-within { border-color:rgba(42,171,238,0.45)!important; box-shadow:0 0 0 3px rgba(42,171,238,0.08)!important; }
+@keyframes gateOut { from{opacity:1;transform:scale(1);} to{opacity:0;transform:scale(1.04);pointer-events:none;} }
+@keyframes stepIn  { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
 #gate.unlocking { animation: gateOut .45s cubic-bezier(.23,1,.32,1) forwards; }
+#gate-step2.visible { animation: stepIn .3s cubic-bezier(.23,1,.32,1) both; }
 </style>
 
 <script>
+// ── CONFIG ───────────────────────────────────────────────────────────────────
+const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
+const TALI_CONFIG = window.__TALI_CONFIG__ || {};
+const TALI_BOT_USERNAME = String(TALI_CONFIG.botUsername || 'TaliTradeBot').replace(/^@/, '').trim();
+const TALI_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__.botUsername' : 'hardcoded_fallback';
+// ────────────────────────────────────────────────────────────────────────────
+
+const TALI_USER_KEY    = 'tali_user_v1';
+const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each browser session
+const TALI_TG_DONE_KEY = 'tali_tg_done';       // sessionStorage — require Telegram every session
+
+let taliTelegramAuthStarted = false;
+let taliWidgetFailureTimer = null;
+
+function setGateTelegramError(message) {
+  const errEl = document.getElementById('gate-tg-error');
+  errEl.textContent = message;
+  errEl.style.display = 'block';
+}
+
+function validateTelegramLoginConfig() {
+  const issues = [];
+  if (!TALI_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(TALI_BOT_USERNAME)) {
+    issues.push('bot_username_invalid');
+  }
+  if (window.location.hostname === 'talitrade.com' || window.location.hostname === 'www.talitrade.com') {
+    if (TALI_BOT_USERNAME.toLowerCase().includes('change') || TALI_BOT_USERNAME.toLowerCase().includes('your')) {
+      issues.push('bot_username_placeholder_like');
+    }
+  }
+  return issues;
+}
+
+function parseTelegramAuthFailure(res, body) {
+  const reason = body?.reason || body?.detail || `http_${res.status}`;
+  if (reason === 'hash_mismatch') {
+    return 'Telegram verification failed (hash mismatch). Check bot username and BotFather /setdomain talitrade.com.';
+  }
+  if (reason === 'auth_expired') {
+    return 'Telegram login expired. Please try again.';
+  }
+  if (reason === 'missing_bot_token') {
+    return 'Server Telegram token is missing. Please contact support.';
+  }
+  return `Telegram login failed (${reason}). Please retry.`;
+}
+
+// ── On load: check what gates have already been passed ───────────────────────
 (function() {
-  // ── Set your password here ──────────────────────────────────
-  const TALI_DEV_PASSWORD = 'tali2024dev';
-  // ───────────────────────────────────────────────────────────
+  const pwOk = sessionStorage.getItem(TALI_PW_KEY) === '1';
+  // Telegram is ALWAYS required every session — no skipping via localStorage
 
-  const SESSION_KEY = 'tali_dev_unlocked';
-
-  // Already unlocked this session?
-  if (sessionStorage.getItem(SESSION_KEY) === '1') {
-    document.getElementById('gate').style.display = 'none';
+  if (pwOk) {
+    // Password already done this session — skip straight to Telegram step
+    document.getElementById('gate-step1').style.display = 'none';
+    document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
+    showTelegramStep();
+    return;
   }
 
+  // Default: show password step
   document.getElementById('gate-input').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') gateSubmit();
-    document.getElementById('gate-error').style.display = 'none';
+    document.getElementById('gate-pw-error').style.display = 'none';
     document.getElementById('gate-input-wrap').style.borderColor = '';
   });
-
   document.getElementById('gate-input').addEventListener('input', function() {
-    const valid = this.value.length > 3;
-    document.getElementById('gate-check').style.display = valid ? 'flex' : 'none';
+    document.getElementById('gate-check').style.display = this.value.length > 3 ? 'flex' : 'none';
   });
-
-  window.gateSubmit = function() {
-    const val = document.getElementById('gate-input').value;
-    if (val === TALI_DEV_PASSWORD) {
-      sessionStorage.setItem(SESSION_KEY, '1');
-      const gate = document.getElementById('gate');
-      gate.classList.add('unlocking');
-      setTimeout(() => gate.style.display = 'none', 450);
-    } else {
-      const wrap = document.getElementById('gate-input-wrap');
-      const err = document.getElementById('gate-error');
-      wrap.style.borderColor = 'rgba(224,92,92,0.5)';
-      wrap.style.boxShadow = '0 0 0 3px rgba(224,92,92,0.08)';
-      err.style.display = 'block';
-      document.getElementById('gate-input').value = '';
-      // Shake
-      wrap.style.animation = 'none';
-      wrap.style.transform = 'translateX(-6px)';
-      setTimeout(() => { wrap.style.transform = 'translateX(6px)'; }, 60);
-      setTimeout(() => { wrap.style.transform = 'translateX(-4px)'; }, 120);
-      setTimeout(() => { wrap.style.transform = 'translateX(0)'; wrap.style.transition = 'all .2s'; }, 180);
-    }
-  };
 })();
+
+// ── Step 1: password submit ───────────────────────────────────────────────────
+window.gateSubmit = function() {
+  const val = document.getElementById('gate-input').value;
+  if (val === TALI_DEV_PASSWORD) {
+    sessionStorage.setItem(TALI_PW_KEY, '1');
+    // Slide to step 2
+    document.getElementById('gate-step1').style.display = 'none';
+    document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
+    showTelegramStep();
+  } else {
+    const wrap = document.getElementById('gate-input-wrap');
+    wrap.style.borderColor = 'rgba(224,92,92,0.5)';
+    wrap.style.boxShadow   = '0 0 0 3px rgba(224,92,92,0.08)';
+    document.getElementById('gate-pw-error').style.display = 'block';
+    document.getElementById('gate-input').value = '';
+    wrap.style.transform = 'translateX(-6px)';
+    setTimeout(() => { wrap.style.transform = 'translateX(6px)';  }, 60);
+    setTimeout(() => { wrap.style.transform = 'translateX(-4px)'; }, 120);
+    setTimeout(() => { wrap.style.transform = 'translateX(0)'; wrap.style.transition = 'all .2s'; }, 180);
+  }
+};
+
+// ── Step 2: show Telegram widget ─────────────────────────────────────────────
+function showTelegramStep() {
+  const step2 = document.getElementById('gate-step2');
+  step2.style.display = 'block';
+  step2.classList.add('visible');
+
+  const issues = validateTelegramLoginConfig();
+  console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname}`);
+  if (issues.length) {
+    console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME });
+    setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));
+    document.getElementById('tg-widget-loading').style.display = 'none';
+    return;
+  }
+
+  const wrap = document.getElementById('tg-widget-wrap');
+  wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>';
+
+  const script = document.createElement('script');
+  script.async = true;
+  script.src   = 'https://telegram.org/js/telegram-widget.js?22';
+  script.setAttribute('data-telegram-login',  TALI_BOT_USERNAME);
+  script.setAttribute('data-size',            'large');
+  script.setAttribute('data-radius',          '10');
+  script.setAttribute('data-onauth',          'onTelegramAuth(user)');
+  script.setAttribute('data-request-access',  'write');
+  script.onload = () => {
+    document.getElementById('tg-widget-loading').style.display = 'none';
+    if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
+    taliWidgetFailureTimer = setTimeout(() => {
+      if (!taliTelegramAuthStarted) {
+        setGateTelegramError('Telegram widget loaded but login did not complete. Confirm BotFather /setdomain = talitrade.com and bot username is correct.');
+        console.warn('TaliTrade: Telegram widget did not trigger auth callback', { bot: TALI_BOT_USERNAME, host: window.location.hostname });
+      }
+    }, 20000);
+  };
+  script.onerror = () => {
+    setGateTelegramError('Could not load Telegram widget. Check browser/network blockers and try again.');
+    console.error('TaliTrade: failed to load telegram widget script');
+  };
+  wrap.appendChild(script);
+}
+
+// ── Called by Telegram widget ─────────────────────────────────────────────────
+window.onTelegramAuth = async function(tgUser) {
+  taliTelegramAuthStarted = true;
+  if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
+  document.getElementById('gate-tg-error').style.display = 'none';
+  document.getElementById('gate-signing').style.display  = 'block';
+  document.getElementById('tg-widget-wrap').style.opacity = '0.4';
+
+  try {
+    const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
+
+    // 1. Verify with backend + upsert user
+    if (!tgUser?.id || !tgUser?.hash || !tgUser?.auth_date) {
+      throw new Error('widget_payload_incomplete');
+    }
+
+    const res = await fetch(baseUrl + '/auth/telegram', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(tgUser),
+    });
+    const raw = await res.text();
+    let data = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch(_) { data = {}; }
+    if (!res.ok) {
+      const msg = parseTelegramAuthFailure(res, data);
+      setGateTelegramError(msg);
+      throw new Error(`auth_failed:${data?.reason || res.status}`);
+    }
+    if (!data.ok) {
+      setGateTelegramError('Telegram login rejected by server.');
+      throw new Error('auth_rejected');
+    }
+
+    const user = data.user;
+
+    // Populate ACCOUNTS map dynamically from this user's linked accounts
+    const linkedAccounts = data.accounts || [];
+    Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]); // clear any stale data
+    const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
+    linkedAccounts.forEach((acct, i) => {
+      const sizeK = acct.accountSize ? Math.round(acct.accountSize/1000)+'K' : '';
+      const typeLabel = (acct.accountType||'').includes('master') ? 'Master' : 'Eval';
+      ACCOUNTS[acct.accountId] = {
+        label: acct.label || (sizeK ? sizeK+' '+typeLabel : acct.accountId),
+        short: typeLabel,
+        color: colors[i % colors.length],
+        idx:   i + 1
+      };
+    });
+    if (linkedAccounts.length > 0) {
+      activeAcct = linkedAccounts[0].accountId;
+    } else {
+      activeAcct = '';
+      renderNoAccountState();
+    }
+
+    // 2. Persist user
+    localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
+
+    // 2b. Push telegramUserId into the extension's chrome.storage.local so
+    //     content.js (which runs on fundingpips.com, a different origin) can
+    //     read it for account linking. Requires:
+    //       - background.js service worker in the extension
+    //       - manifest.json: "externally_connectable": { "matches": ["https://talitrade.com/*"] }
+    //       - TALI_EXTENSION_ID set below to your extension's Chrome ID
+    try {
+      const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
+      if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage(
+          TALI_EXTENSION_ID,
+          { type: 'TALI_SET_UID', telegramUserId: user.telegramUserId },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn('TaliTrade: extension message failed (extension not installed or ID wrong)');
+            } else {
+              console.log('TaliTrade: telegramUserId sent to extension', response);
+            }
+          }
+        );
+      }
+    } catch(e) { /* chrome not available */ }
+
+    // 3. Auto-link accounts currently detected by the extension.
+    //    content.js runs on fundingpips.com — a different origin — so localStorage
+    //    is NOT shared. Instead we read /extension/status (already being populated
+    //    by the extension's 5s heartbeat) and link whatever accounts are live right now.
+    //    The extension will also retry on subsequent polls via /extension/data
+    //    once telegramUserId is propagated through chrome.storage (see content.js).
+    try {
+      const statusRes = await fetch(baseUrl + '/extension/status');
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        const liveAccounts = statusData.accounts || {};
+        for (const [acctId, acct] of Object.entries(liveAccounts)) {
+          const params = new URLSearchParams({
+            telegram_user_id: user.telegramUserId,
+            account_id:       acctId,
+            account_type:     acct.accountType  || '',
+            account_size:     acct.accountSize  || 0,
+            label:            acct.accountLabel || acctId,
+            broker:           'fundingpips',
+          });
+          await fetch(baseUrl + '/auth/link-account?' + params.toString(), { method: 'POST' });
+          console.log(`TaliTrade: linked live account ${acctId} to user ${user.telegramUserId}`);
+        }
+      }
+    } catch(e) {
+      // Non-fatal — extension may not be running at login time.
+      // Accounts will be linked on next extension poll via /extension/data.
+      console.warn('TaliTrade: could not auto-link accounts at login time', e);
+    }
+
+    // 4. Update topbar
+    applyUserToTopbar(user);
+
+    // 5. Dismiss gate
+    const gate = document.getElementById('gate');
+    gate.classList.add('unlocking');
+    setTimeout(() => gate.style.display = 'none', 450);
+
+  } catch(e) {
+    document.getElementById('gate-signing').style.display  = 'none';
+    document.getElementById('tg-widget-wrap').style.opacity = '1';
+    if (!document.getElementById('gate-tg-error').textContent?.trim()) {
+      setGateTelegramError('Authentication failed. Please try again.');
+    }
+    console.error('TaliTrade: Telegram auth failed', {
+      error: e?.message || e,
+      bot: TALI_BOT_USERNAME,
+      botSource: TALI_BOT_USERNAME_SOURCE,
+      host: window.location.hostname,
+    });
+  }
+};
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function getTaliUser() {
+  try {
+    const raw = localStorage.getItem(TALI_USER_KEY);
+    if (!raw) return null;
+    const u = JSON.parse(raw);
+    return u?.telegramUserId ? u : null;
+  } catch(e) { localStorage.removeItem(TALI_USER_KEY); return null; }
+}
+
+function applyUserToTopbar(user) {
+  const profileInner = document.querySelector('.tb-profile-inner');
+  const displayName  = user.firstName || user.username || 'Trader';
+
+  if (profileInner) {
+    if (user.photoUrl) {
+      const img = document.createElement('img');
+      img.src = user.photoUrl;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+      profileInner.innerHTML = '';
+      profileInner.appendChild(img);
+    } else {
+      profileInner.textContent = (displayName[0] || 'T').toUpperCase();
+    }
+  }
+
+  const btnProfile = document.getElementById('btnProfile');
+  if (btnProfile) {
+    btnProfile.title   = displayName + ' · tap to sign out';
+    btnProfile.onclick = (e) => {
+      e.stopPropagation();
+      if (confirm('Sign out of TaliTrade?')) {
+        localStorage.removeItem(TALI_USER_KEY);
+        sessionStorage.removeItem(TALI_PW_KEY);
+        // Also clear from extension storage if available
+        try {
+          const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';  // ← same ID as above
+          if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+            chrome.runtime.sendMessage(TALI_EXTENSION_ID, { type: 'TALI_CLEAR_UID' }, () => {});
+          }
+        } catch(e) {}
+        location.reload();
+      }
+    };
+  }
+}
+
+const existingTaliUser=getTaliUser();
+if(existingTaliUser) applyUserToTopbar(existingTaliUser);
 </script>
 <!-- ═══════════════════════════════════════════════════════════ -->
 
@@ -622,6 +898,20 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <!-- DASHBOARD -->
 <div id="page-dash" class="page active">
   <div class="sec-head"><div class="sec-label">Overview</div><div class="sec-meta" id="clock">--:--:--</div></div>
+  <!-- ONBOARDING CARD — shown only for new users with no extension data yet -->
+  <div id="onboardCard" style="display:none;background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.2);border-radius:14px;padding:20px;margin-bottom:14px">
+    <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:12px">👋 Get started in 2 steps</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">1</div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Install the Chrome Extension</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Install TaliTrade extension, then open FundingPips in a new tab</div></div>
+      </div>
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">2</div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Open your account on FundingPips</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Navigate to mtr-platform.fundingpips.com — data syncs automatically</div></div>
+      </div>
+    </div>
+  </div>
   <div class="sk-wrap" id="acctWrap" style="margin-bottom:10px">
     <!-- SKELETON -->
     <div class="acct-card sk-fade sk-in" id="skelAcct" style="margin-bottom:0">
@@ -640,7 +930,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
     <div class="acct-card rip sk-fade sk-out" id="realAcct" style="margin-bottom:0" onclick="openAcctSheet()">
       <div class="grid-t"></div>
       <div class="acct-top">
-        <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">1917136</div></div>
+        <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">—</div></div>
         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
           <div class="acct-badge rip" id="acctBadge">10K Master</div>
           <div class="switch-hint rip">
@@ -756,12 +1046,19 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <!-- ANALYTICS -->
 <div id="page-analytics" class="page">
-  <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta">All trades</div></div>
+  <div class="sec-head"><div class="sec-label">Performance</div><div class="sec-meta" id="analyticsMeta">All trades</div></div>
   <div class="stat-row" id="analyticsStats">
     <div class="stat-box" style="position:relative"><div class="stat-box-label">Win Rate</div><div class="skel skel-r sk-fade sk-in" id="skelWr" style="width:70px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="wr">—</div><div class="stat-box-sub" id="wrSub">—</div></div>
-    <div class="stat-box" style="position:relative"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf">—</div><div class="stat-box-sub">gross profit / loss</div></div>
-    <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Profit Factor</div><div class="skel skel-r sk-fade sk-in" id="skelPf" style="width:60px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-blue sk-fade sk-out" id="pf">—</div><div class="stat-box-sub">gross P / gross L</div></div>
+    <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&amp;L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
     <div class="stat-box" style="position:relative"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
+  </div>
+  <!-- Row 2: Avg Win / Avg Loss / Best Symbol / Streak -->
+  <div class="stat-row sk-fade sk-out" id="analyticsRow2" style="margin-top:0">
+    <div class="stat-box"><div class="stat-box-label">Avg Win</div><div class="stat-box-val txt-green" id="avgWin">—</div><div class="stat-box-sub">per winning trade</div></div>
+    <div class="stat-box"><div class="stat-box-label">Avg Loss</div><div class="stat-box-val txt-red" id="avgLoss">—</div><div class="stat-box-sub">per losing trade</div></div>
+    <div class="stat-box"><div class="stat-box-label">Best Symbol</div><div class="stat-box-val txt-green" id="bestSym">—</div><div class="stat-box-sub" id="bestSymPnl">—</div></div>
+    <div class="stat-box"><div class="stat-box-label">Green Streak</div><div class="stat-box-val" id="greenStreak">—</div><div class="stat-box-sub" id="greenStreakSub">—</div></div>
   </div>
   <div class="chart-card">
     <div class="chart-label">Equity Curve</div>
@@ -773,9 +1070,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       </svg>
     </div>
   </div>
-  <div class="sec-head"><div class="sec-label">Recent Trades</div></div>
+  <div class="sec-head"><div class="sec-label">Recent Trades</div><div class="sec-meta" id="recentTradesMeta"></div></div>
   <div class="card card-p" id="recentTradesEl"><div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div></div>
-  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Analytics</span></div>
+  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v1.0</span><span></span><span>Analytics</span></div>
 </div>
 
 <!-- JOURNAL (merged into analytics, hidden standalone) -->
@@ -896,11 +1193,8 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
   <div class="challenge-card featured rip"><div class="cc-head"><div><div class="tag tag-gold" style="margin-bottom:8px">Most Popular</div><div class="cc-size">$10,000</div><div style="font-size:11px;color:var(--t3);margin-top:3px">2-Step Master Challenge</div></div><div><div class="cc-price">$97</div><div class="cc-price-sub">one-time fee</div></div></div><div class="cc-rules"><div class="cc-rule"><div class="cc-rule-l">Profit Target</div><div class="cc-rule-v txt-green">8% / 5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Daily Loss</div><div class="cc-rule-v txt-red">5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Loss</div><div class="cc-rule-v txt-red">10%</div></div><div class="cc-rule"><div class="cc-rule-l">Payout Split</div><div class="cc-rule-v txt-blue">80%</div></div></div><div style="padding:0 16px 16px"><div class="btn btn-blue btn-full rip">Start Challenge — $97</div></div></div>
   <div class="challenge-card rip"><div class="cc-head"><div><div class="cc-size">$25,000</div><div style="font-size:11px;color:var(--t3);margin-top:3px">2-Step Master</div></div><div><div class="cc-price">$197</div><div class="cc-price-sub">one-time fee</div></div></div><div class="cc-rules"><div class="cc-rule"><div class="cc-rule-l">Profit Target</div><div class="cc-rule-v txt-green">8% / 5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Daily Loss</div><div class="cc-rule-v txt-red">5%</div></div><div class="cc-rule"><div class="cc-rule-l">Max Loss</div><div class="cc-rule-v txt-red">10%</div></div><div class="cc-rule"><div class="cc-rule-l">Payout Split</div><div class="cc-rule-v txt-blue">80%</div></div></div><div style="padding:0 16px 16px"><div class="btn btn-ghost btn-full rip">Start Challenge — $197</div></div></div>
   <div class="sec-head" style="margin-top:4px"><div class="sec-label">Leaderboard</div><div class="tag tag-gold">Live</div></div>
-  <div class="card">
-    <div class="leaderboard-item rip"><div class="lb-rank gold">1</div><div class="lb-avatar" style="background:linear-gradient(135deg,#f5c842,#e8924a)">A</div><div class="lb-name">Alex_trades<div style="font-size:10px;color:var(--t3)">$10K · Day 18</div></div><span>🇺🇸</span><div class="lb-profit txt-green">+$1,840</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank silver">2</div><div class="lb-avatar" style="background:linear-gradient(135deg,#94a3b8,#64748b)">S</div><div class="lb-name">SniperFX<div style="font-size:10px;color:var(--t3)">$25K · Day 12</div></div><span>🇬🇧</span><div class="lb-profit txt-green">+$1,620</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank bronze">3</div><div class="lb-avatar" style="background:linear-gradient(135deg,#cd7f32,#a0522d)">M</div><div class="lb-name">MarketMage<div style="font-size:10px;color:var(--t3)">$50K · Day 7</div></div><span>🇦🇪</span><div class="lb-profit txt-green">+$1,240</div></div>
-    <div class="leaderboard-item rip"><div class="lb-rank">4</div><div class="lb-avatar" style="background:linear-gradient(135deg,var(--blue),var(--blue-dark))">Y</div><div class="lb-name">You · <span id="lbId">1917136</span><div style="font-size:10px;color:var(--blue)" id="lbSub">$10K · Master</div></div><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;opacity:.7"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg><div class="lb-profit txt-green" id="lbProfit">+$0</div></div>
+  <div class="card" id="leaderboardList">
+    <div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading leaderboard…</div>
   </div>
   <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Challenges</span></div>
 </div>
@@ -960,7 +1254,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
           <div><div class="rp-label">Margin</div><div class="rp-val" id="marginReq">$241</div></div>
           <div><div class="rp-label">Limit Left</div><div class="rp-val txt-orange" id="tradeRiskLeft">$300</div></div>
         </div>
-        <button class="exec-btn buy-btn rip" id="execBtn"><span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;NQ/USD &nbsp;@ &nbsp;<span id="execPrice">17,234.25</span></button>
+        <button class="exec-btn buy-btn rip" id="execBtn" style="opacity:0.5;pointer-events:none;cursor:not-allowed" title="Coming soon"><span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;NQ/USD &nbsp;@ &nbsp;<span id="execPrice">17,234.25</span><span style="font-size:10px;margin-left:8px;opacity:0.8;font-weight:500">(coming soon)</span></button>
       </div>
     </div>
     <div class="depth-card">
@@ -994,11 +1288,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
 <script>
 const API='https://trading-platform-production-70e0.up.railway.app';
-const ACCOUNTS={
-  '1917136':{label:'10K Master',short:'Master',color:'var(--blue)',idx:1},
-  '1886220':{label:'10K Demo',short:'Demo',color:'var(--t3)',idx:2}
-};
-let activeAcct='1917136';
+// ACCOUNTS is populated dynamically after Telegram login from the backend
+const ACCOUNTS={};
+let activeAcct='';
 let liveBalance=10000;
 
 // CURSOR
@@ -1199,6 +1491,84 @@ document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',()=>t
 function usd(v){if(v==null)return'$—';return'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function pnl(v){if(v==null)return'$—';return(v>=0?'+$':'-$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
+function hasLinkedAccounts(){
+  return Object.keys(ACCOUNTS).length > 0;
+}
+
+function showOnboardingCard(show=true){
+  const el=document.getElementById('onboardCard');
+  if(el)el.style.display=show?'block':'none';
+}
+
+function renderNoAccountState(kind='default'){
+  const statusEl=document.getElementById('tb-status');
+  if(statusEl){
+    statusEl.textContent='waiting for extension...';
+    statusEl.style.color='var(--t3)';
+  }
+  showOnboardingCard(true);
+
+  const analyticsMeta=document.getElementById('analyticsMeta');
+  if(analyticsMeta)analyticsMeta.textContent='No account connected';
+  const journalMeta=document.getElementById('journalMeta');
+  if(journalMeta)journalMeta.textContent='No account connected';
+  const payoutMeta=document.getElementById('payoutMeta');
+  if(payoutMeta)payoutMeta.textContent='No account connected';
+
+  const analyticsEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>No account connected yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>`;
+  const journalEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.35" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No journal yet.<br><span style="font-size:11px">Closed trades appear here after the extension syncs your FundingPips history.</span></div>`;
+  const recentEmpty=`<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">No trade history yet</div>`;
+
+  const journalEntries=document.getElementById('journalEntries');
+  if(journalEntries)journalEntries.innerHTML=journalEmpty;
+  const recentTrades=document.getElementById('recentTradesEl');
+  if(recentTrades)recentTrades.innerHTML=recentEmpty;
+
+  ['wr','pf','netpl','totalTrades','avgWin','avgLoss','bestSym','bestSymPnl','greenStreak'].forEach(id=>{
+    const el=document.getElementById(id);
+    if(el)el.textContent='—';
+  });
+  const wrSub=document.getElementById('wrSub'); if(wrSub)wrSub.textContent='Connect an account';
+  const wlSub=document.getElementById('wlSub'); if(wlSub)wlSub.textContent='Waiting for first sync';
+  const greenStreakSub=document.getElementById('greenStreakSub'); if(greenStreakSub)greenStreakSub.textContent='Waiting for first green day';
+  const analyticsHost=document.getElementById('recentTradesEl');
+  if(analyticsHost && !document.getElementById('analyticsNoAcct')) {
+    analyticsHost.innerHTML=recentEmpty;
+  }
+  const analyticsStats=document.getElementById('analyticsStats');
+  if(analyticsStats && kind==='analytics') {
+    const host=document.getElementById('recentTradesEl');
+    if(host)host.innerHTML=recentEmpty;
+  }
+
+  const analyticsCard=document.getElementById('recentTradesEl');
+  if(analyticsCard && kind!=='journal') {
+    const holder=document.getElementById('analyticsMeta');
+    if(holder)holder.textContent='No account connected';
+  }
+
+  const payoutChecks=document.getElementById('payoutChecks');
+  if(payoutChecks){
+    payoutChecks.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid var(--border);border-radius:var(--rs)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg><span style="font-size:12px;color:var(--t3)">Connect a FundingPips account to unlock payout tracking.</span></div>`;
+  }
+  const payoutHero=document.getElementById('payoutHero');
+  const skelPayout=document.getElementById('skelPayout');
+  if(skelPayout){skelPayout.classList.remove('sk-in');skelPayout.classList.add('sk-out');}
+  if(payoutHero){payoutHero.classList.remove('sk-out');payoutHero.classList.add('sk-in');}
+  const payoutHeroLabel=document.getElementById('payoutHeroLabel'); if(payoutHeroLabel)payoutHeroLabel.textContent='Payout Status';
+  const payoutHeroAmt=document.getElementById('payoutHeroAmt'); if(payoutHeroAmt){payoutHeroAmt.textContent='$—';payoutHeroAmt.className='ph-hero-amount txt-dim';}
+  const payoutHeroSplit=document.getElementById('payoutHeroSplit'); if(payoutHeroSplit)payoutHeroSplit.textContent='Waiting for first account sync';
+  const payoutBadge=document.getElementById('payoutBadge'); if(payoutBadge){payoutBadge.textContent='No account';payoutBadge.className='ph-badge not-yet';}
+  const payoutCountdown=document.getElementById('payoutCountdownCard'); if(payoutCountdown)payoutCountdown.innerHTML='';
+  const rewardSplitsGrid=document.getElementById('rewardSplitsGrid'); if(rewardSplitsGrid)rewardSplitsGrid.innerHTML='';
+  const phaseProgress=document.getElementById('phaseProgressGrid'); if(phaseProgress)phaseProgress.innerHTML='';
+
+  const analyticsEmptyHost=document.getElementById('recentTradesEl');
+  if(analyticsEmptyHost && kind==='analytics') {
+    analyticsEmptyHost.innerHTML='<div id="analyticsNoAcct">'+analyticsEmpty+'</div>';
+  }
+}
+
 // SKELETON REVEAL
 let dashRevealed=false;
 function revealDash(){
@@ -1251,12 +1621,16 @@ async function fetchStatus(){
     const statusEl=document.getElementById('tb-status');
     if(!acct){
       // Check if we ever had data for this account
-      const hadData=liveAccountsCache[activeAcct];
+      const hadData=activeAcct?liveAccountsCache[activeAcct]:null;
       statusEl.textContent=hadData?'extension offline':'waiting for extension...';
       statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
+      if(!activeAcct||!hasLinkedAccounts()) renderNoAccountState();
       return;
     }
     revealDash();
+    // Hide onboarding card now that we have live data
+    const oc=document.getElementById('onboardCard');
+    if(oc)oc.style.display='none';
     const{balance,equity,profit,accountType,accountSize,accountId:liveAcctId,accountLabel:liveAcctLabel,riskPerTradeIdea:ri,dailyLoss:dl,overallLoss:ol,alerts}=acct;
     const sz=accountSize||10000;
     const cachedTrades=tradesCache[activeAcct]||[];
@@ -1302,7 +1676,8 @@ async function fetchStatus(){
     if(lbSubEl)lbSubEl.textContent=sizeLabel+' · '+(accountType&&accountType.includes('master')?'Master':'Eval');
 
     // ── Leaderboard profit — guard null balance ────────────────────────────────
-    document.getElementById('lbProfit').textContent=fallbackBalance!=null?pnl(fallbackBalance-sz):'$—';
+    const lbProfitEl=document.getElementById('lbProfit');
+    if(lbProfitEl)lbProfitEl.textContent=fallbackBalance!=null?pnl(fallbackBalance-sz):'$—';
 
     // ── Rules sheet ────────────────────────────────────────────────────────────
     updateRulesSheet(accountType||'2_step', sz, fullLabel);
@@ -1344,7 +1719,7 @@ fetchStatus();setInterval(fetchStatus,5000);
 fetchNews(); // populate drawer on load
 // Pre-load trades on boot so balance inferral works from the start
 // and analytics tab shows data instantly when first tapped
-fetchAllTrades(activeAcct).then(trades=>{
+if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
   if(!trades.length) return;
   const sz=trades[0]?.accountSize||10000;
   const inferredBal=inferBalanceFromTrades(trades,sz);
@@ -1356,8 +1731,57 @@ fetchAllTrades(activeAcct).then(trades=>{
   }
 }).catch(()=>{});
 
+// ── LEADERBOARD ───────────────────────────────────────────────────────────────
+async function fetchLeaderboard(){
+  try{
+    const res=await fetch(API+'/leaderboard?limit=10');
+    if(!res.ok)throw new Error('status '+res.status);
+    const data=await res.json();
+    const rows=data.leaderboard||[];
+    const el=document.getElementById('leaderboardList');
+    if(!el)return;
+    if(!rows.length){
+      el.innerHTML='<div style="text-align:center;padding:24px;color:var(--t3);font-size:12px">No traders on the board yet.<br>Trade to claim your spot!</div>';
+      return;
+    }
+    const medals=['gold','silver','bronze'];
+    const gradients=[
+      'linear-gradient(135deg,#f5c842,#e8924a)',
+      'linear-gradient(135deg,#94a3b8,#64748b)',
+      'linear-gradient(135deg,#cd7f32,#a0522d)',
+    ];
+    const you=getTaliUser();
+    el.innerHTML=rows.map((r,i)=>{
+      const isYou=you&&r.accountId===activeAcct;
+      const rankCls=medals[i]||'';
+      const grad=gradients[i]||'linear-gradient(135deg,var(--s3),var(--s2))';
+      const initial=(r.displayName||'T').charAt(0).toUpperCase();
+      const sz=r.accountSize||10000;
+      const szLabel='$'+(sz>=1000?(sz/1000)+'K':sz);
+      const winRateLabel=r.tradeCount>0?r.winRate+'% WR':'';
+      return`<div class="leaderboard-item rip${isYou?' leaderboard-you':''}">
+        <div class="lb-rank ${rankCls}">${r.rank}</div>
+        <div class="lb-avatar" style="background:${isYou?'linear-gradient(135deg,var(--blue),#1a8bc4)':grad}">${isYou?'You':initial}</div>
+        <div class="lb-name">${isYou?'You':'Trader'}<div style="font-size:10px;color:var(--t3)">${szLabel} · ${winRateLabel||r.tradeCount+' trades'}</div></div>
+        <div class="lb-profit ${r.totalPnl>=0?'txt-green':'txt-red'}">${r.totalPnl>=0?'+':''}\$${Math.abs(r.totalPnl).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    const el=document.getElementById('leaderboardList');
+    if(el)el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Leaderboard loading…</div>';
+  }
+}
+// Load leaderboard when challenges page is shown, and on nav to it
+document.querySelectorAll('.bnav-item').forEach(item=>{
+  if(item.dataset.page==='challenges') item.addEventListener('click',()=>fetchLeaderboard());
+});
+
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
+  if(!activeAcct||!hasLinkedAccounts()){
+    renderNoAccountState('payout');
+    return;
+  }
   try{
     const res=await fetch(API+'/extension/payout?account_id='+activeAcct);
     if(!res.ok)throw new Error('status '+res.status);
@@ -2054,6 +2478,10 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
 
 // JOURNAL
 async function fetchJournal(){
+  if(!activeAcct||!hasLinkedAccounts()){
+    renderNoAccountState('journal');
+    return;
+  }
   try{
     let trades=await fetchAllTrades(activeAcct);
     // Same corrupt-pnl guard as fetchAnalytics — filter out close-price-as-pnl rows
@@ -2084,12 +2512,13 @@ async function fetchJournal(){
 
 // ANALYTICS
 async function fetchAnalytics(){
+  if(!activeAcct||!hasLinkedAccounts()){
+    renderNoAccountState('analytics');
+    return;
+  }
   try{
     let trades=await fetchAllTrades(activeAcct);
     // Guard: filter out any rows where |pnl| > accountSize.
-    // These are corrupted DB rows from the scraper close-price bug.
-    // Belt-and-suspenders — the backend now rejects these at insert time,
-    // but existing corrupted rows still need filtering on the client side.
     trades=trades.filter(t=>{
       const sz=t.accountSize||10000;
       if(Math.abs(t.pnl||0)>sz){
@@ -2098,8 +2527,9 @@ async function fetchAnalytics(){
       }
       return true;
     });
+    document.getElementById('analyticsMeta').textContent=trades.length+' trades';
     if(!trades.length){
-      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">No trades recorded yet</div>';
+      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>No trades recorded yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>';
       return;
     }
     // reveal analytics skeletons
@@ -2108,12 +2538,35 @@ async function fetchAnalytics(){
       if(s){s.classList.remove('sk-in');s.classList.add('sk-out');}
       if(r){r.classList.remove('sk-out');r.classList.add('sk-in');}
     });
+    const r2=document.getElementById('analyticsRow2');
+    if(r2){r2.classList.remove('sk-out');r2.classList.add('sk-in');}
+
     const wins=trades.filter(t=>(t.pnl||0)>0),losses=trades.filter(t=>(t.pnl||0)<=0);
     const inferredBal=inferBalanceFromTrades(trades, trades[0]?.accountSize||10000);
     if(inferredBal!=null) cacheBalance(activeAcct, inferredBal);
     const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
     const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0),wr=Math.round(wins.length/trades.length*100);
     const pf=gl>0?(gp/gl).toFixed(2):'∞';
+    const avgW=wins.length?gp/wins.length:0;
+    const avgL=losses.length?gl/losses.length:0;
+
+    // Best/worst symbol
+    const symPnl={};
+    trades.forEach(t=>{const s=t.symbol||'?';symPnl[s]=(symPnl[s]||0)+(t.pnl||0);});
+    const syms=Object.entries(symPnl);
+    const bestSym=syms.length?syms.reduce((a,b)=>b[1]>a[1]?b:a):null;
+
+    // Green streak (days) — look backwards through sorted dates
+    const dayPnl={};
+    trades.forEach(t=>{
+      const d=(t.closedAt||t.loggedAt||'').slice(0,10);
+      if(d)dayPnl[d]=(dayPnl[d]||0)+(t.pnl||0);
+    });
+    const sortedDays=Object.keys(dayPnl).sort().reverse();
+    let streak=0;
+    for(const d of sortedDays){if(dayPnl[d]>0)streak++;else break;}
+
+    // Populate stat boxes
     document.getElementById('wr').textContent=wr+'%';
     document.getElementById('wr').className='stat-box-val '+(wr>=50?'txt-green':'txt-red');
     document.getElementById('wrSub').textContent=wins.length+' of '+trades.length+' trades';
@@ -2122,19 +2575,45 @@ async function fetchAnalytics(){
     document.getElementById('netpl').className='stat-box-val '+(netPnl>=0?'txt-green':'txt-red');
     document.getElementById('totalTrades').textContent=trades.length;
     document.getElementById('wlSub').textContent='W:'+wins.length+' L:'+losses.length;
-    const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.logged_at||0)-new Date(b.closedAt||b.logged_at||0));
+
+    const avgWEl=document.getElementById('avgWin');
+    const avgLEl=document.getElementById('avgLoss');
+    const bsEl=document.getElementById('bestSym');
+    const bspEl=document.getElementById('bestSymPnl');
+    const gsEl=document.getElementById('greenStreak');
+    const gsSubEl=document.getElementById('greenStreakSub');
+    if(avgWEl)avgWEl.textContent=wins.length?'+$'+avgW.toFixed(2):'—';
+    if(avgLEl)avgLEl.textContent=losses.length?'-$'+avgL.toFixed(2):'—';
+    if(bsEl)bsEl.textContent=bestSym?bestSym[0]:'—';
+    if(bspEl)bspEl.textContent=bestSym?pnl(bestSym[1]):'—';
+    if(gsEl){gsEl.textContent=streak>0?streak+'d':'0';gsEl.className='stat-box-val '+(streak>=3?'txt-green':streak>0?'txt-blue':'txt-dim');}
+    if(gsSubEl)gsSubEl.textContent=streak>=3?'🔥 on fire!':streak>0?'keep it going':'start a streak';
+
+    // Equity curve
+    const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.loggedAt||0)-new Date(b.closedAt||b.loggedAt||0));
     let running=(inferredBal??liveBalance)-netPnl;
     const pts=curveTrades.map(t=>{running+=(t.pnl||0);return running;});
     if(pts.length>1){
       const mn=Math.min(...pts),mx=Math.max(...pts),rng=mx-mn||1;
+      const isGreen=pts[pts.length-1]>=pts[0];
+      const lineColor=isGreen?'var(--green)':'var(--red)';
       const xs=pts.map((_,i)=>i/(pts.length-1)*400);
       const ys=pts.map(v=>70-(v-mn)/rng*60);
       const d=xs.map((x,i)=>(i===0?'M':'L')+x.toFixed(1)+','+ys[i].toFixed(1)).join(' ');
-      document.getElementById('equityPath').setAttribute('d',d);
-      document.getElementById('equityFill').setAttribute('d',d+' L400,80 L0,80 Z');
+      const ep=document.getElementById('equityPath');
+      const ef=document.getElementById('equityFill');
+      if(ep){ep.setAttribute('d',d);ep.setAttribute('stroke',lineColor);}
+      if(ef)ef.setAttribute('d',d+' L400,80 L0,80 Z');
+      // update gradient color
+      const cgStop=document.querySelector('#cg stop:first-child');
+      if(cgStop)cgStop.setAttribute('stop-color',isGreen?'#4dcd8a':'#e05c5c');
     }
+
+    // Recent trades list
     const el=document.getElementById('recentTradesEl');
-    const recent=trades.slice().sort((a,b)=>new Date(b.closedAt||b.logged_at||0)-new Date(a.closedAt||a.logged_at||0)).slice(0,10);
+    const rtMeta=document.getElementById('recentTradesMeta');
+    const recent=trades.slice().sort((a,b)=>new Date(b.closedAt||b.loggedAt||0)-new Date(a.closedAt||a.loggedAt||0)).slice(0,20);
+    if(rtMeta)rtMeta.textContent='Last '+recent.length;
     el.innerHTML=recent.map(t=>{
       const win=(t.pnl||0)>0;
       const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
