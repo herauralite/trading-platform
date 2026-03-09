@@ -548,6 +548,16 @@ function setGateTelegramError(message) {
   errEl.style.display = 'block';
 }
 
+function normalizeLoginHost(value, stripWww = false) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  const withoutScheme = raw.replace(/^https?:\/\//, '');
+  const hostPart = withoutScheme.split('/')[0].split(':')[0];
+  if (!hostPart) return '';
+  if (stripWww && hostPart.startsWith('www.')) return hostPart.slice(4);
+  return hostPart;
+}
+
 function validateTelegramLoginConfig() {
   const issues = [];
   if (!TALI_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(TALI_BOT_USERNAME)) {
@@ -559,17 +569,20 @@ function validateTelegramLoginConfig() {
   if (TALI_BOT_USERNAME && TALI_CANONICAL_BOT_USERNAME && TALI_BOT_USERNAME !== TALI_CANONICAL_BOT_USERNAME) {
     issues.push('bot_username_not_canonical');
   }
-  const host = window.location.hostname.toLowerCase();
-  if (!TALI_CANONICAL_LOGIN_DOMAIN) {
+
+  const currentHost = normalizeLoginHost(window.location.host, true);
+  const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN, true);
+  const loginHost = normalizeLoginHost(TALI_LOGIN_DOMAIN, true);
+  if (!canonicalHost) {
     issues.push('canonical_login_domain_missing');
   }
-  if (TALI_LOGIN_DOMAIN && TALI_CANONICAL_LOGIN_DOMAIN && TALI_LOGIN_DOMAIN !== TALI_CANONICAL_LOGIN_DOMAIN) {
+  if (loginHost && canonicalHost && loginHost !== canonicalHost) {
     issues.push('login_domain_not_canonical');
   }
-  if (host !== TALI_CANONICAL_LOGIN_DOMAIN) {
+  if (!currentHost || currentHost !== canonicalHost) {
     issues.push('host_not_canonical');
   }
-  if (host === 'talitrade.com' || host === 'www.talitrade.com') {
+  if (currentHost === 'talitrade.com') {
     if (TALI_BOT_USERNAME.toLowerCase().includes('change') || TALI_BOT_USERNAME.toLowerCase().includes('your')) {
       issues.push('bot_username_placeholder_like');
     }
@@ -578,16 +591,12 @@ function validateTelegramLoginConfig() {
 }
 
 function normalizeTelegramLoginHostIfNeeded() {
-  const canonicalHost = (TALI_CANONICAL_LOGIN_DOMAIN || '').toLowerCase().replace(/^www\./, '');
-  const currentHost = window.location.hostname.toLowerCase();
+  const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN, true);
+  const currentHost = normalizeLoginHost(window.location.host, false);
   if (!canonicalHost || !currentHost) return false;
 
-  const allowedHosts = new Set([canonicalHost, `www.${canonicalHost}`]);
-  if (!allowedHosts.has(currentHost)) return false;
-
-  // Avoid production redirect loops if upstream host canonicalization bounces hosts.
-  const shouldNormalize = currentHost === `www.${canonicalHost}`;
-  if (!shouldNormalize) return false;
+  if (!currentHost.startsWith('www.')) return false;
+  if (normalizeLoginHost(currentHost, true) !== canonicalHost) return false;
 
   const target = `${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`;
   if (target === window.location.href) return false;
@@ -604,7 +613,6 @@ function normalizeTelegramLoginHostIfNeeded() {
 }
 
 async function hydrateTelegramWidgetConfig() {
-  if (TALI_CONFIG.botUsername && TALI_CONFIG.canonicalBotUsername && TALI_CONFIG.loginDomain && TALI_CONFIG.canonicalLoginDomain) return;
   try {
     const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
     const res = await fetch(baseUrl + '/auth/telegram/config');
@@ -619,11 +627,11 @@ async function hydrateTelegramWidgetConfig() {
     if (canonicalFromApi) {
       TALI_CANONICAL_BOT_USERNAME = canonicalFromApi;
     }
-    const loginDomainFromApi = String(cfg?.loginDomain || '').trim().toLowerCase();
+    const loginDomainFromApi = normalizeLoginHost(cfg?.loginDomain, true);
     if (loginDomainFromApi) {
       TALI_LOGIN_DOMAIN = loginDomainFromApi;
     }
-    const canonicalLoginDomainFromApi = String(cfg?.canonicalLoginDomain || '').trim().toLowerCase();
+    const canonicalLoginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain, true);
     if (canonicalLoginDomainFromApi) {
       TALI_CANONICAL_LOGIN_DOMAIN = canonicalLoginDomainFromApi;
     }
