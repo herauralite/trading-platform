@@ -736,6 +736,18 @@ function resolveClosedPositionsScrollTarget() {
     return null;
   }
 
+  const isScrollable = (el) => !!el && ((el.scrollHeight - el.clientHeight) > 20);
+
+  // Some FundingPips builds keep the scroll container on a parent wrapper.
+  let parent = root.parentElement;
+  while (parent) {
+    if (isScrollable(parent)) {
+      console.log(`TaliTrade: closed positions scroll target parent = ${parent.tagName.toLowerCase()}${parent.className ? '.' + parent.className.toString().replace(/\s+/g, '.') : ''}`);
+      return parent;
+    }
+    parent = parent.parentElement;
+  }
+
   const candidates = [
     '.cdk-virtual-scroll-viewport',
     '.ui-list__inner-container',
@@ -748,11 +760,16 @@ function resolveClosedPositionsScrollTarget() {
   // Prefer the first element that is actually scrollable.
   for (const selector of candidates) {
     for (const el of root.querySelectorAll(selector)) {
-      if ((el.scrollHeight - el.clientHeight) > 20) {
-        console.log(`TaliTrade: closed positions scroll target = ${selector}`);
+      if (isScrollable(el)) {
+        console.log(`TaliTrade: closed positions scroll target = ${selector} (h=${el.clientHeight}, sh=${el.scrollHeight})`);
         return el;
       }
     }
+  }
+
+  if (isScrollable(root)) {
+    console.log(`TaliTrade: closed positions scroll target = root (h=${root.clientHeight}, sh=${root.scrollHeight})`);
+    return root;
   }
 
   // Fallback: inspect descendants and find the largest scrollable region.
@@ -846,10 +863,18 @@ async function scrapeAndSyncHistory(config) {
 
       // Scroll down by one page height.
       // Some virtualized lists only react to wheel events, so dispatch one as backup.
-      const step = scrollContainer.clientHeight || 400;
+      const step = Math.max(240, scrollContainer.clientHeight || 400);
+      const before = scrollContainer.scrollTop;
       scrollContainer.scrollTop += step;
       scrollContainer.dispatchEvent(new WheelEvent('wheel', { deltaY: step, bubbles: true }));
+      if (scrollContainer.scrollTop === before) {
+        scrollContainer.scrollBy?.({ top: step, behavior: 'auto' });
+        scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }
       await new Promise(r => setTimeout(r, 600));
+
+      const atBottom = (scrollContainer.scrollTop + scrollContainer.clientHeight) >= (scrollContainer.scrollHeight - 4);
+      if (atBottom && staleRounds >= 1) break;
     }
 
     // Reset scroll to top so the UI looks normal
