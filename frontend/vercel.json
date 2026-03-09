@@ -1,4 +1,12 @@
 {
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "www.talitrade.com" }],
+      "destination": "https://talitrade.com/:path*",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     { "source": "/app", "destination": "/app.html" }
   ]

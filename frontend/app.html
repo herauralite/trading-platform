@@ -510,11 +510,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
-const TALI_BOT_USERNAME = 'TaliTradeBot';
-const TALI_BOT_USERNAME_SOURCE = 'canonical_constant';
-const TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
+let TALI_BOT_USERNAME = 'TaliTradeBot';
+let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
+let TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
 let TALI_LOGIN_DOMAIN = 'talitrade.com';
-const TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
+let TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
@@ -556,7 +556,7 @@ function validateTelegramLoginConfig() {
     issues.push('bot_username_not_canonical');
   }
 
-  const currentHost = normalizeLoginHost(window.location.host, true);
+  const currentHost = normalizeLoginHost(window.location.host, false);
   const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN, true);
   const loginHost = normalizeLoginHost(TALI_LOGIN_DOMAIN, true);
   if (!canonicalHost) {
@@ -589,7 +589,8 @@ function normalizeTelegramLoginHostIfNeeded() {
 
   const guardValue = `${currentHost}->${canonicalHost}:${window.location.pathname}${window.location.search}`;
   if (sessionStorage.getItem(TALI_HOST_NORMALIZE_GUARD_KEY) === guardValue) {
-    console.warn('TaliTrade: host normalization skipped to prevent repeat redirect', { currentHost, canonicalHost });
+    setGateTelegramError('Telegram login requires talitrade.com (without www). Please open https://talitrade.com/app directly.');
+    console.error('TaliTrade: host normalization failed repeatedly; host still non-canonical', { currentHost, canonicalHost });
     return false;
   }
 
@@ -604,9 +605,16 @@ async function hydrateTelegramWidgetConfig() {
     const res = await fetch(baseUrl + '/auth/telegram/config');
     if (!res.ok) return;
     const cfg = await res.json();
+    const botFromApi = String(cfg?.canonicalBotUsername || cfg?.botUsername || '').replace(/^@/, '').trim();
+    if (botFromApi && /^[A-Za-z0-9_]{5,64}$/.test(botFromApi)) {
+      TALI_BOT_USERNAME = botFromApi;
+      TALI_CANONICAL_BOT_USERNAME = botFromApi;
+      TALI_BOT_USERNAME_SOURCE = 'backend_config';
+    }
     const loginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain, true);
     if (loginDomainFromApi) {
       TALI_LOGIN_DOMAIN = loginDomainFromApi;
+      TALI_CANONICAL_LOGIN_DOMAIN = loginDomainFromApi;
     }
   } catch (_) {}
 }
