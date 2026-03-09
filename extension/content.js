@@ -23,14 +23,42 @@ const TALI_STORAGE_KEY = 'tali_telegram_uid';  // key in chrome.storage.local
 // to chrome.storage.local via externally_connectable messaging (see manifest.json),
 // and we read it here. Falls back to null gracefully if not set yet.
 let _cachedTelegramUserId = null;
+let _telegramUserIdLoaded = false;
+
+function normalizeTelegramUserId(value) {
+  if (value == null) return null;
+  const str = String(value).trim();
+  return str || null;
+}
+
+function setCachedTelegramUserId(value) {
+  _cachedTelegramUserId = normalizeTelegramUserId(value);
+  _telegramUserIdLoaded = true;
+}
+
+function clearTelegramUserIdCache() {
+  _cachedTelegramUserId = null;
+  _telegramUserIdLoaded = false;
+}
 
 async function getTelegramUserId() {
-  if (_cachedTelegramUserId) return _cachedTelegramUserId;
+  if (_telegramUserIdLoaded) return _cachedTelegramUserId;
   try {
     const result = await chrome.storage.local.get(TALI_STORAGE_KEY);
-    _cachedTelegramUserId = result[TALI_STORAGE_KEY] || null;
+    setCachedTelegramUserId(result[TALI_STORAGE_KEY]);
     return _cachedTelegramUserId;
   } catch(e) { return null; }
+}
+
+if (chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes[TALI_STORAGE_KEY]) return;
+    const nextUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].newValue);
+    const prevUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].oldValue);
+    if (nextUid) setCachedTelegramUserId(nextUid);
+    else clearTelegramUserIdCache();
+    if (nextUid !== prevUid) linkedAccountsThisSession.clear();
+  });
 }
 
 // Auto-link an account to the logged-in Telegram user (fire-and-forget).
@@ -38,8 +66,9 @@ async function getTelegramUserId() {
 const linkedAccountsThisSession = new Set();
 async function ensureAccountLinked(accountId, accountType, accountSize, accountLabel) {
   const tgUid = await getTelegramUserId();
-  if (!tgUid || linkedAccountsThisSession.has(accountId)) return;
-  linkedAccountsThisSession.add(accountId);  // optimistic — avoids duplicate calls
+  const sessionLinkKey = tgUid && accountId ? `${tgUid}:${accountId}` : null;
+  if (!sessionLinkKey || linkedAccountsThisSession.has(sessionLinkKey)) return;
+  linkedAccountsThisSession.add(sessionLinkKey);  // optimistic — avoids duplicate calls
   try {
     const params = new URLSearchParams({
       telegram_user_id: tgUid,
@@ -52,7 +81,7 @@ async function ensureAccountLinked(accountId, accountType, accountSize, accountL
     await fetch(BASE_URL + '/auth/link-account?' + params.toString(), { method: 'POST' });
     console.log(`TaliTrade: account ${accountId} linked to Telegram user ${tgUid}`);
   } catch(e) {
-    linkedAccountsThisSession.delete(accountId);  // allow retry next cycle
+    linkedAccountsThisSession.delete(sessionLinkKey);  // allow retry next cycle
   }
 }
 
