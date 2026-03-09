@@ -513,12 +513,28 @@ async function poll() {
 }
 
 
-// ─── Closed positions scraper ─────────────────────────────────────────────────
+// ─── Closed positions scraper
+
+function getClosedPositionsRoot() {
+  const selectors = [
+    'trade-closed-positions-desktop',
+    'trade-closed-positions',
+    '[data-testid="closed-positions-desktop"]',
+    '[data-testid*="closed-positions"]',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) return el;
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────
 // Sole writer to the trades table. Reads from the FundingPips closed positions
 // tab so closed_at timestamps and pnl values are authoritative.
 
 function scrapeClosedPositionRows() {
-  const container = document.querySelector('trade-closed-positions-desktop');
+  const container = getClosedPositionsRoot();
   if (!container) return [];
 
   const acctSz = state.scrapeConfig?.accountSize || 10000;
@@ -528,6 +544,13 @@ function scrapeClosedPositionRows() {
     '.ui-list__row-wrapper > *, ui-list-row, [data-testid*="row"], ' +
     '.ui-list__inner-container > div:not(.ui-list__header-wrapper)'
   );
+
+  if (!rowEls.length) {
+    console.warn('TaliTrade: closed positions root found but no rows matched', {
+      tag: container.tagName?.toLowerCase(),
+      className: container.className || '',
+    });
+  }
 
   rowEls.forEach(row => {
     const text = row.innerText || row.textContent || '';
@@ -608,8 +631,11 @@ function makeTradeKey(row) {
 }
 
 function resolveClosedPositionsScrollTarget() {
-  const root = document.querySelector('trade-closed-positions-desktop');
-  if (!root) return null;
+  const root = getClosedPositionsRoot();
+  if (!root) {
+    console.warn('TaliTrade: closed positions root not found');
+    return null;
+  }
 
   const candidates = [
     '.cdk-virtual-scroll-viewport',
