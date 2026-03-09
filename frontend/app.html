@@ -513,10 +513,7 @@ const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
 let TALI_BOT_USERNAME = String(TALI_CONFIG.botUsername || '').replace(/^@/, '').trim();
 let TALI_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__.botUsername' : 'unset';
-if (!TALI_BOT_USERNAME) {
-  TALI_BOT_USERNAME = 'TaliTradeBot';
-  TALI_BOT_USERNAME_SOURCE = 'hardcoded_fallback';
-}
+let TALI_CANONICAL_BOT_USERNAME = String(TALI_CONFIG.canonicalBotUsername || '').replace(/^@/, '').trim();
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
@@ -538,6 +535,12 @@ function validateTelegramLoginConfig() {
   if (!TALI_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(TALI_BOT_USERNAME)) {
     issues.push('bot_username_invalid');
   }
+  if (!TALI_CANONICAL_BOT_USERNAME) {
+    issues.push('canonical_bot_username_missing');
+  }
+  if (TALI_BOT_USERNAME && TALI_CANONICAL_BOT_USERNAME && TALI_BOT_USERNAME !== TALI_CANONICAL_BOT_USERNAME) {
+    issues.push('bot_username_not_canonical');
+  }
   if (window.location.hostname === 'talitrade.com' || window.location.hostname === 'www.talitrade.com') {
     if (TALI_BOT_USERNAME.toLowerCase().includes('change') || TALI_BOT_USERNAME.toLowerCase().includes('your')) {
       issues.push('bot_username_placeholder_like');
@@ -547,7 +550,7 @@ function validateTelegramLoginConfig() {
 }
 
 async function hydrateTelegramWidgetConfig() {
-  if (TALI_CONFIG.botUsername) return;
+  if (TALI_CONFIG.botUsername && TALI_CONFIG.canonicalBotUsername) return;
   try {
     const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
     const res = await fetch(baseUrl + '/auth/telegram/config');
@@ -557,6 +560,10 @@ async function hydrateTelegramWidgetConfig() {
     if (fromApi) {
       TALI_BOT_USERNAME = fromApi;
       TALI_BOT_USERNAME_SOURCE = 'backend_/auth/telegram/config';
+    }
+    const canonicalFromApi = String(cfg?.canonicalBotUsername || '').replace(/^@/, '').trim();
+    if (canonicalFromApi) {
+      TALI_CANONICAL_BOT_USERNAME = canonicalFromApi;
     }
   } catch (_) {}
 }

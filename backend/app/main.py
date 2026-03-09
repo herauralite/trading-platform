@@ -851,8 +851,12 @@ async def demo_leaderboard(limit: int = 10):
 @app.get("/auth/telegram/config")
 async def telegram_auth_config():
     """Expose Telegram widget config so frontend is not hardcoded to one bot username."""
+    configured_bot_username = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+    canonical_bot_username = "TaliTradeBot"
     return {
-        "botUsername": os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@"),
+        "botUsername": configured_bot_username,
+        "canonicalBotUsername": canonical_bot_username,
+        "botUsernameMatchesCanonical": configured_bot_username == canonical_bot_username,
         "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
     }
 
