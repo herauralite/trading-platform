@@ -549,6 +549,46 @@ function getClosedPositionsTab() {
   return byText || null;
 }
 
+async function waitForClosedPositionsReadiness({
+  stage = 'tab+root',
+  timeoutMs = 6000,
+  pollMs = 250,
+} = {}) {
+  const startedAt = Date.now();
+  let tabSeen = false;
+  let rootSeen = false;
+
+  const needsTab = stage.includes('tab');
+  const needsRoot = stage.includes('root');
+
+  while (Date.now() - startedAt < timeoutMs) {
+    const closedTab = getClosedPositionsTab();
+    const closedRoot = getClosedPositionsRoot();
+
+    if (closedTab) tabSeen = true;
+    if (closedRoot) rootSeen = true;
+
+    const tabReady = !needsTab || !!closedTab;
+    const rootReady = !needsRoot || !!closedRoot;
+    if (tabReady && rootReady) {
+      console.log(`TaliTrade: closed positions readiness (${stage}) ok after ${Date.now() - startedAt}ms`);
+      return { closedTab, closedRoot };
+    }
+
+    await new Promise(r => setTimeout(r, pollMs));
+  }
+
+  const waitedMs = Date.now() - startedAt;
+  console.warn(`TaliTrade: closed positions readiness (${stage}) timed out after ${waitedMs}ms`, {
+    tabSeen,
+    rootSeen,
+  });
+  return {
+    closedTab: getClosedPositionsTab(),
+    closedRoot: getClosedPositionsRoot(),
+  };
+}
+
 function scrapeClosedPositionRows() {
   const container = getClosedPositionsRoot();
   if (!container) return [];
@@ -582,13 +622,6 @@ function scrapeClosedPositionRows() {
     });
   } else {
     console.log(`TaliTrade: closed positions rows selector = ${rowSelectorUsed} (${rowEls.length} rows)`);
-  }
-
-  if (!rowEls.length) {
-    console.warn('TaliTrade: closed positions root found but no rows matched', {
-      tag: container.tagName?.toLowerCase(),
-      className: container.className || '',
-    });
   }
 
   rowEls.forEach(row => {
@@ -717,13 +750,23 @@ async function scrapeAndSyncHistory(config) {
   // Store config for scrapeClosedPositionRows profit sanity guard
   state.scrapeConfig = config;
 
+  // Wait for tab discovery first (root may be lazily mounted only after click).
+  const { closedTab } = await waitForClosedPositionsReadiness({ stage: 'tab' });
+
   // Ensure the Closed Positions tab is active
-  const closedTab = getClosedPositionsTab();
   if (!closedTab) {
     console.warn('TaliTrade: closed positions tab not found');
     return;
   }
   closedTab.click();
+  await new Promise(r => setTimeout(r, 500)); // allow lazy table mount after tab switch
+
+  // Now wait for the closed positions root to actually appear post-click.
+  const { closedRoot } = await waitForClosedPositionsReadiness({ stage: 'root', timeoutMs: 4000 });
+  if (!closedRoot) {
+    console.warn('TaliTrade: closed positions root not found after tab click');
+    return;
+  }
 
   // First run: set filter to Last 365 days for full history backfill.
   // All subsequent runs keep whatever filter is set (usually Last 24h is fine
