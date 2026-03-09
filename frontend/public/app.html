@@ -513,9 +513,21 @@ const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
 let TALI_BOT_USERNAME = String(TALI_CONFIG.botUsername || '').replace(/^@/, '').trim();
 let TALI_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__.botUsername' : 'unset';
+let TALI_CANONICAL_BOT_USERNAME = String(TALI_CONFIG.canonicalBotUsername || '').replace(/^@/, '').trim();
+let TALI_LOGIN_DOMAIN = String(TALI_CONFIG.loginDomain || '').trim().toLowerCase();
+let TALI_CANONICAL_LOGIN_DOMAIN = String(TALI_CONFIG.canonicalLoginDomain || '').trim().toLowerCase();
 if (!TALI_BOT_USERNAME) {
   TALI_BOT_USERNAME = 'TaliTradeBot';
   TALI_BOT_USERNAME_SOURCE = 'hardcoded_fallback';
+}
+if (!TALI_CANONICAL_BOT_USERNAME) {
+  TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
+}
+if (!TALI_CANONICAL_LOGIN_DOMAIN) {
+  TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
+}
+if (!TALI_LOGIN_DOMAIN) {
+  TALI_LOGIN_DOMAIN = TALI_CANONICAL_LOGIN_DOMAIN;
 }
 // ────────────────────────────────────────────────────────────────────────────
 
@@ -538,7 +550,23 @@ function validateTelegramLoginConfig() {
   if (!TALI_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(TALI_BOT_USERNAME)) {
     issues.push('bot_username_invalid');
   }
-  if (window.location.hostname === 'talitrade.com' || window.location.hostname === 'www.talitrade.com') {
+  if (!TALI_CANONICAL_BOT_USERNAME) {
+    issues.push('canonical_bot_username_missing');
+  }
+  if (TALI_BOT_USERNAME && TALI_CANONICAL_BOT_USERNAME && TALI_BOT_USERNAME !== TALI_CANONICAL_BOT_USERNAME) {
+    issues.push('bot_username_not_canonical');
+  }
+  const host = window.location.hostname.toLowerCase();
+  if (!TALI_CANONICAL_LOGIN_DOMAIN) {
+    issues.push('canonical_login_domain_missing');
+  }
+  if (TALI_LOGIN_DOMAIN && TALI_CANONICAL_LOGIN_DOMAIN && TALI_LOGIN_DOMAIN !== TALI_CANONICAL_LOGIN_DOMAIN) {
+    issues.push('login_domain_not_canonical');
+  }
+  if (host !== TALI_CANONICAL_LOGIN_DOMAIN) {
+    issues.push('host_not_canonical');
+  }
+  if (host === 'talitrade.com' || host === 'www.talitrade.com') {
     if (TALI_BOT_USERNAME.toLowerCase().includes('change') || TALI_BOT_USERNAME.toLowerCase().includes('your')) {
       issues.push('bot_username_placeholder_like');
     }
@@ -547,7 +575,7 @@ function validateTelegramLoginConfig() {
 }
 
 async function hydrateTelegramWidgetConfig() {
-  if (TALI_CONFIG.botUsername) return;
+  if (TALI_CONFIG.botUsername && TALI_CONFIG.canonicalBotUsername && TALI_CONFIG.loginDomain && TALI_CONFIG.canonicalLoginDomain) return;
   try {
     const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
     const res = await fetch(baseUrl + '/auth/telegram/config');
@@ -557,6 +585,18 @@ async function hydrateTelegramWidgetConfig() {
     if (fromApi) {
       TALI_BOT_USERNAME = fromApi;
       TALI_BOT_USERNAME_SOURCE = 'backend_/auth/telegram/config';
+    }
+    const canonicalFromApi = String(cfg?.canonicalBotUsername || '').replace(/^@/, '').trim();
+    if (canonicalFromApi) {
+      TALI_CANONICAL_BOT_USERNAME = canonicalFromApi;
+    }
+    const loginDomainFromApi = String(cfg?.loginDomain || '').trim().toLowerCase();
+    if (loginDomainFromApi) {
+      TALI_LOGIN_DOMAIN = loginDomainFromApi;
+    }
+    const canonicalLoginDomainFromApi = String(cfg?.canonicalLoginDomain || '').trim().toLowerCase();
+    if (canonicalLoginDomainFromApi) {
+      TALI_CANONICAL_LOGIN_DOMAIN = canonicalLoginDomainFromApi;
     }
   } catch (_) {}
 }
@@ -630,9 +670,9 @@ async function showTelegramStep() {
   step2.classList.add('visible');
 
   const issues = validateTelegramLoginConfig();
-  console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname}`);
+  console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN}`);
   if (issues.length) {
-    console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME });
+    console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME, host: window.location.hostname, loginDomain: TALI_LOGIN_DOMAIN, canonicalLoginDomain: TALI_CANONICAL_LOGIN_DOMAIN });
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));
     document.getElementById('tg-widget-loading').style.display = 'none';
     return;
