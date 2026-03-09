@@ -750,8 +750,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.routers import auth, accounts
-app.include_router(auth.router)
+from app.routers import accounts
 app.include_router(accounts.router)
 from app.core.database import engine
 
