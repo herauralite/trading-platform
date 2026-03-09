@@ -3,11 +3,17 @@
   "name": "TaliTrade Monitor",
   "version": "1.0",
   "description": "Monitors FundingPips account data",
-  "permissions": ["activeTab", "scripting", "alarms"],
+  "permissions": ["activeTab", "scripting", "alarms", "storage"],
   "host_permissions": [
     "https://mtr-platform.fundingpips.com/*",
     "https://trading-platform-production-70e0.up.railway.app/*"
   ],
+  "externally_connectable": {
+    "matches": [
+      "https://talitrade.com/*",
+      "https://www.talitrade.com/*"
+    ]
+  },
   "content_scripts": [
     {
       "matches": ["https://mtr-platform.fundingpips.com/*"],
@@ -23,4 +29,3 @@
     "default_title": "TaliTrade Monitor"
   }
 }
- 
