@@ -478,6 +478,8 @@ async function poll() {
   // Snapshot pending notifications — cleared only after successful send
   const closedTrades = [...state.pendingNotifications];
 
+  const telegramUserId = await getTelegramUserId();
+
   const payload = {
     profit:           data.profit,
     balance:          data.balance,
@@ -512,7 +514,7 @@ async function poll() {
     alerts,
     timestamp:       new Date().toISOString(),
     url:             window.location.href,
-    telegramUserId:  await getTelegramUserId(),  // null if user hasn't linked Telegram yet
+    telegramUserId,  // null if user hasn't linked Telegram yet
   };
 
   // Auto-link account to Telegram user (no-op if already done this session or not logged in)
@@ -526,11 +528,19 @@ async function poll() {
   });
 
   try {
-    await fetch(BACKEND_URL, {
+    const res = await fetch(BACKEND_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
     });
+    if (!res.ok) {
+      console.warn(`TaliTrade: extension/data returned HTTP ${res.status}`);
+      return;
+    }
+    const ack = await res.json().catch(() => ({}));
+    if (!telegramUserId || !ack.telegramLinked) {
+      console.warn(`TaliTrade: Telegram not linked for account ${config.accountId}; heartbeat sent without telegramUserId`);
+    }
     // Clear only the notifications we just sent — new ones queued during the fetch stay
     if (closedTrades.length) {
       state.pendingNotifications = state.pendingNotifications.filter(n => !closedTrades.includes(n));

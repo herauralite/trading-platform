@@ -953,8 +953,14 @@ async def link_account(
     broker: str = "fundingpips",
 ):
     """Link a prop account to a Telegram user. Called by the extension after detecting account info."""
+    if not str(telegram_user_id or "").strip():
+        return JSONResponse(status_code=400, content={"detail": "telegram_user_id is required"})
+    if not str(account_id or "").strip():
+        return JSONResponse(status_code=400, content={"detail": "account_id is required"})
+
     await db_link_account(telegram_user_id, account_id, account_type, account_size, label, broker)
     accounts = await db_get_user_accounts(telegram_user_id)
+    logger.info("Account linked via /auth/link-account user=%s account=%s", telegram_user_id, account_id)
     return {"ok": True, "accounts": accounts}
 
 @app.exception_handler(Exception)
@@ -977,6 +983,28 @@ async def send_telegram(message: str, chat_id: str = None):
             )
     except Exception as e:
         logger.error(f"Telegram error: {e}")
+
+
+def resolve_telegram_chat_target(telegram_user_id: str | None = None) -> str | None:
+    """Prefer per-user Telegram routing when we know the linked user id."""
+    uid = str(telegram_user_id or "").strip()
+    if uid:
+        return uid
+    return os.getenv("TELEGRAM_CHAT_ID")
+
+
+def telegram_command_matches(raw_cmd: str, base_cmd: str) -> bool:
+    """Match '/status' and '/status@<bot>' using configured or canonical bot username."""
+    cmd = (raw_cmd or "").strip().lower()
+    base = (base_cmd or "").strip().lower()
+    if not cmd or not base:
+        return False
+    if cmd == base:
+        return True
+
+    configured = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot")
+    bot_username = configured.strip().lstrip("@").lower()
+    return cmd == f"{base}@{bot_username}"
 
 
 async def setup_telegram_webhook():
@@ -1303,7 +1331,7 @@ async def telegram_webhook(request: Request):
     tg_uid   = str(tg_from.get("id", "")) if tg_from else chat_id
 
     # ── /start — register or welcome back ────────────────────────────────────
-    if cmd in ["/start", "/start@talitrade_bot"]:
+    if telegram_command_matches(cmd, "/start"):
         user = await db_upsert_user({
             "id":         tg_from.get("id"),
             "username":   tg_from.get("username"),
@@ -1341,13 +1369,13 @@ async def telegram_webhook(request: Request):
         "/news":    handle_news,
     }
     for c, fn in dispatch.items():
-        if cmd in [c, f"{c}@talitrade_bot"]:
+        if telegram_command_matches(cmd, c):
             await fn(chat_id, tg_uid=tg_uid); return {"ok": True}
 
-    if cmd in ["/payout",  "/payout@talitrade_bot"]:    await handle_payout(chat_id, tg_uid=tg_uid)
-    elif cmd in ["/summary", "/summary@talitrade_bot"]:  await send_daily_summary(date.today().isoformat(), chat_id=chat_id, tg_uid=tg_uid)
-    elif cmd in ["/week",    "/week@talitrade_bot"]:     await send_weekly_summary(chat_id=chat_id, tg_uid=tg_uid)
-    elif cmd in ["/help",    "/help@talitrade_bot"]:
+    if telegram_command_matches(cmd, "/payout"):    await handle_payout(chat_id, tg_uid=tg_uid)
+    elif telegram_command_matches(cmd, "/summary"):  await send_daily_summary(date.today().isoformat(), chat_id=chat_id, tg_uid=tg_uid)
+    elif telegram_command_matches(cmd, "/week"):     await send_weekly_summary(chat_id=chat_id, tg_uid=tg_uid)
+    elif telegram_command_matches(cmd, "/help"):
         await send_telegram(
             "🤖 <b>TaliTrade Commands</b>\n\n"
             "/status  — Live risk snapshot\n/today   — Today's trades & P&L\n"
@@ -1617,6 +1645,8 @@ async def receive_extension_data(data: ExtensionData):
       4. Detect profit drops / breakeven crossovers for live position alerts
     """
     account_id  = data.accountId or "unknown"
+    tg_uid      = str(data.telegramUserId or "").strip() or None
+    notify_chat = resolve_telegram_chat_target(tg_uid)
     prev        = account_data_store.get(account_id, {})
     prev_alerts = {a.get("type"): a.get("level") for a in (prev.get("alerts") or [])}
 
@@ -1626,7 +1656,6 @@ async def receive_extension_data(data: ExtensionData):
     }
 
     # Auto-link account to telegram user if telegramUserId is provided
-    tg_uid = data.telegramUserId
     if tg_uid and account_id != "unknown":
         try:
             await db_link_account(
@@ -1639,10 +1668,16 @@ async def receive_extension_data(data: ExtensionData):
         except Exception as e:
             logger.warning(f"Auto-link account failed: {e}")
 
+    if not tg_uid:
+        logger.info("Extension heartbeat without telegramUserId account=%s", account_id)
+
     # Rule violation alerts — only fire when level changes (prevents spam on restart)
     for alert in data.alerts:
         if prev_alerts.get(alert.get("type")) != alert.get("level"):
-            await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>")
+            await send_telegram(
+                alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>",
+                chat_id=notify_chat,
+            )
 
     # Real-time trade close alerts — arrive within 5s of detection
     for ct in data.closedTrades:
@@ -1656,7 +1691,8 @@ async def receive_extension_data(data: ExtensionData):
             f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n"
             f"{ct.get('symbol','?')} {ct.get('direction','?')} | "
             f"<b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n"
-            f"{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%"
+            f"{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%",
+            chat_id=notify_chat,
         )
 
     # Live position monitoring
@@ -1665,10 +1701,14 @@ async def receive_extension_data(data: ExtensionData):
         if prev_profit - curr_profit >= 10:
             await send_telegram(
                 f"📉 <b>Profit Drop</b>\nAccount: {account_id}\n"
-                f"${prev_profit:.2f} → ${curr_profit:.2f}  (-${prev_profit-curr_profit:.2f})"
+                f"${prev_profit:.2f} → ${curr_profit:.2f}  (-${prev_profit-curr_profit:.2f})",
+                chat_id=notify_chat,
             )
         if prev_profit < 0 and curr_profit >= 0:
-            await send_telegram(f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}")
+            await send_telegram(
+                f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}",
+                chat_id=notify_chat,
+            )
 
     risk = data.riskPerTradeIdea or {}; daily = data.dailyLoss or {}; overall = data.overallLoss or {}
     return {
@@ -1678,6 +1718,7 @@ async def receive_extension_data(data: ExtensionData):
         "dailyLoss":   {"used": daily.get("used"),       "remaining": daily.get("remaining"),   "pct": daily.get("pct")},
         "overallLoss": {"used": overall.get("used"),     "remaining": overall.get("remaining"), "pct": overall.get("pct")},
         "alerts_fired": len(data.alerts),
+        "telegramLinked": bool(tg_uid),
     }
 
 
