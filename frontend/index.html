@@ -849,8 +849,8 @@ footer{
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 const RAILWAY_URL = 'https://trading-platform-production-70e0.up.railway.app';
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
-const DEMO_BOT_USERNAME = String(TALI_CONFIG.botUsername || 'TaliTradeBot').replace(/^@/, '').trim();
-const DEMO_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__.botUsername' : 'hardcoded_fallback'; // must match BotFather @username exactly
+const DEMO_BOT_USERNAME = 'TaliTradeBot';
+const DEMO_BOT_USERNAME_SOURCE = 'hardcoded_canonical'; // must match BotFather @username exactly
 
 // ── Demo leaderboard ──────────────────────────────────────────────────────────
 function fetchDemoLeaderboard(){
