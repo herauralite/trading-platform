@@ -511,8 +511,12 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
-const TALI_BOT_USERNAME = String(TALI_CONFIG.botUsername || 'TaliTradeBot').replace(/^@/, '').trim();
-const TALI_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__.botUsername' : 'hardcoded_fallback';
+let TALI_BOT_USERNAME = String(TALI_CONFIG.botUsername || '').replace(/^@/, '').trim();
+let TALI_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__.botUsername' : 'unset';
+if (!TALI_BOT_USERNAME) {
+  TALI_BOT_USERNAME = 'TaliTradeBot';
+  TALI_BOT_USERNAME_SOURCE = 'hardcoded_fallback';
+}
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
@@ -539,6 +543,21 @@ function validateTelegramLoginConfig() {
     }
   }
   return issues;
+}
+
+async function hydrateTelegramWidgetConfig() {
+  if (TALI_CONFIG.botUsername) return;
+  try {
+    const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
+    const res = await fetch(baseUrl + '/auth/telegram/config');
+    if (!res.ok) return;
+    const cfg = await res.json();
+    const fromApi = String(cfg?.botUsername || '').replace(/^@/, '').trim();
+    if (fromApi) {
+      TALI_BOT_USERNAME = fromApi;
+      TALI_BOT_USERNAME_SOURCE = 'backend_/auth/telegram/config';
+    }
+  } catch (_) {}
 }
 
 function parseTelegramAuthFailure(res, body) {
@@ -602,7 +621,9 @@ window.gateSubmit = function() {
 };
 
 // ── Step 2: show Telegram widget ─────────────────────────────────────────────
-function showTelegramStep() {
+async function showTelegramStep() {
+  await hydrateTelegramWidgetConfig();
+
   const step2 = document.getElementById('gate-step2');
   step2.style.display = 'block';
   step2.classList.add('visible');
