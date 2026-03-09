@@ -561,6 +561,18 @@ function validateTelegramLoginConfig() {
   return issues;
 }
 
+function normalizeTelegramLoginHostIfNeeded() {
+  const canonicalHost = (TALI_CANONICAL_LOGIN_DOMAIN || '').toLowerCase();
+  const currentHost = window.location.hostname.toLowerCase();
+  if (!canonicalHost || !currentHost) return false;
+  if (currentHost !== `www.${canonicalHost}`) return false;
+
+  const target = `${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (target === window.location.href) return false;
+  window.location.replace(target);
+  return true;
+}
+
 async function hydrateTelegramWidgetConfig() {
   if (TALI_CONFIG.botUsername && TALI_CONFIG.canonicalBotUsername && TALI_CONFIG.loginDomain && TALI_CONFIG.canonicalLoginDomain) return;
   try {
@@ -651,6 +663,10 @@ window.gateSubmit = function() {
 // ── Step 2: show Telegram widget ─────────────────────────────────────────────
 async function showTelegramStep() {
   await hydrateTelegramWidgetConfig();
+
+  if (normalizeTelegramLoginHostIfNeeded()) {
+    return;
+  }
 
   const step2 = document.getElementById('gate-step2');
   step2.style.display = 'block';
