@@ -850,22 +850,16 @@ async def demo_leaderboard(limit: int = 10):
 
 @app.get("/auth/telegram/config")
 async def telegram_auth_config():
-    """Expose Telegram widget config so frontend is not hardcoded to one bot username."""
-    configured_bot_username = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
+    """Expose canonical Telegram widget config used by the frontend."""
     canonical_bot_username = "TaliTradeBot"
-    configured_login_domain = os.getenv("TELEGRAM_LOGIN_DOMAIN", "").strip().lower()
-    configured_login_domain = configured_login_domain.replace("https://", "").replace("http://", "").split("/")[0]
     canonical_login_domain = "talitrade.com"
-    if configured_login_domain.startswith("www."):
-        configured_login_domain = configured_login_domain[4:]
-    login_domain = configured_login_domain or canonical_login_domain
     return {
-        "botUsername": configured_bot_username,
+        "botUsername": canonical_bot_username,
         "canonicalBotUsername": canonical_bot_username,
-        "botUsernameMatchesCanonical": configured_bot_username == canonical_bot_username,
-        "loginDomain": login_domain,
+        "botUsernameMatchesCanonical": True,
+        "loginDomain": canonical_login_domain,
         "canonicalLoginDomain": canonical_login_domain,
-        "loginDomainMatchesCanonical": login_domain == canonical_login_domain,
+        "loginDomainMatchesCanonical": True,
         "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
     }
 
