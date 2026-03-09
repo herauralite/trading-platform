@@ -1604,6 +1604,26 @@ function renderNoAccountState(kind='default'){
     const el=document.getElementById(id);
     if(el)el.textContent='—';
   });
+  ['Wr','Pf','Netpl','Trades'].forEach(k=>{
+    const skel=document.getElementById('skel'+k);
+    const realId=k==='Wr'?'wr':k==='Pf'?'pf':k==='Netpl'?'netpl':'totalTrades';
+    const real=document.getElementById(realId);
+    if(skel){
+      skel.classList.remove('sk-in');
+      skel.classList.add('sk-out');
+    }
+    if(real){
+      real.classList.remove('sk-out');
+      real.classList.add('sk-in');
+      if(realId==='wr'||realId==='netpl') real.className='stat-box-val txt-dim sk-fade sk-in';
+      else real.className='stat-box-val sk-fade sk-in';
+    }
+  });
+  const analyticsRow2=document.getElementById('analyticsRow2');
+  if(analyticsRow2){
+    analyticsRow2.classList.remove('sk-out');
+    analyticsRow2.classList.add('sk-in');
+  }
   const wrSub=document.getElementById('wrSub'); if(wrSub)wrSub.textContent='Connect an account';
   const wlSub=document.getElementById('wlSub'); if(wlSub)wlSub.textContent='Waiting for first sync';
   const greenStreakSub=document.getElementById('greenStreakSub'); if(greenStreakSub)greenStreakSub.textContent='Waiting for first green day';
