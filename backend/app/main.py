@@ -350,7 +350,10 @@ def verify_telegram_auth(data: dict) -> tuple[bool, str]:
     if not check_hash:
         return False, "missing_hash"
 
-    data_check = {k: v for k, v in data.items() if k != "hash"}
+    data_check = {
+        k: v for k, v in data.items()
+        if k != "hash" and v is not None
+    }
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data_check.items()))
     secret_key = hashlib.sha256(token.encode()).digest()
     computed   = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
@@ -747,8 +750,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.routers import auth, accounts
-app.include_router(auth.router)
+from app.routers import accounts
 app.include_router(accounts.router)
 from app.core.database import engine
 
@@ -844,6 +846,17 @@ async def demo_leaderboard(limit: int = 10):
         """), {"lim": min(limit, 50)})
         rows = [dict(r) for r in result.mappings().all()]
     return {"leaderboard": rows}
+
+
+@app.get("/auth/telegram/config")
+async def telegram_auth_config():
+    """Expose Telegram widget config so frontend is not hardcoded to one bot username."""
+    return {
+        "botUsername": os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@"),
+        "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
+    }
+
+
 class TelegramAuthData(BaseModel):
     id: int
     first_name: str | None = None
@@ -861,7 +874,7 @@ async def telegram_login(data: TelegramAuthData):
     Returns user profile + their linked prop accounts.
     Called from the web app after the Telegram Login Widget fires.
     """
-    payload = data.dict()
+    payload = data.dict(exclude_none=True)
     is_valid, reason = verify_telegram_auth(payload)
     if not is_valid:
         logger.warning(
