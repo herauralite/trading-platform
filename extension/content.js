@@ -533,6 +533,22 @@ function getClosedPositionsRoot() {
 // Sole writer to the trades table. Reads from the FundingPips closed positions
 // tab so closed_at timestamps and pnl values are authoritative.
 
+
+function getClosedPositionsTab() {
+  const selectors = [
+    '[tabid="closed"]',
+    '[data-testid*="closed"][role="tab"]',
+    '[role="tab"][aria-controls*="closed"]',
+  ];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) return el;
+  }
+  const byText = [...document.querySelectorAll('button, [role="tab"], [class*="tab"]')]
+    .find(el => /closed\s*positions/i.test(el.innerText || ''));
+  return byText || null;
+}
+
 function scrapeClosedPositionRows() {
   const container = getClosedPositionsRoot();
   if (!container) return [];
@@ -540,10 +556,33 @@ function scrapeClosedPositionRows() {
   const acctSz = state.scrapeConfig?.accountSize || 10000;
   const rows   = [];
 
-  const rowEls = container.querySelectorAll(
-    '.ui-list__row-wrapper > *, ui-list-row, [data-testid*="row"], ' +
-    '.ui-list__inner-container > div:not(.ui-list__header-wrapper)'
-  );
+  const rowSelectors = [
+    '.ui-list__row-wrapper > *',
+    'ui-list-row',
+    '[data-testid*="closed"][data-testid*="row"]',
+    '[data-testid*="row"]',
+    '[role="row"]',
+    '.ui-list__inner-container > div:not(.ui-list__header-wrapper)',
+  ];
+  let rowEls = [];
+  let rowSelectorUsed = '';
+  for (const sel of rowSelectors) {
+    const matched = [...container.querySelectorAll(sel)];
+    if (matched.length) {
+      rowEls = matched;
+      rowSelectorUsed = sel;
+      break;
+    }
+  }
+
+  if (!rowEls.length) {
+    console.warn('TaliTrade: closed positions root found but no rows matched', {
+      tag: container.tagName?.toLowerCase(),
+      className: container.className || '',
+    });
+  } else {
+    console.log(`TaliTrade: closed positions rows selector = ${rowSelectorUsed} (${rowEls.length} rows)`);
+  }
 
   if (!rowEls.length) {
     console.warn('TaliTrade: closed positions root found but no rows matched', {
@@ -679,8 +718,11 @@ async function scrapeAndSyncHistory(config) {
   state.scrapeConfig = config;
 
   // Ensure the Closed Positions tab is active
-  const closedTab = document.querySelector('[tabid="closed"]');
-  if (!closedTab) return;
+  const closedTab = getClosedPositionsTab();
+  if (!closedTab) {
+    console.warn('TaliTrade: closed positions tab not found');
+    return;
+  }
   closedTab.click();
 
   // First run: set filter to Last 365 days for full history backfill.
