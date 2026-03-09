@@ -607,6 +607,47 @@ function makeTradeKey(row) {
   return `${row.symbol}_${row.direction}_${row.closeTime}_${row.profit}`;
 }
 
+function resolveClosedPositionsScrollTarget() {
+  const root = document.querySelector('trade-closed-positions-desktop');
+  if (!root) return null;
+
+  const candidates = [
+    '.cdk-virtual-scroll-viewport',
+    '.ui-list__inner-container',
+    '.ui-list__content',
+    '.ui-list',
+    '[class*="virtual-scroll"]',
+    '[class*="scroll"]',
+  ];
+
+  // Prefer the first element that is actually scrollable.
+  for (const selector of candidates) {
+    for (const el of root.querySelectorAll(selector)) {
+      if ((el.scrollHeight - el.clientHeight) > 20) {
+        console.log(`TaliTrade: closed positions scroll target = ${selector}`);
+        return el;
+      }
+    }
+  }
+
+  // Fallback: inspect descendants and find the largest scrollable region.
+  let best = null;
+  for (const el of root.querySelectorAll('*')) {
+    const delta = el.scrollHeight - el.clientHeight;
+    if (delta > 20 && (!best || delta > (best.scrollHeight - best.clientHeight))) {
+      best = el;
+    }
+  }
+
+  if (best) {
+    console.log(`TaliTrade: closed positions scroll target fallback = ${best.tagName.toLowerCase()}${best.className ? '.' + best.className.toString().replace(/\s+/g, '.') : ''}`);
+    return best;
+  }
+
+  console.warn('TaliTrade: no scrollable closed positions container found; using root element');
+  return root;
+}
+
 async function scrapeAndSyncHistory(config) {
   // Store config for scrapeClosedPositionRows profit sanity guard
   state.scrapeConfig = config;
@@ -650,10 +691,7 @@ async function scrapeAndSyncHistory(config) {
 
   // Scroll through the virtualized list to load ALL rows
   const allRowsMap = new Map(); // key → row, deduped
-  const scrollContainer =
-    document.querySelector('trade-closed-positions-desktop .ui-list__inner-container') ||
-    document.querySelector('trade-closed-positions-desktop .cdk-virtual-scroll-viewport') ||
-    document.querySelector('trade-closed-positions-desktop');
+  const scrollContainer = resolveClosedPositionsScrollTarget();
 
   if (scrollContainer) {
     let lastCount = -1;
@@ -675,8 +713,11 @@ async function scrapeAndSyncHistory(config) {
         lastCount = allRowsMap.size;
       }
 
-      // Scroll down by one page height
-      scrollContainer.scrollTop += scrollContainer.clientHeight || 400;
+      // Scroll down by one page height.
+      // Some virtualized lists only react to wheel events, so dispatch one as backup.
+      const step = scrollContainer.clientHeight || 400;
+      scrollContainer.scrollTop += step;
+      scrollContainer.dispatchEvent(new WheelEvent('wheel', { deltaY: step, bubbles: true }));
       await new Promise(r => setTimeout(r, 600));
     }
 
