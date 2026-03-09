@@ -510,9 +510,9 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
-let TALI_BOT_USERNAME = 'TaliTradeBot';
+let TALI_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
 let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
-let TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
+let TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
 let TALI_LOGIN_DOMAIN = 'talitrade.com';
 let TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
 // ────────────────────────────────────────────────────────────────────────────
@@ -532,6 +532,12 @@ function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
   errEl.textContent = message;
   errEl.style.display = 'block';
+}
+
+function normalizeTelegramBotUsername(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  return raw.replace(/^@+/, '');
 }
 
 function normalizeLoginHost(value, stripWww = false) {
@@ -604,7 +610,7 @@ async function hydrateTelegramWidgetConfig() {
     const res = await fetch(baseUrl + '/auth/telegram/config');
     if (!res.ok) return;
     const cfg = await res.json();
-    const botFromApi = String(cfg?.canonicalBotUsername || cfg?.botUsername || '').trim();
+    const botFromApi = normalizeTelegramBotUsername(cfg?.canonicalBotUsername || cfg?.botUsername);
     if (botFromApi && /^[A-Za-z0-9_]{5,64}$/.test(botFromApi)) {
       TALI_BOT_USERNAME = botFromApi;
       TALI_CANONICAL_BOT_USERNAME = botFromApi;
@@ -694,6 +700,9 @@ async function showTelegramStep() {
     return;
   }
   taliStep2InitStarted = true;
+
+  TALI_BOT_USERNAME = normalizeTelegramBotUsername(TALI_BOT_USERNAME);
+  TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername(TALI_CANONICAL_BOT_USERNAME) || TALI_BOT_USERNAME;
 
   const issues = validateTelegramLoginConfig();
   console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN}`);
