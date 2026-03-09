@@ -854,7 +854,10 @@ async def telegram_auth_config():
     configured_bot_username = os.getenv("TELEGRAM_BOT_USERNAME", "").strip().lstrip("@")
     canonical_bot_username = "TaliTradeBot"
     configured_login_domain = os.getenv("TELEGRAM_LOGIN_DOMAIN", "").strip().lower()
+    configured_login_domain = configured_login_domain.replace("https://", "").replace("http://", "").split("/")[0]
     canonical_login_domain = "talitrade.com"
+    if configured_login_domain.startswith("www."):
+        configured_login_domain = configured_login_domain[4:]
     login_domain = configured_login_domain or canonical_login_domain
     return {
         "botUsername": configured_bot_username,
