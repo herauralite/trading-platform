@@ -23,14 +23,42 @@ const TALI_STORAGE_KEY = 'tali_telegram_uid';  // key in chrome.storage.local
 // to chrome.storage.local via externally_connectable messaging (see manifest.json),
 // and we read it here. Falls back to null gracefully if not set yet.
 let _cachedTelegramUserId = null;
+let _telegramUserIdLoaded = false;
+
+function normalizeTelegramUserId(value) {
+  if (value == null) return null;
+  const str = String(value).trim();
+  return str || null;
+}
+
+function setCachedTelegramUserId(value) {
+  _cachedTelegramUserId = normalizeTelegramUserId(value);
+  _telegramUserIdLoaded = true;
+}
+
+function clearTelegramUserIdCache() {
+  _cachedTelegramUserId = null;
+  _telegramUserIdLoaded = false;
+}
 
 async function getTelegramUserId() {
-  if (_cachedTelegramUserId) return _cachedTelegramUserId;
+  if (_telegramUserIdLoaded) return _cachedTelegramUserId;
   try {
     const result = await chrome.storage.local.get(TALI_STORAGE_KEY);
-    _cachedTelegramUserId = result[TALI_STORAGE_KEY] || null;
+    setCachedTelegramUserId(result[TALI_STORAGE_KEY]);
     return _cachedTelegramUserId;
   } catch(e) { return null; }
+}
+
+if (chrome?.storage?.onChanged) {
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'local' || !changes[TALI_STORAGE_KEY]) return;
+    const nextUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].newValue);
+    const prevUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].oldValue);
+    if (nextUid) setCachedTelegramUserId(nextUid);
+    else clearTelegramUserIdCache();
+    if (nextUid !== prevUid) linkedAccountsThisSession.clear();
+  });
 }
 
 // Auto-link an account to the logged-in Telegram user (fire-and-forget).
@@ -38,8 +66,9 @@ async function getTelegramUserId() {
 const linkedAccountsThisSession = new Set();
 async function ensureAccountLinked(accountId, accountType, accountSize, accountLabel) {
   const tgUid = await getTelegramUserId();
-  if (!tgUid || linkedAccountsThisSession.has(accountId)) return;
-  linkedAccountsThisSession.add(accountId);  // optimistic — avoids duplicate calls
+  const sessionLinkKey = tgUid && accountId ? `${tgUid}:${accountId}` : null;
+  if (!sessionLinkKey || linkedAccountsThisSession.has(sessionLinkKey)) return;
+  linkedAccountsThisSession.add(sessionLinkKey);  // optimistic — avoids duplicate calls
   try {
     const params = new URLSearchParams({
       telegram_user_id: tgUid,
@@ -52,7 +81,7 @@ async function ensureAccountLinked(accountId, accountType, accountSize, accountL
     await fetch(BASE_URL + '/auth/link-account?' + params.toString(), { method: 'POST' });
     console.log(`TaliTrade: account ${accountId} linked to Telegram user ${tgUid}`);
   } catch(e) {
-    linkedAccountsThisSession.delete(accountId);  // allow retry next cycle
+    linkedAccountsThisSession.delete(sessionLinkKey);  // allow retry next cycle
   }
 }
 
@@ -707,6 +736,18 @@ function resolveClosedPositionsScrollTarget() {
     return null;
   }
 
+  const isScrollable = (el) => !!el && ((el.scrollHeight - el.clientHeight) > 20);
+
+  // Some FundingPips builds keep the scroll container on a parent wrapper.
+  let parent = root.parentElement;
+  while (parent) {
+    if (isScrollable(parent)) {
+      console.log(`TaliTrade: closed positions scroll target parent = ${parent.tagName.toLowerCase()}${parent.className ? '.' + parent.className.toString().replace(/\s+/g, '.') : ''}`);
+      return parent;
+    }
+    parent = parent.parentElement;
+  }
+
   const candidates = [
     '.cdk-virtual-scroll-viewport',
     '.ui-list__inner-container',
@@ -719,11 +760,16 @@ function resolveClosedPositionsScrollTarget() {
   // Prefer the first element that is actually scrollable.
   for (const selector of candidates) {
     for (const el of root.querySelectorAll(selector)) {
-      if ((el.scrollHeight - el.clientHeight) > 20) {
-        console.log(`TaliTrade: closed positions scroll target = ${selector}`);
+      if (isScrollable(el)) {
+        console.log(`TaliTrade: closed positions scroll target = ${selector} (h=${el.clientHeight}, sh=${el.scrollHeight})`);
         return el;
       }
     }
+  }
+
+  if (isScrollable(root)) {
+    console.log(`TaliTrade: closed positions scroll target = root (h=${root.clientHeight}, sh=${root.scrollHeight})`);
+    return root;
   }
 
   // Fallback: inspect descendants and find the largest scrollable region.
@@ -817,10 +863,18 @@ async function scrapeAndSyncHistory(config) {
 
       // Scroll down by one page height.
       // Some virtualized lists only react to wheel events, so dispatch one as backup.
-      const step = scrollContainer.clientHeight || 400;
+      const step = Math.max(240, scrollContainer.clientHeight || 400);
+      const before = scrollContainer.scrollTop;
       scrollContainer.scrollTop += step;
       scrollContainer.dispatchEvent(new WheelEvent('wheel', { deltaY: step, bubbles: true }));
+      if (scrollContainer.scrollTop === before) {
+        scrollContainer.scrollBy?.({ top: step, behavior: 'auto' });
+        scrollContainer.dispatchEvent(new Event('scroll', { bubbles: true }));
+      }
       await new Promise(r => setTimeout(r, 600));
+
+      const atBottom = (scrollContainer.scrollTop + scrollContainer.clientHeight) >= (scrollContainer.scrollHeight - 4);
+      if (atBottom && staleRounds >= 1) break;
     }
 
     // Reset scroll to top so the UI looks normal
