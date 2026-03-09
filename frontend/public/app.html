@@ -582,11 +582,11 @@ async function hydrateTelegramWidgetConfig() {
     const res = await fetch(baseUrl + '/auth/telegram/config');
     if (!res.ok) return;
     const cfg = await res.json();
-    const botFromApi = String(cfg?.canonicalBotUsername || cfg?.botUsername || '').trim();
-    if (botFromApi && /^[A-Za-z0-9_]{5,64}$/.test(botFromApi)) {
+    const botFromApi = String(cfg?.canonicalBotUsername || '').trim();
+    if (botFromApi === 'TaliTradeBot') {
       TALI_BOT_USERNAME = botFromApi;
       TALI_CANONICAL_BOT_USERNAME = botFromApi;
-      TALI_BOT_USERNAME_SOURCE = 'backend_config';
+      TALI_BOT_USERNAME_SOURCE = 'backend_config_canonical';
     }
     const loginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain, true);
     if (loginDomainFromApi) {
