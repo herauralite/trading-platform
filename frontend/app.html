@@ -525,6 +525,7 @@ const TALI_TG_DONE_KEY = 'tali_tg_done';       // sessionStorage — require Tel
 
 let taliTelegramAuthStarted = false;
 let taliWidgetFailureTimer = null;
+let taliAccountSyncTimer = null;
 
 function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
@@ -702,25 +703,7 @@ window.onTelegramAuth = async function(tgUser) {
     const user = data.user;
 
     // Populate ACCOUNTS map dynamically from this user's linked accounts
-    const linkedAccounts = data.accounts || [];
-    Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]); // clear any stale data
-    const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
-    linkedAccounts.forEach((acct, i) => {
-      const sizeK = acct.accountSize ? Math.round(acct.accountSize/1000)+'K' : '';
-      const typeLabel = (acct.accountType||'').includes('master') ? 'Master' : 'Eval';
-      ACCOUNTS[acct.accountId] = {
-        label: acct.label || (sizeK ? sizeK+' '+typeLabel : acct.accountId),
-        short: typeLabel,
-        color: colors[i % colors.length],
-        idx:   i + 1
-      };
-    });
-    if (linkedAccounts.length > 0) {
-      activeAcct = linkedAccounts[0].accountId;
-    } else {
-      activeAcct = '';
-      renderNoAccountState();
-    }
+    hydrateAccountsMap(data.accounts || []);
 
     // 2. Persist user
     localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
@@ -780,6 +763,7 @@ window.onTelegramAuth = async function(tgUser) {
 
     // 4. Update topbar
     applyUserToTopbar(user);
+    startAccountLinkWatcher(user.telegramUserId);
 
     // 5. Dismiss gate
     const gate = document.getElementById('gate');
@@ -809,6 +793,70 @@ function getTaliUser() {
     const u = JSON.parse(raw);
     return u?.telegramUserId ? u : null;
   } catch(e) { localStorage.removeItem(TALI_USER_KEY); return null; }
+}
+
+
+function hydrateAccountsMap(linkedAccounts, keepActive=true) {
+  const prevActive = activeAcct;
+  Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]);
+  const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
+  linkedAccounts.forEach((acct, i) => {
+    const sizeK = acct.accountSize ? Math.round(acct.accountSize/1000)+'K' : '';
+    const typeLabel = (acct.accountType||'').includes('master') ? 'Master' : 'Eval';
+    ACCOUNTS[acct.accountId] = {
+      label: acct.label || (sizeK ? sizeK+' '+typeLabel : acct.accountId),
+      short: typeLabel,
+      color: colors[i % colors.length],
+      idx:   i + 1
+    };
+  });
+  if (linkedAccounts.length > 0) {
+    const hasPrev = keepActive && prevActive && ACCOUNTS[prevActive];
+    activeAcct = hasPrev ? prevActive : linkedAccounts[0].accountId;
+    showOnboardingCard(false);
+    renderAcctSheet();
+  } else {
+    activeAcct = '';
+    renderNoAccountState();
+  }
+}
+
+async function syncLinkedAccountsFromBackend(telegramUserId) {
+  if (!telegramUserId) return false;
+  try {
+    const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
+    const res = await fetch(baseUrl + '/auth/me?telegram_user_id=' + encodeURIComponent(telegramUserId));
+    if (!res.ok) return false;
+    const data = await res.json();
+    const linkedAccounts = data.accounts || [];
+    const hadAccounts = hasLinkedAccounts();
+    hydrateAccountsMap(linkedAccounts, true);
+    if (!hadAccounts && linkedAccounts.length > 0) {
+      fetchStatus();
+      fetchAnalytics();
+      fetchJournal();
+      fetchPayout();
+      if (taliAccountSyncTimer) {
+        clearInterval(taliAccountSyncTimer);
+        taliAccountSyncTimer = null;
+      }
+      return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
+function startAccountLinkWatcher(telegramUserId) {
+  if (taliAccountSyncTimer) clearInterval(taliAccountSyncTimer);
+  if (!telegramUserId || hasLinkedAccounts()) return;
+  syncLinkedAccountsFromBackend(telegramUserId);
+  taliAccountSyncTimer = setInterval(async () => {
+    const linked = await syncLinkedAccountsFromBackend(telegramUserId);
+    if (linked && taliAccountSyncTimer) {
+      clearInterval(taliAccountSyncTimer);
+      taliAccountSyncTimer = null;
+    }
+  }, 10000);
 }
 
 function applyUserToTopbar(user) {
@@ -1515,6 +1563,13 @@ function pnl(v){if(v==null)return'$—';return(v>=0?'+$':'-$')+Math.abs(v).toLoc
 function hasLinkedAccounts(){
   return Object.keys(ACCOUNTS).length > 0;
 }
+
+const bootstrapTaliUser=getTaliUser();
+if(bootstrapTaliUser){
+  syncLinkedAccountsFromBackend(bootstrapTaliUser.telegramUserId);
+  startAccountLinkWatcher(bootstrapTaliUser.telegramUserId);
+}
+
 
 function showOnboardingCard(show=true){
   const el=document.getElementById('onboardCard');
