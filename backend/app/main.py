@@ -340,24 +340,36 @@ async def db_link_account(telegram_user_id: str, account_id: str, account_type: 
         })
 
 
-def verify_telegram_auth(data: dict) -> bool:
+def verify_telegram_auth(data: dict) -> tuple[bool, str]:
     """Verify Telegram Login Widget data using HMAC-SHA256."""
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     if not token:
-        return False
+        return False, "missing_bot_token"
+
     check_hash = data.get("hash", "")
-    data_check = {k: v for k, v in data.items() if k != "hash"}
+    if not check_hash:
+        return False, "missing_hash"
+
+    # Telegram signs only fields that are actually present in the widget payload.
+    # Exclude None/empty values to avoid false hash mismatches for optional fields
+    # like username/last_name/photo_url.
+    data_check = {k: v for k, v in data.items() if k != "hash" and v not in (None, "")}
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data_check.items()))
     secret_key = hashlib.sha256(token.encode()).digest()
     computed   = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
+
     # Also check auth_date is not older than 24h
     try:
         auth_age = datetime.now(timezone.utc).timestamp() - int(data.get("auth_date", 0))
         if auth_age > 86400:
-            return False
+            return False, "auth_expired"
     except Exception:
-        pass
-    return hmac.compare_digest(computed, check_hash)
+        return False, "invalid_auth_date"
+
+    if not hmac.compare_digest(computed, check_hash):
+        return False, "hash_mismatch"
+
+    return True, "ok"
 
 
 def parse_dt(val):
@@ -852,9 +864,24 @@ async def telegram_login(data: TelegramAuthData):
     Returns user profile + their linked prop accounts.
     Called from the web app after the Telegram Login Widget fires.
     """
-    payload = data.dict()
-    if not verify_telegram_auth(payload):
-        return JSONResponse(status_code=401, content={"detail": "Invalid Telegram auth data"})
+    payload = data.dict(exclude_none=True)
+    is_valid, reason = verify_telegram_auth(payload)
+    if not is_valid:
+        logger.warning(
+            "Telegram login rejected: reason=%s user_id=%s username=%s host=%s",
+            reason,
+            data.id,
+            data.username,
+            payload.get("origin") or payload.get("host") or "unknown",
+        )
+        return JSONResponse(
+            status_code=401,
+            content={
+                "detail": "Invalid Telegram auth data",
+                "reason": reason,
+                "hint": "Check bot username, bot token, and BotFather /setdomain for talitrade.com",
+            },
+        )
 
     user = await db_upsert_user({"id": data.id, "username": data.username,
                                   "first_name": data.first_name, "last_name": data.last_name,
