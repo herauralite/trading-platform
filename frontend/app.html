@@ -516,6 +516,19 @@ let TALI_BOT_USERNAME_SOURCE = TALI_CONFIG.botUsername ? 'window.__TALI_CONFIG__
 let TALI_CANONICAL_BOT_USERNAME = String(TALI_CONFIG.canonicalBotUsername || '').replace(/^@/, '').trim();
 let TALI_LOGIN_DOMAIN = String(TALI_CONFIG.loginDomain || '').trim().toLowerCase();
 let TALI_CANONICAL_LOGIN_DOMAIN = String(TALI_CONFIG.canonicalLoginDomain || '').trim().toLowerCase();
+if (!TALI_BOT_USERNAME) {
+  TALI_BOT_USERNAME = 'TaliTradeBot';
+  TALI_BOT_USERNAME_SOURCE = 'hardcoded_fallback';
+}
+if (!TALI_CANONICAL_BOT_USERNAME) {
+  TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
+}
+if (!TALI_CANONICAL_LOGIN_DOMAIN) {
+  TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
+}
+if (!TALI_LOGIN_DOMAIN) {
+  TALI_LOGIN_DOMAIN = TALI_CANONICAL_LOGIN_DOMAIN;
+}
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
