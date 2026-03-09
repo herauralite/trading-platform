@@ -510,11 +510,11 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
-const TALI_BOT_USERNAME = 'TaliTradeBot';
-const TALI_BOT_USERNAME_SOURCE = 'canonical_constant';
-const TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
+let TALI_BOT_USERNAME = 'TaliTradeBot';
+let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
+let TALI_CANONICAL_BOT_USERNAME = 'TaliTradeBot';
 let TALI_LOGIN_DOMAIN = 'talitrade.com';
-const TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
+let TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
@@ -604,9 +604,16 @@ async function hydrateTelegramWidgetConfig() {
     const res = await fetch(baseUrl + '/auth/telegram/config');
     if (!res.ok) return;
     const cfg = await res.json();
+    const botFromApi = String(cfg?.canonicalBotUsername || cfg?.botUsername || '').trim();
+    if (botFromApi && /^[A-Za-z0-9_]{5,64}$/.test(botFromApi)) {
+      TALI_BOT_USERNAME = botFromApi;
+      TALI_CANONICAL_BOT_USERNAME = botFromApi;
+      TALI_BOT_USERNAME_SOURCE = 'backend_config';
+    }
     const loginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain, true);
     if (loginDomainFromApi) {
       TALI_LOGIN_DOMAIN = loginDomainFromApi;
+      TALI_CANONICAL_LOGIN_DOMAIN = loginDomainFromApi;
     }
   } catch (_) {}
 }
