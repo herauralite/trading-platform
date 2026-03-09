@@ -534,10 +534,13 @@ if (!TALI_LOGIN_DOMAIN) {
 const TALI_USER_KEY    = 'tali_user_v1';
 const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each browser session
 const TALI_TG_DONE_KEY = 'tali_tg_done';       // sessionStorage — require Telegram every session
+const TALI_HOST_NORMALIZE_GUARD_KEY = 'tali_host_normalize_guard_v1';
 
 let taliTelegramAuthStarted = false;
 let taliWidgetFailureTimer = null;
 let taliAccountSyncTimer = null;
+let taliStep2InitStarted = false;
+let taliWidgetScriptInjected = false;
 
 function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
@@ -575,13 +578,27 @@ function validateTelegramLoginConfig() {
 }
 
 function normalizeTelegramLoginHostIfNeeded() {
-  const canonicalHost = (TALI_CANONICAL_LOGIN_DOMAIN || '').toLowerCase();
+  const canonicalHost = (TALI_CANONICAL_LOGIN_DOMAIN || '').toLowerCase().replace(/^www\./, '');
   const currentHost = window.location.hostname.toLowerCase();
   if (!canonicalHost || !currentHost) return false;
-  if (currentHost !== `www.${canonicalHost}`) return false;
+
+  const allowedHosts = new Set([canonicalHost, `www.${canonicalHost}`]);
+  if (!allowedHosts.has(currentHost)) return false;
+
+  // Avoid production redirect loops if upstream host canonicalization bounces hosts.
+  const shouldNormalize = currentHost === `www.${canonicalHost}`;
+  if (!shouldNormalize) return false;
 
   const target = `${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`;
   if (target === window.location.href) return false;
+
+  const guardValue = `${currentHost}->${canonicalHost}:${window.location.pathname}${window.location.search}`;
+  if (sessionStorage.getItem(TALI_HOST_NORMALIZE_GUARD_KEY) === guardValue) {
+    console.warn('TaliTrade: host normalization skipped to prevent repeat redirect', { currentHost, canonicalHost });
+    return false;
+  }
+
+  sessionStorage.setItem(TALI_HOST_NORMALIZE_GUARD_KEY, guardValue);
   window.location.replace(target);
   return true;
 }
@@ -685,6 +702,11 @@ async function showTelegramStep() {
   step2.style.display = 'block';
   step2.classList.add('visible');
 
+  if (taliStep2InitStarted) {
+    return;
+  }
+  taliStep2InitStarted = true;
+
   const issues = validateTelegramLoginConfig();
   console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN}`);
   if (issues.length) {
@@ -695,7 +717,15 @@ async function showTelegramStep() {
   }
 
   const wrap = document.getElementById('tg-widget-wrap');
-  wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>';
+  if (!taliWidgetScriptInjected) {
+    wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>';
+  }
+
+  const existingScript = wrap.querySelector('script[data-tali-telegram-widget="1"]');
+  if (existingScript) {
+    taliWidgetScriptInjected = true;
+    return;
+  }
 
   const script = document.createElement('script');
   script.async = true;
@@ -705,7 +735,9 @@ async function showTelegramStep() {
   script.setAttribute('data-radius',          '10');
   script.setAttribute('data-onauth',          'onTelegramAuth(user)');
   script.setAttribute('data-request-access',  'write');
+  script.setAttribute('data-tali-telegram-widget', '1');
   script.onload = () => {
+    taliWidgetScriptInjected = true;
     document.getElementById('tg-widget-loading').style.display = 'none';
     if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
     taliWidgetFailureTimer = setTimeout(() => {
@@ -716,6 +748,8 @@ async function showTelegramStep() {
     }, 20000);
   };
   script.onerror = () => {
+    taliStep2InitStarted = false;
+    taliWidgetScriptInjected = false;
     setGateTelegramError('Could not load Telegram widget. Check browser/network blockers and try again.');
     console.error('TaliTrade: failed to load telegram widget script');
   };
