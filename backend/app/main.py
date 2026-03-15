@@ -6,6 +6,10 @@ import hashlib
 import hmac
 import json
 from contextlib import asynccontextmanager
+from typing import Any
+
+import jwt
+from jwt import PyJWKClient
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, date, timezone, timedelta
@@ -40,6 +44,93 @@ INDEX_KEYWORDS   = [
 ]
 WARN_MINUTES        = 10
 FRIDAY_CLOSE_HOUR_ET = 17
+
+
+TELEGRAM_OIDC_MODE         = os.getenv("TELEGRAM_LOGIN_MODE", "auto").strip().lower()
+TELEGRAM_OIDC_CLIENT_ID    = os.getenv("TELEGRAM_LOGIN_CLIENT_ID", "").strip()
+TELEGRAM_OIDC_CLIENT_SECRET= os.getenv("TELEGRAM_LOGIN_CLIENT_SECRET", "").strip()
+TELEGRAM_OIDC_ISSUER       = os.getenv("TELEGRAM_LOGIN_ISSUER", "").strip()
+TELEGRAM_OIDC_JWKS_URL     = os.getenv("TELEGRAM_LOGIN_JWKS_URL", "").strip()
+TELEGRAM_OIDC_AUTHORIZE_URL= os.getenv("TELEGRAM_LOGIN_AUTHORIZE_URL", "").strip()
+TELEGRAM_OIDC_AUDIENCE     = os.getenv("TELEGRAM_LOGIN_AUDIENCE", "").strip()
+TELEGRAM_BOT_USERNAME      = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot").strip().lstrip("@") or "TaliTradeBot"
+TELEGRAM_LOGIN_DOMAIN      = os.getenv("TELEGRAM_LOGIN_DOMAIN", "talitrade.com").strip().lower() or "talitrade.com"
+
+
+def telegram_oidc_enabled() -> bool:
+    if TELEGRAM_OIDC_MODE == "legacy_widget":
+        return False
+    return bool(TELEGRAM_OIDC_CLIENT_ID and TELEGRAM_OIDC_JWKS_URL and TELEGRAM_OIDC_ISSUER and TELEGRAM_OIDC_AUTHORIZE_URL)
+
+
+def telegram_auth_mode() -> str:
+    return "oidc" if telegram_oidc_enabled() else "legacy_widget"
+
+
+def build_auth_success_payload(tg_user_id: str, username: str | None, first_name: str | None,
+                               last_name: str | None, photo_url: str | None, accounts: list[dict]) -> dict:
+    return {
+        "ok": True,
+        "user": {
+            "telegramUserId": tg_user_id,
+            "username": username,
+            "firstName": first_name,
+            "lastName": last_name,
+            "photoUrl": photo_url,
+        },
+        "accounts": [
+            {
+                "accountId": a["account_id"],
+                "broker": a["broker"],
+                "accountType": a["account_type"],
+                "accountSize": a["account_size"],
+                "label": a["label"],
+            }
+            for a in accounts
+        ],
+    }
+
+
+def _coerce_telegram_profile_from_claims(claims: dict[str, Any]) -> dict[str, Any]:
+    sub = claims.get("sub") or claims.get("user_id") or claims.get("id")
+    if sub is None:
+        raise ValueError("oidc_missing_sub")
+    profile = claims.get("telegram_user") if isinstance(claims.get("telegram_user"), dict) else {}
+    user_obj = claims.get("user") if isinstance(claims.get("user"), dict) else {}
+    merged = {**profile, **user_obj}
+    first_name = merged.get("first_name") or claims.get("given_name") or claims.get("first_name")
+    last_name = merged.get("last_name") or claims.get("family_name") or claims.get("last_name")
+    username = merged.get("username") or claims.get("preferred_username") or claims.get("username")
+    photo_url = merged.get("photo_url") or claims.get("picture") or claims.get("photo_url")
+    return {
+        "id": str(sub),
+        "username": username,
+        "first_name": first_name,
+        "last_name": last_name,
+        "photo_url": photo_url,
+    }
+
+
+def verify_telegram_oidc_id_token(id_token: str, nonce: str | None = None) -> dict[str, Any]:
+    if not telegram_oidc_enabled():
+        raise ValueError("oidc_not_enabled")
+    try:
+        jwks_client = PyJWKClient(TELEGRAM_OIDC_JWKS_URL)
+        signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+        claims = jwt.decode(
+            id_token,
+            signing_key.key,
+            algorithms=["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"],
+            audience=TELEGRAM_OIDC_AUDIENCE or TELEGRAM_OIDC_CLIENT_ID,
+            issuer=TELEGRAM_OIDC_ISSUER,
+            options={"require": ["exp", "iat", "iss", "aud", "sub"]},
+        )
+    except Exception as exc:
+        logger.warning("Telegram OIDC verification failed: %s", exc)
+        raise ValueError("oidc_invalid_token") from exc
+    if nonce and claims.get("nonce") and claims.get("nonce") != nonce:
+        raise ValueError("oidc_nonce_mismatch")
+    return claims
 
 # ─── Phase / rule tables ──────────────────────────────────────────────────────
 # Single source of truth. Aliases (e.g. "master" → "2_step_master") are handled
@@ -850,17 +941,22 @@ async def demo_leaderboard(limit: int = 10):
 
 @app.get("/auth/telegram/config")
 async def telegram_auth_config():
-    """Expose canonical Telegram widget config used by the frontend."""
-    canonical_bot_username = "TaliTradeBot"
-    canonical_login_domain = "talitrade.com"
+    """Expose canonical Telegram auth config used by the frontend."""
+    mode = telegram_auth_mode()
     return {
-        "botUsername": canonical_bot_username,
-        "canonicalBotUsername": canonical_bot_username,
+        "authMode": mode,
+        "botUsername": TELEGRAM_BOT_USERNAME,
+        "canonicalBotUsername": TELEGRAM_BOT_USERNAME,
         "botUsernameMatchesCanonical": True,
-        "loginDomain": canonical_login_domain,
-        "canonicalLoginDomain": canonical_login_domain,
+        "loginDomain": TELEGRAM_LOGIN_DOMAIN,
+        "canonicalLoginDomain": TELEGRAM_LOGIN_DOMAIN,
         "loginDomainMatchesCanonical": True,
         "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
+        "oidcEnabled": mode == "oidc",
+        "oidcClientId": TELEGRAM_OIDC_CLIENT_ID,
+        "oidcAuthorizeUrl": TELEGRAM_OIDC_AUTHORIZE_URL,
+        "oidcIssuer": TELEGRAM_OIDC_ISSUER,
+        "oidcScopes": ["openid", "profile"],
     }
 
 
@@ -874,12 +970,17 @@ class TelegramAuthData(BaseModel):
     hash: str
 
 
+class TelegramOidcAuthData(BaseModel):
+    id_token: str
+    nonce: str | None = None
+    redirect_uri: str | None = None
+
+
 @app.post("/auth/telegram")
 async def telegram_login(data: TelegramAuthData):
     """
-    Verify Telegram Login Widget callback data and upsert the user.
-    Returns user profile + their linked prop accounts.
-    Called from the web app after the Telegram Login Widget fires.
+    Legacy Telegram Login Widget verification path.
+    Kept for backward compatibility and as a fallback when OIDC is not configured.
     """
     payload = data.dict(exclude_none=True)
     is_valid, reason = verify_telegram_auth(payload)
@@ -896,35 +997,48 @@ async def telegram_login(data: TelegramAuthData):
             content={
                 "detail": "Invalid Telegram auth data",
                 "reason": reason,
-                "hint": "Check bot username, bot token, and BotFather /setdomain for talitrade.com",
+                "hint": "Check bot username, bot token, and BotFather login domain for talitrade.com",
             },
         )
 
-    user = await db_upsert_user({"id": data.id, "username": data.username,
-                                  "first_name": data.first_name, "last_name": data.last_name,
-                                  "photo_url": data.photo_url})
+    await db_upsert_user({
+        "id": data.id,
+        "username": data.username,
+        "first_name": data.first_name,
+        "last_name": data.last_name,
+        "photo_url": data.photo_url,
+    })
     accounts = await db_get_user_accounts(str(data.id))
-    logger.info(f"Telegram login: {data.username or data.id} ({len(accounts)} accounts)")
-    return {
-        "ok": True,
-        "user": {
-            "telegramUserId": str(data.id),
-            "username":       data.username,
-            "firstName":      data.first_name,
-            "lastName":       data.last_name,
-            "photoUrl":       data.photo_url,
-        },
-        "accounts": [
-            {
-                "accountId":   a["account_id"],
-                "broker":      a["broker"],
-                "accountType": a["account_type"],
-                "accountSize": a["account_size"],
-                "label":       a["label"],
-            }
-            for a in accounts
-        ],
-    }
+    logger.info("Telegram legacy login: %s (%s accounts)", data.username or data.id, len(accounts))
+    return build_auth_success_payload(str(data.id), data.username, data.first_name, data.last_name, data.photo_url, accounts)
+
+
+@app.post("/auth/telegram/oidc")
+async def telegram_login_oidc(data: TelegramOidcAuthData):
+    """
+    Telegram OIDC path.
+    Enable by setting TELEGRAM_LOGIN_MODE=oidc plus the issuer, authorize URL,
+    client id, and JWKS URL environment variables.
+    """
+    if not telegram_oidc_enabled():
+        return JSONResponse(status_code=400, content={"detail": "Telegram OIDC not enabled", "reason": "oidc_not_enabled"})
+    try:
+        claims = verify_telegram_oidc_id_token(data.id_token, data.nonce)
+        tg_profile = _coerce_telegram_profile_from_claims(claims)
+    except ValueError as exc:
+        return JSONResponse(status_code=401, content={"detail": "Invalid Telegram OIDC token", "reason": str(exc)})
+
+    await db_upsert_user(tg_profile)
+    accounts = await db_get_user_accounts(tg_profile["id"])
+    logger.info("Telegram OIDC login: %s (%s accounts)", tg_profile.get("username") or tg_profile["id"], len(accounts))
+    return build_auth_success_payload(
+        tg_profile["id"],
+        tg_profile.get("username"),
+        tg_profile.get("first_name"),
+        tg_profile.get("last_name"),
+        tg_profile.get("photo_url"),
+        accounts,
+    )
 
 
 @app.get("/auth/me")
@@ -1002,7 +1116,7 @@ def telegram_command_matches(raw_cmd: str, base_cmd: str) -> bool:
     if cmd == base:
         return True
 
-    configured = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot")
+    configured = TELEGRAM_BOT_USERNAME
     bot_username = configured.strip().lstrip("@").lower()
     return cmd == f"{base}@{bot_username}"
 
