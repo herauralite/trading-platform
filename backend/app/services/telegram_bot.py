@@ -1,20 +1,27 @@
-import httpx
 import os
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+import httpx
+
+
+def _get_telegram_bot_config() -> tuple[str, str]:
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        raise RuntimeError(
+            "Missing required Telegram bot configuration: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
+        )
+    return token, chat_id
+
 
 async def send_alert(message: str):
-    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print(f"Telegram not configured. Message: {message}")
-        return
+    token, chat_id = _get_telegram_bot_config()
 
     async with httpx.AsyncClient() as client:
         await client.post(
-            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+            f"https://api.telegram.org/bot{token}/sendMessage",
             json={
-                "chat_id": TELEGRAM_CHAT_ID,
+                "chat_id": chat_id,
                 "text": message,
-                "parse_mode": "HTML"
-            }
+                "parse_mode": "HTML",
+            },
         )
