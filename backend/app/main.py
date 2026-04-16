@@ -16,7 +16,7 @@ from datetime import datetime, date, timezone, timedelta
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -1328,11 +1328,28 @@ async def resolve_user(telegram_user_id: str = None, telegram_username: str = No
 
 
 @app.post("/auth/session/bridge")
-async def create_bridge_session(telegram_user_id: str = None, telegram_username: str = None):
+async def create_bridge_session(
+    telegram_user_id: str = None,
+    telegram_username: str = None,
+    bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
+):
     """
     Transitional bridge for legacy/testing clients that still resolve user identity manually.
     Prefer /auth/telegram or /auth/telegram/oidc for production login.
     """
+    bridge_enabled = str(os.getenv("AUTH_SESSION_BRIDGE_ENABLED", "")).strip().lower() in {"1", "true", "yes"}
+    if not bridge_enabled:
+        return JSONResponse(status_code=404, content={"detail": "Bridge auth is disabled"})
+
+    expected_secret = str(os.getenv("AUTH_SESSION_BRIDGE_SECRET") or "").strip()
+    if not expected_secret:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Bridge auth misconfigured: AUTH_SESSION_BRIDGE_SECRET is required"},
+        )
+    if not bridge_secret or bridge_secret != expected_secret:
+        return JSONResponse(status_code=403, content={"detail": "Invalid bridge secret"})
+
     resolved = await resolve_user(telegram_user_id=telegram_user_id, telegram_username=telegram_username)
     if isinstance(resolved, JSONResponse):
         return resolved
