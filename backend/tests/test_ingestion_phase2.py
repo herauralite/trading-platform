@@ -321,3 +321,43 @@ def test_same_symbol_side_positions_get_distinct_position_keys(monkeypatch):
     assert seen_params[0]["position_key"] != seen_params[1]["position_key"]
     assert seen_params[0]["position_key"] is not None
     assert seen_params[1]["position_key"] is not None
+
+
+def test_connectors_catalog_route():
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/connectors/catalog")
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    connector_types = [c["connector_type"] for c in resp.json()["connectors"]]
+    assert "fundingpips_extension" in connector_types
+    assert "csv_import" in connector_types
+    assert "manual" in connector_types
+
+
+def test_connectors_overview_route(monkeypatch):
+    async def fake_overview(user_id):
+        assert user_id == "123"
+        return [{
+            "connector_type": "manual",
+            "status": "connected",
+            "last_activity_at": "2026-04-16T00:00:00Z",
+            "last_sync_at": None,
+            "account_count": 1,
+            "accounts": [{"id": 1, "external_account_id": "manual-1"}],
+        }]
+
+    monkeypatch.setattr("app.main.db_get_connectors_overview", fake_overview)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/connectors/overview", params={"telegram_user_id": "123"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["count"] == 1
+    assert data["connectors"][0]["connector_type"] == "manual"
