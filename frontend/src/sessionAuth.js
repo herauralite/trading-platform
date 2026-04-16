@@ -1,6 +1,8 @@
 export const SESSION_STORAGE_KEY = 'talitrade.sessionToken'
 export const USER_STORAGE_KEY = 'talitrade.sessionUser'
 export const DEV_MODE_KEY = 'talitrade.devMode'
+export const OIDC_NONCE_KEY = 'talitrade.oidc.nonce'
+export const OIDC_STATE_KEY = 'talitrade.oidc.state'
 
 export function buildAuthHeaders(sessionToken) {
   if (!sessionToken) return {}
@@ -16,13 +18,34 @@ export function parseStoredUser(rawUser) {
   }
 }
 
-export function parseOidcCallbackPayload(hash, storedNonce = null) {
+export function persistOidcCorrelation(storage, { nonce, state }) {
+  storage.setItem(OIDC_NONCE_KEY, nonce)
+  storage.setItem(OIDC_STATE_KEY, state)
+}
+
+export function clearOidcCorrelation(storage) {
+  storage.removeItem(OIDC_NONCE_KEY)
+  storage.removeItem(OIDC_STATE_KEY)
+}
+
+export function parseOidcCallbackPayload(hash, { expectedState = null, storedNonce = null } = {}) {
   if (!hash || !hash.startsWith('#')) return null
   const params = new URLSearchParams(hash.slice(1))
   const idToken = params.get('id_token')
   if (!idToken) return null
+
+  const state = params.get('state')
+  if (!expectedState || !state) {
+    return { ok: false, error: 'Missing OIDC state correlation.' }
+  }
+  if (state !== expectedState) {
+    return { ok: false, error: 'OIDC state mismatch.' }
+  }
+
   return {
+    ok: true,
     idToken,
+    state,
     nonce: params.get('nonce') || storedNonce || null,
   }
 }

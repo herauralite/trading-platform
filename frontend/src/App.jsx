@@ -6,9 +6,13 @@ import {
   buildManualAccountPayload,
   buildManualTradePayload,
   canHydrateSession,
+  clearOidcCorrelation,
   DEV_MODE_KEY,
+  OIDC_NONCE_KEY,
+  OIDC_STATE_KEY,
   parseOidcCallbackPayload,
   parseStoredUser,
+  persistOidcCorrelation,
   SESSION_STORAGE_KEY,
   shouldShowBridgeFallback,
   USER_STORAGE_KEY,
@@ -43,9 +47,19 @@ function App() {
 
   useEffect(() => {
     void loadTelegramAuthConfig()
-    const oidc = parseOidcCallbackPayload(window.location.hash, localStorage.getItem('talitrade.oidc.nonce'))
+    const oidc = parseOidcCallbackPayload(window.location.hash, {
+      expectedState: localStorage.getItem(OIDC_STATE_KEY),
+      storedNonce: localStorage.getItem(OIDC_NONCE_KEY),
+    })
     if (oidc) {
       window.history.replaceState({}, document.title, window.location.pathname)
+      if (!oidc.ok) {
+        clearOidcCorrelation(localStorage)
+        clearSession()
+        setStatus(`Telegram OIDC callback rejected: ${oidc.error}`)
+        setIsBootstrapping(false)
+        return
+      }
       void signInWithOidcToken(oidc.idToken, oidc.nonce)
       return
     }
@@ -145,6 +159,7 @@ function App() {
     } catch (e) {
       setStatus(`Telegram OIDC sign-in failed: ${e.message}`)
     } finally {
+      clearOidcCorrelation(localStorage)
       setIsBootstrapping(false)
     }
   }
@@ -232,7 +247,7 @@ function App() {
     }
     const nonce = crypto.randomUUID()
     const state = crypto.randomUUID()
-    localStorage.setItem('talitrade.oidc.nonce', nonce)
+    persistOidcCorrelation(localStorage, { nonce, state })
     const redirectUri = `${window.location.origin}${window.location.pathname}`
     const params = new URLSearchParams({
       client_id: cfg.oidcClientId,
