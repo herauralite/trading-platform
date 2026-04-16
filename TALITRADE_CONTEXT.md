@@ -166,8 +166,8 @@ GET  /health/db                  — DB connectivity check
 POST /auth/telegram              — Telegram Login Widget verification + user upsert
 GET  /auth/me                    — get current user + accounts (bearer session required)
 POST /auth/link-account          — link prop account to current authenticated user (bearer required)
-POST /auth/link-account/compat   — transitional explicit-identity link path (bridge secret + bridge flag required)
-POST /auth/session/bridge        — transitional session bridge for legacy/dev flows (bridge secret + bridge flag required)
+POST /auth/link-account/compat   — transitional explicit-identity link path (bridge secret + bridge flag required, returns `compatibility_path`)
+POST /auth/session/bridge        — transitional session bridge for legacy/dev flows (bridge secret + bridge flag required, returns `compatibility_path`)
 
 POST /telegram/webhook           — Telegram bot commands
 GET  /extension/status           — live account state (TTL: 120s)
@@ -184,6 +184,10 @@ DEL  /admin/dedup-trades         — delete realtime duplicate rows
 DEL  /admin/purge-corrupt-trades — delete rows where |pnl| > account_size
 GET  /test/db                    — count trades in DB
 ```
+
+Canonical caller note:
+- Static app and extension now pass bearer session context (`TALI_SET_SESSION` message + `Authorization: Bearer ...`) for `/auth/link-account`.
+- Compatibility endpoints remain transitional and should only be used for bridge/dev workflows.
 
 ---
 
