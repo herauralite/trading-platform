@@ -269,7 +269,9 @@ def test_ensure_connector_tables_drops_legacy_position_uniqueness(monkeypatch):
     asyncio.run(ci.ensure_connector_tables())
     joined = "\n".join(executed_sql)
     assert "DROP CONSTRAINT IF EXISTS positions_trading_account_id_symbol_side_key" in joined
-    assert "CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq" in joined
+    assert "ALTER TABLE positions ALTER COLUMN position_key SET NOT NULL" in joined
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq ON positions(trading_account_id, position_key)" in joined
+    assert "WHERE position_key IS NOT NULL" not in joined
 
 
 def test_same_symbol_side_positions_get_distinct_position_keys(monkeypatch):
@@ -317,3 +319,5 @@ def test_same_symbol_side_positions_get_distinct_position_keys(monkeypatch):
     }))
     assert k1 != k2
     assert seen_params[0]["position_key"] != seen_params[1]["position_key"]
+    assert seen_params[0]["position_key"] is not None
+    assert seen_params[1]["position_key"] is not None
