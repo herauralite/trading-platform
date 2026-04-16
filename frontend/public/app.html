@@ -518,6 +518,7 @@ let TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
+const TALI_SESSION_TOKEN_KEY = 'tali_session_token_v1';
 const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each browser session
 const TALI_TG_DONE_KEY = 'tali_tg_done';       // sessionStorage — require Telegram every session
 
@@ -762,12 +763,17 @@ window.onTelegramAuth = async function(tgUser) {
     }
 
     const user = data.user;
+    const token = String(data.access_token || '');
+    if (!token) {
+      throw new Error('missing_session_token');
+    }
 
     // Populate ACCOUNTS map dynamically from this user's linked accounts
     hydrateAccountsMap(data.accounts || []);
 
     // 2. Persist user
     localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
+    localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
 
     // 2b. Push telegramUserId into the extension's chrome.storage.local so
     //     content.js (which runs on fundingpips.com, a different origin) can
@@ -812,7 +818,10 @@ window.onTelegramAuth = async function(tgUser) {
             label:            acct.accountLabel || acctId,
             broker:           'fundingpips',
           });
-          await fetch(baseUrl + '/auth/link-account?' + params.toString(), { method: 'POST' });
+          await fetch(baseUrl + '/auth/link-account?' + params.toString(), {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token },
+          });
           console.log(`TaliTrade: linked live account ${acctId} to user ${user.telegramUserId}`);
         }
       }
@@ -884,9 +893,13 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
 
 async function syncLinkedAccountsFromBackend(telegramUserId) {
   if (!telegramUserId) return false;
+  const token = localStorage.getItem(TALI_SESSION_TOKEN_KEY) || '';
+  if (!token) return false;
   try {
     const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
-    const res = await fetch(baseUrl + '/auth/me?telegram_user_id=' + encodeURIComponent(telegramUserId));
+    const res = await fetch(baseUrl + '/auth/me', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
     if (!res.ok) return false;
     const data = await res.json();
     const linkedAccounts = data.accounts || [];
@@ -943,6 +956,7 @@ function applyUserToTopbar(user) {
       e.stopPropagation();
       if (confirm('Sign out of TaliTrade?')) {
         localStorage.removeItem(TALI_USER_KEY);
+        localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
         sessionStorage.removeItem(TALI_PW_KEY);
         // Also clear from extension storage if available
         try {

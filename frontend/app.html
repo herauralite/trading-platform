@@ -511,6 +511,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = 'tali2024dev';
 const TALI_USER_KEY = 'tali_user_v1';
+const TALI_SESSION_TOKEN_KEY = 'tali_session_token_v1';
 const TALI_PW_KEY = 'tali_pw_ok';
 const TALI_TG_DONE_KEY = 'tali_tg_done';
 const TALI_AUTH_STATE_KEY = 'tali_tg_oidc_state';
@@ -878,8 +879,11 @@ window.onTelegramAuth = async function(tgUser) {
 
 async function finishTelegramLogin(data) {
   const user = data.user;
+  const token = String(data.access_token || '');
+  if (!token) throw new Error('missing_session_token');
   hydrateAccountsMap(data.accounts || []);
   localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
+  localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
   sessionStorage.setItem(TALI_TG_DONE_KEY, '1');
 
   try {
@@ -903,7 +907,10 @@ async function finishTelegramLogin(data) {
           label: acct.accountLabel || acctId,
           broker: 'fundingpips',
         });
-        await fetch(getBaseApiUrl() + '/auth/link-account?' + params.toString(), { method: 'POST' });
+        await fetch(getBaseApiUrl() + '/auth/link-account?' + params.toString(), {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + token },
+        });
       }
     }
   } catch (_) {}
@@ -952,8 +959,12 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
 
 async function syncLinkedAccountsFromBackend(telegramUserId) {
   if (!telegramUserId) return false;
+  const token = localStorage.getItem(TALI_SESSION_TOKEN_KEY) || '';
+  if (!token) return false;
   try {
-    const res = await fetch(getBaseApiUrl() + '/auth/me?telegram_user_id=' + encodeURIComponent(telegramUserId));
+    const res = await fetch(getBaseApiUrl() + '/auth/me', {
+      headers: { Authorization: 'Bearer ' + token },
+    });
     if (!res.ok) return false;
     const data = await res.json();
     const linkedAccounts = data.accounts || [];
@@ -1008,6 +1019,7 @@ function applyUserToTopbar(user) {
       e.stopPropagation();
       if (confirm('Sign out of TaliTrade?')) {
         localStorage.removeItem(TALI_USER_KEY);
+        localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
         sessionStorage.removeItem(TALI_PW_KEY);
         sessionStorage.removeItem(TALI_TG_DONE_KEY);
         sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
