@@ -22,8 +22,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from app.services.connector_ingest import (
+    enqueue_connector_sync_run,
     deactivate_missing_positions,
     ensure_connector_tables,
+    get_connector_sync_runs,
     get_connector_lifecycle,
     ingest_account_snapshot,
     ingest_position,
@@ -591,6 +593,10 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     "connector_type": connector,
                     "status": "connected",
                     "is_connected": True,
+                    "current_sync_state": None,
+                    "current_sync_run_id": None,
+                    "current_sync_retry_count": 0,
+                    "next_retry_at": None,
                     "last_activity_at": None,
                     "last_sync_at": None,
                     "last_error": None,
@@ -647,6 +653,10 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "connector_type": connector,
                 "status": row["status"] or "disconnected",
                 "is_connected": bool(row["is_connected"]),
+                "current_sync_state": None,
+                "current_sync_run_id": None,
+                "current_sync_retry_count": 0,
+                "next_retry_at": None,
                 "last_activity_at": row["last_activity_at"],
                 "last_sync_at": row["last_sync_at"],
                 "last_error": row["last_error"],
@@ -654,6 +664,41 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "account_count": 0,
                 "accounts": [],
             }
+
+        latest_runs = await conn.execute(text("""
+            SELECT DISTINCT ON (connector_type)
+                id,
+                connector_type,
+                status,
+                retry_count,
+                next_retry_at,
+                created_at
+            FROM connector_sync_runs
+            WHERE user_id = :uid
+            ORDER BY connector_type, created_at DESC
+        """), {"uid": telegram_user_id})
+        for row in latest_runs.mappings().all():
+            connector = row["connector_type"] or "manual"
+            if connector not in grouped:
+                grouped[connector] = {
+                    "connector_type": connector,
+                    "status": "disconnected",
+                    "is_connected": False,
+                    "current_sync_state": None,
+                    "current_sync_run_id": None,
+                    "current_sync_retry_count": 0,
+                    "next_retry_at": None,
+                    "last_activity_at": None,
+                    "last_sync_at": None,
+                    "last_error": None,
+                    "last_error_at": None,
+                    "account_count": 0,
+                    "accounts": [],
+                }
+            grouped[connector]["current_sync_state"] = row["status"]
+            grouped[connector]["current_sync_run_id"] = row["id"]
+            grouped[connector]["current_sync_retry_count"] = row["retry_count"] or 0
+            grouped[connector]["next_retry_at"] = row["next_retry_at"]
 
     return list(grouped.values())
 
@@ -1448,6 +1493,7 @@ async def connector_status_detail(
     resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
     normalized = connector_type.strip().lower().replace("-", "_")
+    runs = await get_connector_sync_runs(resolved_uid, normalized, limit=10)
     connector = next((c for c in connectors if c["connector_type"] == normalized), None)
     if connector is None:
         lifecycle = await get_connector_lifecycle(resolved_uid, normalized)
@@ -1463,8 +1509,12 @@ async def connector_status_detail(
             "last_error_at": lifecycle["last_error_at"],
             "account_count": 0,
             "accounts": [],
+            "current_sync_state": runs[0]["status"] if runs else None,
+            "current_sync_run_id": runs[0]["id"] if runs else None,
+            "current_sync_retry_count": runs[0]["retry_count"] if runs else 0,
+            "next_retry_at": runs[0]["next_retry_at"] if runs else None,
         }
-    return {"connector": connector}
+    return {"connector": connector, "sync_runs": runs}
 
 
 @app.post("/connectors/{connector_type}/connect")
@@ -1504,16 +1554,26 @@ async def connector_sync(
 ):
     resolved_uid = str(session_user_id).strip()
     normalized = connector_type.strip().lower().replace("-", "_")
-    lifecycle = await upsert_connector_lifecycle(
+    run = await enqueue_connector_sync_run(
         user_id=resolved_uid,
         connector_type=normalized,
-        status="connected",
-        is_connected=True,
-        last_sync_at=datetime.now(timezone.utc),
-        last_activity_at=datetime.now(timezone.utc),
+        trigger="manual",
         metadata={"action": "manual_sync"},
     )
-    return {"ok": True, "connector": lifecycle}
+    lifecycle = await get_connector_lifecycle(resolved_uid, normalized)
+    return {"ok": True, "run": run, "connector": lifecycle}
+
+
+@app.get("/connectors/{connector_type}/sync-runs")
+async def connector_sync_runs(
+    connector_type: str,
+    limit: int = 10,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    runs = await get_connector_sync_runs(resolved_uid, normalized, limit=limit)
+    return {"connector_type": normalized, "runs": runs, "count": len(runs)}
 
 
 @app.post("/connectors/{connector_type}/disconnect")

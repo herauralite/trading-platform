@@ -21,23 +21,45 @@ This backend now supports a connector-first ingestion pipeline.
 - `POST /ingest/events`
 - `POST /ingest/csv/trades` (proof of non-extension ingest path)
 
-### Connector lifecycle management (new)
+### Connector lifecycle management
 
 - `GET /connectors/overview` (bearer-authenticated)
 - `GET /connectors/{connector_type}` (bearer-authenticated detail)
 - `POST /connectors/{connector_type}/connect` (mark connected, optional lightweight account setup)
-- `POST /connectors/{connector_type}/sync` (manual sync signal / timestamp update)
+- `POST /connectors/{connector_type}/sync` (queue async sync run)
+- `GET /connectors/{connector_type}/sync-runs?limit=10` (recent run history)
 - `POST /connectors/{connector_type}/disconnect` (deactivate connector accounts + mark disconnected)
 
 Lifecycle state is persisted in `connector_lifecycle` with:
 
-- `status`: `connected` | `degraded` | `sync_error` | `disconnected`
+- `status`: `connected` | `degraded` | `sync_error` | `disconnected` | `sync_queued` | `sync_running` | `sync_retrying`
 - `is_connected`: boolean connectivity flag for UX clarity
 - `last_sync_at`, `last_activity_at`
 - `last_error`, `last_error_at`
 - `metadata` for action/event provenance
 
 Account membership remains represented by `trading_accounts` rows grouped by `connector_type`.
+
+## Sync execution model (Issue #52)
+
+Sync execution is now persisted in `connector_sync_runs` and driven by a minimal in-process async orchestrator.
+
+`connector_sync_runs` fields:
+- `status`: `queued` → `running` → `succeeded` / `failed`, with `retrying` between attempts.
+- `created_at`, `started_at`, `finished_at`.
+- `retry_count`, `max_retries`, `next_retry_at`.
+- `error_detail`, `result_detail`, `metadata`.
+
+Current retry behavior:
+- Manual sync enqueue creates a run in `queued`.
+- Worker executes one connector at a time per `(user_id, connector_type)` lock.
+- Failures retry with exponential-ish backoff using delays `[2s, 5s]` (up to `max_retries=2`).
+- If all attempts fail, run is marked `failed` and lifecycle moves to `sync_error`.
+
+Lifecycle integration:
+- Queue/run/retry transitions push lifecycle into `sync_queued`, `sync_running`, `sync_retrying`.
+- Success moves lifecycle back to `connected` and updates `last_sync_at`.
+- Terminal failure sets lifecycle `sync_error` and `last_error`.
 
 ### Legacy compatibility
 
@@ -68,8 +90,10 @@ What exists now:
 - Practical connect/sync/disconnect actions for authenticated users.
 - Connector status and timestamps shown as first-class fields in connector overview/detail responses.
 - Automatic lifecycle updates when ingest snapshots/trades/events flow through canonical ingestion.
+- Persistent sync run history and asynchronous manual sync orchestration.
+- Retry/backoff and per-run error visibility in connector surfaces.
 
 Future work (not in this minimal issue scope):
-- Background sync workers and queue-backed connector jobs.
-- Connector-specific OAuth/API credential handshakes.
-- Retry/backoff policy and richer incident timeline per connector.
+- Durable multi-process worker (today orchestration is single-process in-app).
+- Connector-specific sync implementations and credential refresh workflows.
+- Cancellation controls, dead-letter handling, and richer incident analytics.

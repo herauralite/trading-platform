@@ -410,6 +410,116 @@ def test_connectors_overview_authenticated_session(monkeypatch):
     assert resp.json()["count"] == 1
 
 
+def test_connector_sync_enqueues_run(monkeypatch):
+    captured = {}
+
+    async def fake_enqueue(user_id, connector_type, trigger="manual", metadata=None):
+        captured["user_id"] = user_id
+        captured["connector_type"] = connector_type
+        captured["trigger"] = trigger
+        return {"id": 55, "status": "queued", "connector_type": connector_type}
+
+    async def fake_lifecycle(user_id, connector_type):
+        return {"user_id": user_id, "connector_type": connector_type, "status": "sync_queued"}
+
+    monkeypatch.setattr("app.main.enqueue_connector_sync_run", fake_enqueue)
+    monkeypatch.setattr("app.main.get_connector_lifecycle", fake_lifecycle)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-sync")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/connectors/csv_import/sync", headers={"Authorization": f"Bearer {token}"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert resp.json()["run"]["status"] == "queued"
+    assert captured["user_id"] == "u-sync"
+    assert captured["connector_type"] == "csv_import"
+
+
+def test_connector_sync_runs_route_authenticated(monkeypatch):
+    async def fake_get_runs(user_id, connector_type, limit=10):
+        assert user_id == "u1"
+        assert connector_type == "csv_import"
+        assert limit == 5
+        return [{"id": 1, "status": "succeeded"}]
+
+    monkeypatch.setattr("app.main.get_connector_sync_runs", fake_get_runs)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u1")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/connectors/csv_import/sync-runs?limit=5", headers={"Authorization": f"Bearer {token}"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+    assert resp.json()["runs"][0]["status"] == "succeeded"
+
+
+def test_execute_connector_sync_run_retries_then_fails(monkeypatch):
+    updates = []
+    lifecycle_updates = []
+    sleeps = []
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {
+                "id": 42,
+                "user_id": "u1",
+                "connector_type": "csv_import",
+                "status": "queued",
+                "max_retries": 1,
+            }
+
+    class FakeConn:
+        async def execute(self, _stmt, _params=None):
+            return FakeResult()
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    async def fake_set_status(run_id, **kwargs):
+        updates.append((run_id, kwargs))
+        return {"id": run_id, "status": kwargs["status"]}
+
+    async def fake_lifecycle(**kwargs):
+        lifecycle_updates.append(kwargs)
+        return kwargs
+
+    async def fake_perform(_run):
+        raise RuntimeError("boom")
+
+    async def fake_sleep(delay):
+        sleeps.append(delay)
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    monkeypatch.setattr(ci, "_set_sync_run_status", fake_set_status)
+    monkeypatch.setattr(ci, "upsert_connector_lifecycle", fake_lifecycle)
+    monkeypatch.setattr(ci, "_perform_connector_sync", fake_perform)
+    monkeypatch.setattr(ci.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(ci, "SYNC_RUN_RETRY_DELAYS_SECONDS", [0])
+
+    result = asyncio.run(ci.execute_connector_sync_run(42))
+    assert result["status"] == "failed"
+    assert [u[1]["status"] for u in updates] == ["running", "retrying", "running", "failed"]
+    assert sleeps == [0]
+    assert lifecycle_updates[-1]["status"] == "sync_error"
+
+
 def test_auth_me_requires_authenticated_session(monkeypatch):
     async def fake_accounts(uid):
         assert uid == "123"
@@ -692,7 +802,7 @@ def test_connector_lifecycle_routes_require_authenticated_session():
 
 
 def test_connector_connect_sync_disconnect_flow(monkeypatch):
-    captured = {"upserts": [], "trading_accounts_sql": []}
+    captured = {"upserts": [], "trading_accounts_sql": [], "enqueues": []}
 
     async def fake_lifecycle(**kwargs):
         captured["upserts"].append(kwargs)
@@ -720,6 +830,15 @@ def test_connector_connect_sync_disconnect_flow(monkeypatch):
     monkeypatch.setattr(main_mod, "upsert_connector_lifecycle", fake_lifecycle)
     monkeypatch.setattr(main_mod, "upsert_trading_account", fake_account_upsert)
     monkeypatch.setattr("app.core.database.engine", FakeEngine())
+    async def fake_enqueue(**kwargs):
+        captured["enqueues"].append(kwargs)
+        return {"id": 9, "status": "queued"}
+
+    async def fake_get_lifecycle(*_args, **_kwargs):
+        return {"status": "sync_queued", "is_connected": True}
+
+    monkeypatch.setattr(main_mod, "enqueue_connector_sync_run", fake_enqueue)
+    monkeypatch.setattr(main_mod, "get_connector_lifecycle", fake_get_lifecycle)
 
     async def _run(path, payload=None):
         transport = httpx.ASGITransport(app=app)
@@ -735,8 +854,8 @@ def test_connector_connect_sync_disconnect_flow(monkeypatch):
     assert sync.status_code == 200
     assert disconnect.status_code == 200
     assert captured["upserts"][0]["status"] == "connected"
-    assert captured["upserts"][1]["status"] == "connected"
-    assert captured["upserts"][2]["status"] == "disconnected"
+    assert captured["upserts"][1]["status"] == "disconnected"
+    assert captured["enqueues"][0]["connector_type"] == "manual"
     assert any("UPDATE trading_accounts" in sql for sql, _ in captured["trading_accounts_sql"])
 
 
@@ -757,6 +876,10 @@ def test_connector_status_detail_uses_lifecycle_fallback(monkeypatch):
 
     monkeypatch.setattr(main_mod, "db_get_connectors_overview", fake_overview)
     monkeypatch.setattr(main_mod, "get_connector_lifecycle", fake_lifecycle)
+    async def fake_runs(*_args, **_kwargs):
+        return []
+
+    monkeypatch.setattr(main_mod, "get_connector_sync_runs", fake_runs)
 
     async def _run():
         transport = httpx.ASGITransport(app=app)

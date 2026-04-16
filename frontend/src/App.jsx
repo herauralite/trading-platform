@@ -32,6 +32,7 @@ function App() {
   const [csvInput, setCsvInput] = useState('[{"symbol":"US30","side":"buy","open_time":"2026-04-16T10:00:00Z","close_time":"2026-04-16T10:10:00Z","pnl":18}]')
   const [csvAccount, setCsvAccount] = useState('csv-account-1')
   const [connectorDrafts, setConnectorDrafts] = useState({})
+  const [syncHistory, setSyncHistory] = useState({})
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authHeaders = buildAuthHeaders(sessionToken)
@@ -54,6 +55,10 @@ function App() {
           last_sync_at: null,
           last_error: null,
           last_error_at: null,
+          current_sync_state: null,
+          current_sync_run_id: null,
+          current_sync_retry_count: 0,
+          next_retry_at: null,
         })
       }
     }
@@ -107,10 +112,13 @@ function App() {
 
   const statusTone = (status) => {
     if (status === 'connected') return 'status-connected'
+    if (status === 'sync_running' || status === 'sync_queued' || status === 'sync_retrying') return 'status-degraded'
     if (status === 'degraded') return 'status-degraded'
     if (status === 'sync_error') return 'status-error'
     return 'status-disconnected'
   }
+
+  const syncStateLabel = (state) => state || 'idle'
 
   async function loadTelegramAuthConfig() {
     try {
@@ -193,7 +201,26 @@ function App() {
         axios.get(`${API}/connectors/overview`, { headers: buildAuthHeaders(token) })
       ])
       setCatalog(catalogRes.data.connectors || [])
-      setConnectors(overviewRes.data.connectors || [])
+      const overviewConnectors = overviewRes.data.connectors || []
+      setConnectors(overviewConnectors)
+      if (overviewConnectors.length > 0) {
+        const historyEntries = await Promise.all(
+          overviewConnectors.map(async (connector) => {
+            try {
+              const historyRes = await axios.get(
+                `${API}/connectors/${connector.connector_type}/sync-runs?limit=5`,
+                { headers: buildAuthHeaders(token) }
+              )
+              return [connector.connector_type, historyRes.data?.runs || []]
+            } catch {
+              return [connector.connector_type, []]
+            }
+          })
+        )
+        setSyncHistory(Object.fromEntries(historyEntries))
+      } else {
+        setSyncHistory({})
+      }
       if (!silent) setStatus(`Loaded ${overviewRes.data.count || 0} connected source(s) for your authenticated session`)
     } catch (e) {
       if (e?.response?.status === 401) {
@@ -321,6 +348,9 @@ function App() {
             <div className="meta">
               State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
             </div>
+            <div className="meta">
+              Sync state: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
+            </div>
             {connector.last_error ? <p className="error-text">Last error: {connector.last_error} ({formatDate(connector.last_error_at)})</p> : null}
             <ul>
               {connector.accounts.map((account) => (
@@ -368,6 +398,17 @@ function App() {
                 />
               </div>
             ) : null}
+            <details>
+              <summary>Recent sync runs ({(syncHistory[connector.connector_type] || []).length})</summary>
+              <ul>
+                {(syncHistory[connector.connector_type] || []).map((run) => (
+                  <li key={`run-${run.id}`}>
+                    #{run.id} · {run.status} · retries {run.retry_count}/{run.max_retries} · created {formatDate(run.created_at)}
+                    {run.error_detail ? ` · error: ${run.error_detail}` : ''}
+                  </li>
+                ))}
+              </ul>
+            </details>
           </div>
         ))}
       </section>
