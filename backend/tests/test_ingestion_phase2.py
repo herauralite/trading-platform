@@ -429,13 +429,34 @@ def test_connector_sync_enqueues_run(monkeypatch):
         transport = httpx.ASGITransport(app=app)
         token = create_session_token("u-sync")
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            return await client.post("/connectors/csv_import/sync", headers={"Authorization": f"Bearer {token}"})
+            return await client.post("/connectors/fundingpips_extension/sync", headers={"Authorization": f"Bearer {token}"})
 
     resp = asyncio.run(_run())
     assert resp.status_code == 200
     assert resp.json()["run"]["status"] == "queued"
     assert captured["user_id"] == "u-sync"
-    assert captured["connector_type"] == "csv_import"
+    assert captured["connector_type"] == "fundingpips_extension"
+
+
+def test_connector_sync_rejects_unsupported_connector(monkeypatch):
+    called = {"enqueue": 0}
+
+    async def fake_enqueue(*_args, **_kwargs):
+        called["enqueue"] += 1
+        return {"id": 1}
+
+    monkeypatch.setattr("app.main.enqueue_connector_sync_run", fake_enqueue)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-sync")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/connectors/manual/sync", headers={"Authorization": f"Bearer {token}"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 409
+    assert "does not support remote sync" in resp.json()["detail"]
+    assert called["enqueue"] == 0
 
 
 def test_connector_sync_runs_route_authenticated(monkeypatch):
@@ -847,7 +868,7 @@ def test_connector_connect_sync_disconnect_flow(monkeypatch):
             return await client.post(path, json=payload or {}, headers={"Authorization": f"Bearer {token}"})
 
     connect = asyncio.run(_run("/connectors/manual/connect", {"external_account_id": "manual-a"}))
-    sync = asyncio.run(_run("/connectors/manual/sync"))
+    sync = asyncio.run(_run("/connectors/fundingpips_extension/sync"))
     disconnect = asyncio.run(_run("/connectors/manual/disconnect"))
 
     assert connect.status_code == 200
@@ -855,7 +876,7 @@ def test_connector_connect_sync_disconnect_flow(monkeypatch):
     assert disconnect.status_code == 200
     assert captured["upserts"][0]["status"] == "connected"
     assert captured["upserts"][1]["status"] == "disconnected"
-    assert captured["enqueues"][0]["connector_type"] == "manual"
+    assert captured["enqueues"][0]["connector_type"] == "fundingpips_extension"
     assert any("UPDATE trading_accounts" in sql for sql, _ in captured["trading_accounts_sql"])
 
 

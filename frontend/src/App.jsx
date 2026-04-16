@@ -59,6 +59,12 @@ function App() {
           current_sync_run_id: null,
           current_sync_retry_count: 0,
           next_retry_at: null,
+          supports_live_sync: Boolean(entry.supports_live_sync),
+        })
+      } else {
+        map.set(entry.connector_type, {
+          ...map.get(entry.connector_type),
+          supports_live_sync: Boolean(entry.supports_live_sync),
         })
       }
     }
@@ -362,7 +368,13 @@ function App() {
               ))}
             </ul>
             <div className="row">
-              <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'sync')}>Sync</button>
+              {!connector.supports_live_sync ? <span className="hint">Sync not supported</span> : null}
+              <button
+                disabled={!signedIn || !connector.supports_live_sync}
+                onClick={() => connectorAction(connector.connector_type, 'sync')}
+              >
+                Sync
+              </button>
               <button disabled={!signedIn || connector.account_count > 0} onClick={() => connectorAction(connector.connector_type, 'connect', {
                 external_account_id: connectorDrafts[connector.connector_type]?.external_account_id || `${connector.connector_type}-account`,
                 display_label: connectorDrafts[connector.connector_type]?.display_label || sourceLabel(connector.connector_type),

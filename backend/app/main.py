@@ -74,6 +74,24 @@ TELEGRAM_OIDC_AUDIENCE     = os.getenv("TELEGRAM_LOGIN_AUDIENCE", "").strip()
 TELEGRAM_BOT_USERNAME      = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot").strip().lstrip("@") or "TaliTradeBot"
 TELEGRAM_LOGIN_DOMAIN      = os.getenv("TELEGRAM_LOGIN_DOMAIN", "talitrade.com").strip().lower() or "talitrade.com"
 
+CONNECTOR_CATALOG = {
+    "fundingpips_extension": {
+        "label": "FundingPips Extension",
+        "category": "extension",
+        "supports_live_sync": True,
+    },
+    "csv_import": {
+        "label": "CSV Import",
+        "category": "file_import",
+        "supports_live_sync": False,
+    },
+    "manual": {
+        "label": "Manual Journal",
+        "category": "manual",
+        "supports_live_sync": False,
+    },
+}
+
 
 def telegram_oidc_enabled() -> bool:
     if TELEGRAM_OIDC_MODE == "legacy_widget":
@@ -83,6 +101,11 @@ def telegram_oidc_enabled() -> bool:
 
 def telegram_auth_mode() -> str:
     return "oidc" if telegram_oidc_enabled() else "legacy_widget"
+
+
+def connector_supports_live_sync(connector_type: str) -> bool:
+    normalized = connector_type.strip().lower().replace("-", "_")
+    return bool(CONNECTOR_CATALOG.get(normalized, {}).get("supports_live_sync", False))
 
 
 def build_auth_success_payload(tg_user_id: str, username: str | None, first_name: str | None,
@@ -1444,28 +1467,7 @@ async def link_account_compat_retired():
 @app.get("/connectors/catalog")
 async def connectors_catalog():
     """Expose connectors available in the current product surface."""
-    return {
-        "connectors": [
-            {
-                "connector_type": "fundingpips_extension",
-                "label": "FundingPips Extension",
-                "category": "extension",
-                "supports_live_sync": True,
-            },
-            {
-                "connector_type": "csv_import",
-                "label": "CSV Import",
-                "category": "file_import",
-                "supports_live_sync": False,
-            },
-            {
-                "connector_type": "manual",
-                "label": "Manual Journal",
-                "category": "manual",
-                "supports_live_sync": False,
-            },
-        ]
-    }
+    return {"connectors": [{"connector_type": key, **value} for key, value in CONNECTOR_CATALOG.items()]}
 
 
 @app.get("/connectors/overview")
@@ -1554,6 +1556,11 @@ async def connector_sync(
 ):
     resolved_uid = str(session_user_id).strip()
     normalized = connector_type.strip().lower().replace("-", "_")
+    if not connector_supports_live_sync(normalized):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Connector '{normalized}' does not support remote sync",
+        )
     run = await enqueue_connector_sync_run(
         user_id=resolved_uid,
         connector_type=normalized,
