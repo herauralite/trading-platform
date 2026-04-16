@@ -35,6 +35,8 @@ FundingPips (Match Trader platform) does not expose a public API. The Chrome ext
 - Added position state lifecycle fields (`is_active`, `last_seen_at`, `closed_at`, `position_key`) and guarded stale-position deactivation.
 - Added account snapshot dedupe window to reduce high-frequency write amplification.
 - Extended trade ingestion to preserve richer normalized metadata fields without breaking legacy trade readers.
+- Fixed startup ordering so connector table initialization is safe on fresh databases.
+- Standardized position identity on `position_key` (legacy symbol/side uniqueness no longer assumed).
 
 ---
 
