@@ -31,6 +31,13 @@ TaliTrade now uses a connector-first ingestion layer. The FundingPips extension 
 - `/extension/data` now translates extension payloads into canonical `trading_accounts`, `account_snapshots`, and `positions`.
 - `/extension/trade` now writes through the same normalized ingestion service used by `/ingest/trades`.
 
+### Phase 2 hardening
+
+- Deterministic `trading_accounts` dedup via computed `account_key` unique index (avoids nullable `user_id` conflict gaps).
+- Safe stale-position handling (`is_active`, `last_seen_at`, `closed_at`) with guarded deactivation logic.
+- Snapshot insert throttling by short dedupe window when values are unchanged.
+- Richer normalized trade persistence (`connector_type`, `open_time`, `fees`, `tags`, `source_metadata`, `import_provenance`).
+
 ## Canonical production assumptions
 - Telegram bot username: `TaliTradeBot`
 - Canonical Telegram login domain: `talitrade.com`

@@ -79,6 +79,7 @@ async def ingest_csv_trades(payload: CsvTradeImportRequest):
             "fees": row.get("fees"),
             "tags": row.get("tags") or [],
             "source_metadata": {"raw": row, "import": "csv"},
+            "import_provenance": {"connector": "csv_import"},
         }
         row_payload["connector_type"] = payload.connector_type
         row_payload["external_account_id"] = payload.external_account_id

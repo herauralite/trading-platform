@@ -61,6 +61,7 @@ class IngestTrade(BaseModel):
     fees: float | None = None
     tags: list[str] = Field(default_factory=list)
     source_metadata: dict[str, Any] = Field(default_factory=dict)
+    import_provenance: dict[str, Any] = Field(default_factory=dict)
 
 
 class IngestEvent(BaseModel):
