@@ -9,6 +9,8 @@ from app.core.database import engine
 
 SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
+DEFAULT_CONNECTOR_STATUS = "connected"
+ALLOWED_CONNECTOR_STATUSES = {"connected", "degraded", "disconnected", "sync_error"}
 
 
 def _normalize_connector(value: str | None) -> str:
@@ -51,6 +53,30 @@ def compute_position_key(symbol: str | None, side: str | None, opened_at: Any = 
 
 async def ensure_connector_tables() -> None:
     async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS connector_lifecycle (
+                id SERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                connector_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'connected',
+                is_connected BOOLEAN NOT NULL DEFAULT TRUE,
+                last_connected_at TIMESTAMPTZ,
+                last_disconnected_at TIMESTAMPTZ,
+                last_sync_at TIMESTAMPTZ,
+                last_activity_at TIMESTAMPTZ,
+                last_error TEXT,
+                last_error_at TIMESTAMPTZ,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                UNIQUE (user_id, connector_type)
+            )
+        """))
+        await conn.execute(text("ALTER TABLE connector_lifecycle ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE connector_lifecycle ADD COLUMN IF NOT EXISTS last_error TEXT"))
+        await conn.execute(text("ALTER TABLE connector_lifecycle ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_lifecycle_user_idx ON connector_lifecycle(user_id)"))
+
         # 1) Create core tables first (fresh DB safe).
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trading_accounts (
@@ -262,12 +288,97 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
                 updated_at = NOW()
             RETURNING *
         """), params)).mappings().first()
+    if user_id:
+        await upsert_connector_lifecycle(
+            user_id=user_id,
+            connector_type=connector_type,
+            status="connected",
+            is_connected=True,
+            last_activity_at=datetime.now(timezone.utc),
+            metadata={"source": "upsert_trading_account"},
+        )
     return dict(row)
+
+
+async def upsert_connector_lifecycle(
+    user_id: str,
+    connector_type: str,
+    *,
+    status: str | None = None,
+    is_connected: bool | None = None,
+    last_sync_at: datetime | None = None,
+    last_activity_at: datetime | None = None,
+    error: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_connector = _normalize_connector(connector_type)
+    normalized_user = _normalize_user_id(user_id)
+    if not normalized_user:
+        raise ValueError("user_id is required for connector lifecycle")
+
+    desired_status = (status or DEFAULT_CONNECTOR_STATUS).strip().lower()
+    if desired_status not in ALLOWED_CONNECTOR_STATUSES:
+        desired_status = DEFAULT_CONNECTOR_STATUS
+
+    now = datetime.now(timezone.utc)
+    params = {
+        "user_id": normalized_user,
+        "connector_type": normalized_connector,
+        "status": desired_status,
+        "is_connected": bool(is_connected) if is_connected is not None else desired_status != "disconnected",
+        "last_connected_at": now if (is_connected is True or desired_status in {"connected", "degraded", "sync_error"}) else None,
+        "last_disconnected_at": now if (is_connected is False or desired_status == "disconnected") else None,
+        "last_sync_at": last_sync_at,
+        "last_activity_at": last_activity_at,
+        "last_error": error,
+        "last_error_at": now if error else None,
+        "metadata": json.dumps(metadata or {}),
+    }
+    async with engine.begin() as conn:
+        row = (await conn.execute(text("""
+            INSERT INTO connector_lifecycle (
+                user_id, connector_type, status, is_connected, last_connected_at,
+                last_disconnected_at, last_sync_at, last_activity_at, last_error, last_error_at, metadata
+            ) VALUES (
+                :user_id, :connector_type, :status, :is_connected, :last_connected_at,
+                :last_disconnected_at, :last_sync_at, :last_activity_at, :last_error, :last_error_at, CAST(:metadata AS jsonb)
+            )
+            ON CONFLICT (user_id, connector_type)
+            DO UPDATE SET
+                status = EXCLUDED.status,
+                is_connected = EXCLUDED.is_connected,
+                last_connected_at = COALESCE(EXCLUDED.last_connected_at, connector_lifecycle.last_connected_at),
+                last_disconnected_at = COALESCE(EXCLUDED.last_disconnected_at, connector_lifecycle.last_disconnected_at),
+                last_sync_at = COALESCE(EXCLUDED.last_sync_at, connector_lifecycle.last_sync_at),
+                last_activity_at = COALESCE(EXCLUDED.last_activity_at, connector_lifecycle.last_activity_at),
+                last_error = EXCLUDED.last_error,
+                last_error_at = COALESCE(EXCLUDED.last_error_at, connector_lifecycle.last_error_at),
+                metadata = connector_lifecycle.metadata || EXCLUDED.metadata,
+                updated_at = NOW()
+            RETURNING *
+        """), params)).mappings().first()
+    return dict(row)
+
+
+async def get_connector_lifecycle(user_id: str, connector_type: str) -> dict[str, Any] | None:
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("""
+            SELECT *
+            FROM connector_lifecycle
+            WHERE user_id = :user_id AND connector_type = :connector_type
+            LIMIT 1
+        """), {
+            "user_id": _normalize_user_id(user_id),
+            "connector_type": _normalize_connector(connector_type),
+        })).mappings().first()
+    return dict(row) if row else None
 
 
 async def ingest_account_snapshot(payload: dict[str, Any]) -> bool:
     account = await upsert_trading_account(payload)
     snapshot_time = _parse_dt(payload.get("timestamp")) or datetime.now(timezone.utc)
+    account_user_id = _normalize_user_id(account.get("user_id") or payload.get("user_id"))
+    connector_type = _normalize_connector(payload.get("connector_type") or account.get("connector_type"))
     async with engine.begin() as conn:
         latest = (await conn.execute(text("""
             SELECT snapshot_time, balance, equity, drawdown, risk_used
@@ -303,6 +414,16 @@ async def ingest_account_snapshot(payload: dict[str, Any]) -> bool:
             "risk_used": payload.get("risk_used"),
             "source_metadata": json.dumps(payload.get("source_metadata") or {}),
         })
+    if account_user_id:
+        await upsert_connector_lifecycle(
+            user_id=account_user_id,
+            connector_type=connector_type,
+            status="connected",
+            is_connected=True,
+            last_sync_at=snapshot_time,
+            last_activity_at=snapshot_time,
+            metadata={"source": "ingest_account_snapshot"},
+        )
     return True
 
 
@@ -384,9 +505,21 @@ async def deactivate_missing_positions(trading_account_id: int, seen_position_ke
 
 async def ingest_trade(payload: dict[str, Any]) -> bool:
     account = await upsert_trading_account(payload)
+    account_user_id = _normalize_user_id(account.get("user_id") or payload.get("user_id"))
+    connector_type = _normalize_connector(payload.get("connector_type") or account.get("connector_type"))
     account_size = payload.get("account_size") or account.get("account_size") or 10000
     pnl = payload.get("pnl") or 0
     if abs(pnl) > account_size:
+        if account_user_id:
+            await upsert_connector_lifecycle(
+                user_id=account_user_id,
+                connector_type=connector_type,
+                status="sync_error",
+                is_connected=True,
+                error="Trade rejected: pnl exceeds account_size",
+                last_activity_at=datetime.now(timezone.utc),
+                metadata={"source": "ingest_trade"},
+            )
         return False
 
     async with engine.begin() as conn:
@@ -438,6 +571,16 @@ async def ingest_trade(payload: dict[str, Any]) -> bool:
             "source_metadata": json.dumps(payload.get("source_metadata") or {}),
             "import_provenance": json.dumps(payload.get("import_provenance") or {}),
         })
+    if account_user_id:
+        now = datetime.now(timezone.utc)
+        await upsert_connector_lifecycle(
+            user_id=account_user_id,
+            connector_type=connector_type,
+            status="connected",
+            is_connected=True,
+            last_activity_at=now,
+            metadata={"source": "ingest_trade"},
+        )
     return True
 
 
@@ -463,3 +606,20 @@ async def ingest_event(payload: dict[str, Any]) -> None:
                 :trading_account_id, :user_id, :connector_type, :event_type, CAST(:event_payload AS jsonb), :event_time
             )
         """), params)
+    normalized_user = _normalize_user_id(payload.get("user_id"))
+    if normalized_user:
+        event_type = str(payload.get("event_type") or "").strip().lower()
+        status = "connected"
+        error = None
+        if event_type in {"sync_error", "error", "degraded"}:
+            status = "sync_error" if event_type == "sync_error" else "degraded"
+            error = f"Connector event: {event_type}"
+        await upsert_connector_lifecycle(
+            user_id=normalized_user,
+            connector_type=params["connector_type"],
+            status=status,
+            is_connected=True,
+            last_activity_at=params["event_time"],
+            error=error,
+            metadata={"source": "ingest_event", "event_type": event_type},
+        )
