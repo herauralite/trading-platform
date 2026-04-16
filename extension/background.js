@@ -1,4 +1,5 @@
 const TALI_STORAGE_KEY = 'tali_telegram_uid';
+const TALI_SESSION_TOKEN_KEY = 'tali_session_token';
 
 function normalizeTelegramUserId(value) {
   if (value == null) return null;
@@ -40,8 +41,29 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     return true;
   }
 
+  if (type === 'TALI_SET_SESSION') {
+    const telegramUserId = normalizeTelegramUserId(message?.telegramUserId);
+    const sessionToken = String(message?.sessionToken || '').trim();
+    if (!telegramUserId || !sessionToken) {
+      sendResponse?.({ ok: false, error: 'invalid_session_payload' });
+      return false;
+    }
+
+    chrome.storage.local.set({ [TALI_STORAGE_KEY]: telegramUserId, [TALI_SESSION_TOKEN_KEY]: sessionToken }, () => {
+      if (chrome.runtime.lastError) {
+        console.error('TaliTrade: failed to set session context', chrome.runtime.lastError);
+        sendResponse?.({ ok: false, error: chrome.runtime.lastError.message || 'storage_set_failed' });
+        return;
+      }
+      console.log(`TaliTrade: stored session context from ${origin}`);
+      sendResponse?.({ ok: true, telegramUserId, hasSessionToken: true });
+    });
+
+    return true;
+  }
+
   if (type === 'TALI_CLEAR_UID') {
-    chrome.storage.local.remove(TALI_STORAGE_KEY, () => {
+    chrome.storage.local.remove([TALI_STORAGE_KEY, TALI_SESSION_TOKEN_KEY], () => {
       if (chrome.runtime.lastError) {
         console.error('TaliTrade: failed to clear telegram uid', chrome.runtime.lastError);
         sendResponse?.({ ok: false, error: chrome.runtime.lastError.message || 'storage_remove_failed' });
@@ -61,6 +83,22 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
         return;
       }
       sendResponse?.({ ok: true, telegramUserId: result?.[TALI_STORAGE_KEY] || null });
+    });
+
+    return true;
+  }
+
+  if (type === 'TALI_GET_SESSION') {
+    chrome.storage.local.get([TALI_STORAGE_KEY, TALI_SESSION_TOKEN_KEY], (result) => {
+      if (chrome.runtime.lastError) {
+        sendResponse?.({ ok: false, error: chrome.runtime.lastError.message || 'storage_get_failed' });
+        return;
+      }
+      sendResponse?.({
+        ok: true,
+        telegramUserId: result?.[TALI_STORAGE_KEY] || null,
+        sessionToken: result?.[TALI_SESSION_TOKEN_KEY] || null,
+      });
     });
 
     return true;

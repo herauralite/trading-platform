@@ -889,7 +889,11 @@ async function finishTelegramLogin(data) {
   try {
     const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
     if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
-      chrome.runtime.sendMessage(TALI_EXTENSION_ID, { type: 'TALI_SET_UID', telegramUserId: user.telegramUserId }, () => {});
+      chrome.runtime.sendMessage(
+        TALI_EXTENSION_ID,
+        { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token },
+        () => {}
+      );
     }
   } catch (_) {}
 
@@ -900,7 +904,6 @@ async function finishTelegramLogin(data) {
       const liveAccounts = statusData.accounts || {};
       for (const [acctId, acct] of Object.entries(liveAccounts)) {
         const params = new URLSearchParams({
-          telegram_user_id: user.telegramUserId,
           account_id: acctId,
           account_type: acct.accountType || '',
           account_size: acct.accountSize || 0,

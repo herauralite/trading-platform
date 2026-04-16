@@ -16,6 +16,7 @@ const JOURNAL_URL  = BASE_URL + '/extension/trade';
 const POLL_MS      = 5000;
 const SCRAPE_MS    = 60000;
 const TALI_STORAGE_KEY = 'tali_telegram_uid';  // key in chrome.storage.local
+const TALI_SESSION_TOKEN_KEY = 'tali_session_token';
 
 // ─── Telegram user helpers ────────────────────────────────────────────────────
 // The web app (talitrade.com) and this content script run on different origins,
@@ -24,6 +25,8 @@ const TALI_STORAGE_KEY = 'tali_telegram_uid';  // key in chrome.storage.local
 // and we read it here. Falls back to null gracefully if not set yet.
 let _cachedTelegramUserId = null;
 let _telegramUserIdLoaded = false;
+let _cachedSessionToken = null;
+let _sessionTokenLoaded = false;
 
 function normalizeTelegramUserId(value) {
   if (value == null) return null;
@@ -41,6 +44,22 @@ function clearTelegramUserIdCache() {
   _telegramUserIdLoaded = false;
 }
 
+function normalizeSessionToken(value) {
+  if (value == null) return null;
+  const str = String(value).trim();
+  return str || null;
+}
+
+function setCachedSessionToken(value) {
+  _cachedSessionToken = normalizeSessionToken(value);
+  _sessionTokenLoaded = true;
+}
+
+function clearSessionTokenCache() {
+  _cachedSessionToken = null;
+  _sessionTokenLoaded = false;
+}
+
 async function getTelegramUserId() {
   if (_telegramUserIdLoaded) return _cachedTelegramUserId;
   try {
@@ -50,14 +69,32 @@ async function getTelegramUserId() {
   } catch(e) { return null; }
 }
 
+async function getSessionToken() {
+  if (_sessionTokenLoaded) return _cachedSessionToken;
+  try {
+    const result = await chrome.storage.local.get(TALI_SESSION_TOKEN_KEY);
+    setCachedSessionToken(result[TALI_SESSION_TOKEN_KEY]);
+    return _cachedSessionToken;
+  } catch(e) { return null; }
+}
+
 if (chrome?.storage?.onChanged) {
   chrome.storage.onChanged.addListener((changes, areaName) => {
-    if (areaName !== 'local' || !changes[TALI_STORAGE_KEY]) return;
-    const nextUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].newValue);
-    const prevUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].oldValue);
-    if (nextUid) setCachedTelegramUserId(nextUid);
-    else clearTelegramUserIdCache();
-    if (nextUid !== prevUid) linkedAccountsThisSession.clear();
+    if (areaName !== 'local') return;
+
+    if (changes[TALI_STORAGE_KEY]) {
+      const nextUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].newValue);
+      const prevUid = normalizeTelegramUserId(changes[TALI_STORAGE_KEY].oldValue);
+      if (nextUid) setCachedTelegramUserId(nextUid);
+      else clearTelegramUserIdCache();
+      if (nextUid !== prevUid) linkedAccountsThisSession.clear();
+    }
+
+    if (changes[TALI_SESSION_TOKEN_KEY]) {
+      const nextToken = normalizeSessionToken(changes[TALI_SESSION_TOKEN_KEY].newValue);
+      if (nextToken) setCachedSessionToken(nextToken);
+      else clearSessionTokenCache();
+    }
   });
 }
 
@@ -66,20 +103,24 @@ if (chrome?.storage?.onChanged) {
 const linkedAccountsThisSession = new Set();
 async function ensureAccountLinked(accountId, accountType, accountSize, accountLabel) {
   const tgUid = await getTelegramUserId();
+  const sessionToken = await getSessionToken();
   const sessionLinkKey = tgUid && accountId ? `${tgUid}:${accountId}` : null;
-  if (!sessionLinkKey || linkedAccountsThisSession.has(sessionLinkKey)) return;
+  if (!sessionLinkKey || !sessionToken || linkedAccountsThisSession.has(sessionLinkKey)) return;
   linkedAccountsThisSession.add(sessionLinkKey);  // optimistic — avoids duplicate calls
   try {
     const params = new URLSearchParams({
-      telegram_user_id: tgUid,
       account_id:       accountId,
       account_type:     accountType  || '',
       account_size:     accountSize  || 0,   // 0 not '' — FastAPI expects int
       label:            accountLabel || accountId,
       broker:           'fundingpips',
     });
-    await fetch(BASE_URL + '/auth/link-account?' + params.toString(), { method: 'POST' });
-    console.log(`TaliTrade: account ${accountId} linked to Telegram user ${tgUid}`);
+    const res = await fetch(BASE_URL + '/auth/link-account?' + params.toString(), {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + sessionToken },
+    });
+    if (!res.ok) throw new Error(`link_failed_${res.status}`);
+    console.log(`TaliTrade: account ${accountId} linked via canonical session contract`);
   } catch(e) {
     linkedAccountsThisSession.delete(sessionLinkKey);  // allow retry next cycle
   }
