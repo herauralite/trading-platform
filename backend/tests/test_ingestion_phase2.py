@@ -3,9 +3,11 @@ import sys
 import types
 import asyncio
 import httpx
+import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test_db")
+os.environ.setdefault("SECRET_KEY", "test-secret-key")
 
 # Test environment can be missing PyJWT. Stub minimally for app import.
 if "jwt" not in sys.modules:
@@ -27,6 +29,7 @@ if "jwt" not in sys.modules:
 from app.main import app
 from app import main as main_mod
 from app.core.auth_session import create_session_token
+from app.core import auth_session as auth_session_mod
 from app.services.connector_ingest import compute_account_key
 from app.services import connector_ingest as ci
 
@@ -449,6 +452,39 @@ def test_authenticated_csv_import_uses_session_user(monkeypatch):
     assert resp.status_code == 200
     assert captured["accounts"][0]["user_id"] == "abc-1"
     assert captured["trades"][0]["user_id"] == "abc-1"
+
+
+def test_session_token_fails_closed_without_secret(monkeypatch):
+    monkeypatch.delenv("SECRET_KEY", raising=False)
+    with pytest.raises(Exception) as excinfo:
+        auth_session_mod.create_session_token("123")
+    assert "SECRET_KEY" in str(excinfo.value)
+    with pytest.raises(Exception) as decode_exc:
+        auth_session_mod.decode_session_token("abc.def")
+    assert "SECRET_KEY" in str(decode_exc.value)
+
+
+def test_bridge_route_disabled_by_default():
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/auth/session/bridge", params={"telegram_username": "@alice"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 404
+
+
+def test_bridge_route_requires_secret_when_enabled(monkeypatch):
+    monkeypatch.setenv("AUTH_SESSION_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("AUTH_SESSION_BRIDGE_SECRET", "bridge-test-secret")
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/auth/session/bridge", params={"telegram_username": "@alice"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 403
 
 
 def test_db_link_account_mirrors_legacy_to_canonical(monkeypatch):

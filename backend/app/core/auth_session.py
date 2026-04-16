@@ -9,7 +9,16 @@ from typing import Any
 from fastapi import Header, HTTPException
 
 DEFAULT_SESSION_TTL_SECONDS = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")) * 60
-SESSION_SECRET = (os.getenv("SECRET_KEY") or "dev-session-secret").encode()
+
+
+def _get_session_secret() -> bytes:
+    raw_secret = str(os.getenv("SECRET_KEY") or "").strip()
+    if not raw_secret:
+        raise HTTPException(
+            status_code=500,
+            detail="Auth session misconfigured: SECRET_KEY is required",
+        )
+    return raw_secret.encode()
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -22,6 +31,7 @@ def _b64url_decode(value: str) -> bytes:
 
 
 def create_session_token(telegram_user_id: str, ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS) -> str:
+    session_secret = _get_session_secret()
     now = int(time.time())
     payload = {
         "sub": str(telegram_user_id),
@@ -29,17 +39,18 @@ def create_session_token(telegram_user_id: str, ttl_seconds: int = DEFAULT_SESSI
         "exp": now + max(60, int(ttl_seconds)),
     }
     payload_b64 = _b64url_encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode())
-    signature = hmac.new(SESSION_SECRET, payload_b64.encode(), hashlib.sha256).digest()
+    signature = hmac.new(session_secret, payload_b64.encode(), hashlib.sha256).digest()
     return f"{payload_b64}.{_b64url_encode(signature)}"
 
 
 def decode_session_token(token: str) -> dict[str, Any]:
+    session_secret = _get_session_secret()
     try:
         payload_b64, signature_b64 = token.split(".", 1)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid session token format") from exc
 
-    expected_sig = hmac.new(SESSION_SECRET, payload_b64.encode(), hashlib.sha256).digest()
+    expected_sig = hmac.new(session_secret, payload_b64.encode(), hashlib.sha256).digest()
     try:
         provided_sig = _b64url_decode(signature_b64)
     except Exception as exc:
