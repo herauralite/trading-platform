@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.schemas_ingest import (
     CsvTradeImportRequest,
@@ -15,13 +15,32 @@ from app.services.connector_ingest import (
     ingest_trade,
     upsert_trading_account,
 )
+from app.core.auth_session import decode_session_token, get_bearer_token
 
 router = APIRouter(prefix="/ingest", tags=["connector-ingest"])
 
 
+def _resolve_user_id(
+    payload_user_id: str | None,
+    token: str | None,
+    require_session: bool = False,
+) -> str | None:
+    if token:
+        return str(decode_session_token(token)["sub"])
+    explicit = str(payload_user_id or "").strip() or None
+    if require_session and not explicit:
+        raise HTTPException(status_code=401, detail="Missing authenticated session")
+    return explicit
+
+
 @router.post("/accounts")
-async def ingest_accounts(payload: IngestTradingAccount):
-    account = await upsert_trading_account(payload.model_dump())
+async def ingest_accounts(
+    payload: IngestTradingAccount,
+    token: str | None = Depends(get_bearer_token),
+):
+    normalized = payload.model_dump()
+    normalized["user_id"] = _resolve_user_id(payload.user_id, token, require_session=True)
+    account = await upsert_trading_account(normalized)
     return {"ok": True, "account": account}
 
 
@@ -38,8 +57,13 @@ async def ingest_positions(payload: IngestPosition):
 
 
 @router.post("/trades")
-async def ingest_trades(payload: IngestTrade):
-    inserted = await ingest_trade(payload.model_dump())
+async def ingest_trades(
+    payload: IngestTrade,
+    token: str | None = Depends(get_bearer_token),
+):
+    normalized = payload.model_dump()
+    normalized["user_id"] = _resolve_user_id(payload.user_id, token, require_session=True)
+    inserted = await ingest_trade(normalized)
     if not inserted:
         raise HTTPException(status_code=422, detail="Trade rejected: pnl exceeds account_size")
     return {"ok": True, "persisted": inserted}
@@ -52,10 +76,14 @@ async def ingest_events(payload: IngestEvent):
 
 
 @router.post("/csv/trades")
-async def ingest_csv_trades(payload: CsvTradeImportRequest):
+async def ingest_csv_trades(
+    payload: CsvTradeImportRequest,
+    token: str | None = Depends(get_bearer_token),
+):
+    resolved_user_id = _resolve_user_id(payload.user_id, token, require_session=True)
     # CSV import connector path: creates account (if needed) and imports normalized trades.
     account_payload = {
-        "user_id": payload.user_id,
+        "user_id": resolved_user_id,
         "connector_type": payload.connector_type,
         "broker_name": payload.broker_name,
         "external_account_id": payload.external_account_id,
@@ -83,7 +111,7 @@ async def ingest_csv_trades(payload: CsvTradeImportRequest):
         }
         row_payload["connector_type"] = payload.connector_type
         row_payload["external_account_id"] = payload.external_account_id
-        row_payload["user_id"] = payload.user_id
+        row_payload["user_id"] = resolved_user_id
         if payload.account_type and not row_payload.get("account_type"):
             row_payload["account_type"] = payload.account_type
         if payload.account_size and not row_payload.get("account_size"):

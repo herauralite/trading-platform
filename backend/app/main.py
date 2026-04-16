@@ -16,7 +16,7 @@ from datetime import datetime, date, timezone, timedelta
 
 load_dotenv(Path(__file__).parent.parent / ".env")
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -28,6 +28,12 @@ from app.services.connector_ingest import (
     ingest_position,
     ingest_trade,
     upsert_trading_account,
+)
+from app.core.auth_session import (
+    DEFAULT_SESSION_TTL_SECONDS,
+    create_session_token,
+    decode_session_token,
+    get_bearer_token,
 )
 
 if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
@@ -77,8 +83,14 @@ def telegram_auth_mode() -> str:
 
 def build_auth_success_payload(tg_user_id: str, username: str | None, first_name: str | None,
                                last_name: str | None, photo_url: str | None, accounts: list[dict]) -> dict:
+    issued_at = datetime.utcnow()
+    expires_at = issued_at + timedelta(seconds=DEFAULT_SESSION_TTL_SECONDS)
+    access_token = create_session_token(tg_user_id)
     return {
         "ok": True,
+        "access_token": access_token,
+        "token_type": "bearer",
+        "expires_at": expires_at.isoformat() + "Z",
         "user": {
             "telegramUserId": tg_user_id,
             "username": username,
@@ -97,6 +109,20 @@ def build_auth_success_payload(tg_user_id: str, username: str | None, first_name
             for a in accounts
         ],
     }
+
+
+def get_authenticated_telegram_user_id(token: str | None = Depends(get_bearer_token)) -> str | None:
+    if not token:
+        return None
+    payload = decode_session_token(token)
+    return str(payload["sub"])
+
+
+def get_required_telegram_user_id(token: str | None = Depends(get_bearer_token)) -> str:
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing authenticated session")
+    payload = decode_session_token(token)
+    return str(payload["sub"])
 
 
 def _coerce_telegram_profile_from_claims(claims: dict[str, Any]) -> dict[str, Any]:
@@ -1251,18 +1277,27 @@ async def telegram_login_oidc(data: TelegramOidcAuthData):
 
 
 @app.get("/auth/me")
-async def get_me(telegram_user_id: str):
-    """Return user profile and linked accounts by telegram_user_id."""
+async def get_me(
+    session_user_id: str | None = Depends(get_authenticated_telegram_user_id),
+    telegram_user_id: str | None = None,
+):
+    """
+    Canonical route: read current user from authenticated session.
+    Backward-compat path: supports explicit telegram_user_id query temporarily.
+    """
+    resolved_uid = str(session_user_id or telegram_user_id or "").strip()
+    if not resolved_uid:
+        return JSONResponse(status_code=401, content={"detail": "Missing authenticated session"})
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(
             text("SELECT * FROM users WHERE telegram_user_id = :uid"),
-            {"uid": telegram_user_id}
+            {"uid": resolved_uid}
         )
         user = dict(result.mappings().first() or {})
     if not user:
         return JSONResponse(status_code=404, content={"detail": "User not found"})
-    accounts = await db_get_user_accounts(telegram_user_id)
+    accounts = await db_get_user_accounts(resolved_uid)
     return {"user": user, "accounts": accounts}
 
 
@@ -1290,6 +1325,44 @@ async def resolve_user(telegram_user_id: str = None, telegram_username: str = No
 
     accounts = await db_get_user_accounts(str(user["telegram_user_id"]))
     return {"user": user, "accounts": accounts}
+
+
+@app.post("/auth/session/bridge")
+async def create_bridge_session(
+    telegram_user_id: str = None,
+    telegram_username: str = None,
+    bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
+):
+    """
+    Transitional bridge for legacy/testing clients that still resolve user identity manually.
+    Prefer /auth/telegram or /auth/telegram/oidc for production login.
+    """
+    bridge_enabled = str(os.getenv("AUTH_SESSION_BRIDGE_ENABLED", "")).strip().lower() in {"1", "true", "yes"}
+    if not bridge_enabled:
+        return JSONResponse(status_code=404, content={"detail": "Bridge auth is disabled"})
+
+    expected_secret = str(os.getenv("AUTH_SESSION_BRIDGE_SECRET") or "").strip()
+    if not expected_secret:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Bridge auth misconfigured: AUTH_SESSION_BRIDGE_SECRET is required"},
+        )
+    if not bridge_secret or bridge_secret != expected_secret:
+        return JSONResponse(status_code=403, content={"detail": "Invalid bridge secret"})
+
+    resolved = await resolve_user(telegram_user_id=telegram_user_id, telegram_username=telegram_username)
+    if isinstance(resolved, JSONResponse):
+        return resolved
+    user = resolved.get("user") or {}
+    uid = str(user.get("telegram_user_id") or "").strip()
+    if not uid:
+        return JSONResponse(status_code=404, content={"detail": "User not found"})
+    return {
+        **resolved,
+        "access_token": create_session_token(uid),
+        "token_type": "bearer",
+        "compatibility_mode": True,
+    }
 
 
 @app.post("/auth/link-account")
@@ -1352,8 +1425,14 @@ async def connectors_catalog():
 
 
 @app.get("/connectors/overview")
-async def connectors_overview(telegram_user_id: str):
-    connectors = await db_get_connectors_overview(telegram_user_id)
+async def connectors_overview(
+    session_user_id: str | None = Depends(get_authenticated_telegram_user_id),
+    telegram_user_id: str | None = None,
+):
+    resolved_uid = str(session_user_id or telegram_user_id or "").strip()
+    if not resolved_uid:
+        return JSONResponse(status_code=401, content={"detail": "Missing authenticated session"})
+    connectors = await db_get_connectors_overview(resolved_uid)
     return {"connectors": connectors, "count": len(connectors)}
 
 
