@@ -164,8 +164,10 @@ trades (
 GET  /health                     — liveness check
 GET  /health/db                  — DB connectivity check
 POST /auth/telegram              — Telegram Login Widget verification + user upsert
-GET  /auth/me?telegram_user_id=  — get user + accounts
-POST /auth/link-account          — link prop account to Telegram user
+GET  /auth/me                    — get current user + accounts (bearer session required)
+POST /auth/link-account          — link prop account to current authenticated user (bearer required)
+POST /auth/link-account/compat   — transitional explicit-identity link path (bridge secret + bridge flag required)
+POST /auth/session/bridge        — transitional session bridge for legacy/dev flows (bridge secret + bridge flag required)
 
 POST /telegram/webhook           — Telegram bot commands
 GET  /extension/status           — live account state (TTL: 120s)

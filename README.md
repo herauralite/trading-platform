@@ -25,6 +25,22 @@ TaliTrade now uses a connector-first ingestion layer. The FundingPips extension 
 - `POST /ingest/events`
 - `POST /ingest/csv/trades` (non-extension connector path)
 
+> Primary app ingestion routes are bearer-authenticated session routes. User ownership is resolved from the authenticated session, not from explicit identity payload fields.
+
+### Canonical authenticated app routes
+
+- `GET /auth/me` (requires bearer session)
+- `GET /connectors/overview` (requires bearer session)
+- `POST /auth/link-account` (requires bearer session)
+- `POST /ingest/accounts`, `POST /ingest/trades`, `POST /ingest/csv/trades` (require bearer session)
+
+### Transitional compatibility routes
+
+- `POST /auth/session/bridge`
+- `POST /auth/link-account/compat`
+
+These compatibility routes are intentionally non-primary and require bridge gating (`AUTH_SESSION_BRIDGE_ENABLED=true`) plus `X-Bridge-Secret`.
+
 ### Backward compatibility
 
 - Existing `/extension/*` routes still work.
