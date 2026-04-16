@@ -5,10 +5,11 @@ const API = 'https://trading-platform-production-70e0.up.railway.app'
 
 function App() {
   const [identityInput, setIdentityInput] = useState(localStorage.getItem('talitrade.identity') || '')
-  const [telegramUserId, setTelegramUserId] = useState(localStorage.getItem('talitrade.telegramUserId') || '')
+  const [sessionToken, setSessionToken] = useState(localStorage.getItem('talitrade.sessionToken') || '')
+  const [sessionUser, setSessionUser] = useState(localStorage.getItem('talitrade.sessionUser') || '')
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
-  const [status, setStatus] = useState('Resolve your Telegram identity, then load connectors')
+  const [status, setStatus] = useState('Authenticate with Telegram session, then load connectors')
   const [manualAccount, setManualAccount] = useState({
     externalAccountId: '',
     brokerName: 'Manual',
@@ -44,25 +45,30 @@ function App() {
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
-  async function resolveIdentity() {
+  const authHeaders = sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}
+
+  async function bridgeSession() {
     try {
       const raw = identityInput.trim()
       if (!raw) {
-        setStatus('Enter a Telegram @username or user id')
+        setStatus('Enter a Telegram @username or user id for temporary bridge auth')
         return
       }
       const params = raw.startsWith('@')
         ? { telegram_username: raw }
         : (/^\d+$/.test(raw) ? { telegram_user_id: raw } : { telegram_username: raw })
-      const res = await axios.get(`${API}/auth/resolve-user`, { params })
+      const res = await axios.post(`${API}/auth/session/bridge`, null, { params })
       const uid = String(res.data?.user?.telegram_user_id || '')
-      if (!uid) throw new Error('No telegram_user_id returned')
-      setTelegramUserId(uid)
-      localStorage.setItem('talitrade.telegramUserId', uid)
+      const token = String(res.data?.access_token || '')
+      if (!uid || !token) throw new Error('No authenticated session returned')
+      setSessionToken(token)
+      setSessionUser(uid)
+      localStorage.setItem('talitrade.sessionToken', token)
+      localStorage.setItem('talitrade.sessionUser', uid)
       localStorage.setItem('talitrade.identity', identityInput)
-      setStatus(`Identity resolved for ${res.data?.user?.telegram_username || uid}`)
+      setStatus(`Authenticated as ${res.data?.user?.telegram_username || uid} (bridge mode)`)
     } catch (e) {
-      setStatus(`Identity resolve failed: ${e.message}`)
+      setStatus(`Session bridge failed: ${e.message}`)
     }
   }
 
@@ -70,7 +76,7 @@ function App() {
     try {
       const [catalogRes, overviewRes] = await Promise.all([
         axios.get(`${API}/connectors/catalog`),
-        axios.get(`${API}/connectors/overview`, { params: { telegram_user_id: telegramUserId } })
+        axios.get(`${API}/connectors/overview`, { headers: authHeaders })
       ])
       setCatalog(catalogRes.data.connectors || [])
       setConnectors(overviewRes.data.connectors || [])
@@ -83,14 +89,13 @@ function App() {
   async function createManualAccount() {
     try {
       await axios.post(`${API}/ingest/accounts`, {
-        user_id: telegramUserId,
         connector_type: 'manual',
         broker_name: manualAccount.brokerName,
         external_account_id: manualAccount.externalAccountId,
         display_label: manualAccount.displayLabel || `Manual ${manualAccount.externalAccountId}`,
         account_type: manualAccount.accountType,
         account_size: Number(manualAccount.accountSize) || null
-      })
+      }, { headers: authHeaders })
       setStatus('Manual account created')
       setManualTrade((prev) => ({ ...prev, externalAccountId: manualAccount.externalAccountId }))
       await loadConnectorData()
@@ -102,7 +107,6 @@ function App() {
   async function createManualTrade() {
     try {
       await axios.post(`${API}/ingest/trades`, {
-        user_id: telegramUserId,
         connector_type: 'manual',
         external_account_id: manualTrade.externalAccountId,
         symbol: manualTrade.symbol,
@@ -113,7 +117,7 @@ function App() {
         pnl: Number(manualTrade.pnl),
         import_provenance: { entry_mode: 'ui_manual' },
         source_metadata: { created_from: 'manual_journal_panel' }
-      })
+      }, { headers: authHeaders })
       setStatus('Manual trade recorded')
       await loadConnectorData()
     } catch (e) {
@@ -125,12 +129,11 @@ function App() {
     try {
       const rows = JSON.parse(csvInput)
       await axios.post(`${API}/ingest/csv/trades`, {
-        user_id: telegramUserId,
         connector_type: 'csv_import',
         broker_name: 'csv',
         external_account_id: csvAccount,
         rows
-      })
+      }, { headers: authHeaders })
       setStatus(`Imported ${rows.length} CSV trade row(s)`)
       await loadConnectorData()
     } catch (e) {
@@ -144,11 +147,24 @@ function App() {
       <p>Status: {status}</p>
       <section className="panel">
         <h2>Workspace</h2>
-        <label>Telegram identity (@username or user id)</label>
+        <label>Session token (from Telegram auth)</label>
+        <input
+          value={sessionToken}
+          onChange={(e) => {
+            const token = e.target.value
+            setSessionToken(token)
+            localStorage.setItem('talitrade.sessionToken', token)
+          }}
+          placeholder="Paste bearer token"
+        />
+        <div className="row">
+          <span>Authenticated user: {sessionUser || '—'}</span>
+        </div>
+        <label>Bridge auth (temporary): Telegram @username or user id</label>
         <input value={identityInput} onChange={(e) => setIdentityInput(e.target.value)} />
         <div className="row">
-          <button onClick={resolveIdentity}>Resolve identity</button>
-          <span>Resolved user id: {telegramUserId || '—'}</span>
+          <button onClick={bridgeSession}>Create bridge session</button>
+          <span>Bridge user id: {sessionUser || '—'}</span>
         </div>
         <button onClick={loadConnectorData}>Load connectors</button>
       </section>
