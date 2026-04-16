@@ -31,6 +31,7 @@ function App() {
   const [manualTrade, setManualTrade] = useState({ externalAccountId: '', symbol: 'NAS100', side: 'buy', size: 0.1, entryPrice: 15000, exitPrice: 15025, pnl: 25 })
   const [csvInput, setCsvInput] = useState('[{"symbol":"US30","side":"buy","open_time":"2026-04-16T10:00:00Z","close_time":"2026-04-16T10:10:00Z","pnl":18}]')
   const [csvAccount, setCsvAccount] = useState('csv-account-1')
+  const [connectorDrafts, setConnectorDrafts] = useState({})
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authHeaders = buildAuthHeaders(sessionToken)
@@ -39,6 +40,25 @@ function App() {
     () => connectors.flatMap((connector) => connector.accounts.map((account) => ({ ...account, connector_type: connector.connector_type }))),
     [connectors]
   )
+  const managedConnectors = useMemo(() => {
+    const map = new Map(connectors.map((connector) => [connector.connector_type, connector]))
+    for (const entry of catalog) {
+      if (!map.has(entry.connector_type)) {
+        map.set(entry.connector_type, {
+          connector_type: entry.connector_type,
+          status: 'disconnected',
+          is_connected: false,
+          account_count: 0,
+          accounts: [],
+          last_activity_at: null,
+          last_sync_at: null,
+          last_error: null,
+          last_error_at: null,
+        })
+      }
+    }
+    return Array.from(map.values())
+  }, [catalog, connectors])
 
   useEffect(() => {
     void loadTelegramAuthConfig()
@@ -84,6 +104,13 @@ function App() {
   }
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
+
+  const statusTone = (status) => {
+    if (status === 'connected') return 'status-connected'
+    if (status === 'degraded') return 'status-degraded'
+    if (status === 'sync_error') return 'status-error'
+    return 'status-disconnected'
+  }
 
   async function loadTelegramAuthConfig() {
     try {
@@ -210,6 +237,16 @@ function App() {
     }
   }
 
+  async function connectorAction(connectorType, action, payload = {}) {
+    try {
+      await axios.post(`${API}/connectors/${connectorType}/${action}`, payload, { headers: authHeaders })
+      setStatus(`${sourceLabel(connectorType)} ${action} action completed`)
+      await loadConnectorData({ silent: true })
+    } catch (e) {
+      setStatus(`${sourceLabel(connectorType)} ${action} failed: ${e.message}`)
+    }
+  }
+
 
   const startOidcFlow = () => {
     const cfg = telegramConfig
@@ -275,15 +312,16 @@ function App() {
       <section className="panel">
         <h2>Connector Management</h2>
         <p>Available connectors: {catalog.map((c) => c.label).join(', ') || '—'}</p>
-        {connectors.map((connector) => (
+        {managedConnectors.map((connector) => (
           <div key={connector.connector_type} className="card">
             <div className="row">
               <strong>{sourceLabel(connector.connector_type)}</strong>
-              <span className="badge">{connector.status}</span>
+              <span className={`badge ${statusTone(connector.status)}`}>{connector.status}</span>
             </div>
             <div className="meta">
-              Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
+              State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
             </div>
+            {connector.last_error ? <p className="error-text">Last error: {connector.last_error} ({formatDate(connector.last_error_at)})</p> : null}
             <ul>
               {connector.accounts.map((account) => (
                 <li key={`${connector.connector_type}-${account.id}`}>
@@ -293,6 +331,43 @@ function App() {
                 </li>
               ))}
             </ul>
+            <div className="row">
+              <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'sync')}>Sync</button>
+              <button disabled={!signedIn || connector.account_count > 0} onClick={() => connectorAction(connector.connector_type, 'connect', {
+                external_account_id: connectorDrafts[connector.connector_type]?.external_account_id || `${connector.connector_type}-account`,
+                display_label: connectorDrafts[connector.connector_type]?.display_label || sourceLabel(connector.connector_type),
+                broker_name: connector.connector_type,
+              })}>
+                Connect
+              </button>
+              <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'disconnect')}>Disconnect</button>
+            </div>
+            {connector.account_count === 0 ? (
+              <div className="row">
+                <input
+                  placeholder="Account id for connect"
+                  value={connectorDrafts[connector.connector_type]?.external_account_id || ''}
+                  onChange={(e) => setConnectorDrafts((prev) => ({
+                    ...prev,
+                    [connector.connector_type]: {
+                      ...prev[connector.connector_type],
+                      external_account_id: e.target.value,
+                    }
+                  }))}
+                />
+                <input
+                  placeholder="Display label"
+                  value={connectorDrafts[connector.connector_type]?.display_label || ''}
+                  onChange={(e) => setConnectorDrafts((prev) => ({
+                    ...prev,
+                    [connector.connector_type]: {
+                      ...prev[connector.connector_type],
+                      display_label: e.target.value,
+                    }
+                  }))}
+                />
+              </div>
+            ) : null}
           </div>
         ))}
       </section>

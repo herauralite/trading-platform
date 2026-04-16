@@ -31,6 +31,10 @@ TaliTrade now uses a connector-first ingestion layer. The FundingPips extension 
 
 - `GET /auth/me` (requires bearer session)
 - `GET /connectors/overview` (requires bearer session)
+- `GET /connectors/{connector_type}` (requires bearer session)
+- `POST /connectors/{connector_type}/connect` (requires bearer session)
+- `POST /connectors/{connector_type}/sync` (requires bearer session)
+- `POST /connectors/{connector_type}/disconnect` (requires bearer session)
 - `POST /auth/link-account` (requires bearer session)
 - `POST /ingest/accounts`, `POST /ingest/trades`, `POST /ingest/csv/trades` (require bearer session)
 
@@ -59,6 +63,15 @@ These routes are no longer part of the supported auth contract. Canonical caller
 - Snapshot insert throttling by short dedupe window when values are unchanged.
 - Richer normalized trade persistence (`connector_type`, `open_time`, `fees`, `tags`, `source_metadata`, `import_provenance`).
 - Phase 2.5 blocker fix: startup-safe connector table initialization ordering and `position_key`-first position identity (legacy symbol/side uniqueness removed).
+
+### Connector lifecycle management (Issue #50)
+
+- Connectors now persist lifecycle state in `connector_lifecycle` (status/connectivity/sync/activity/error fields).
+- Overview/detail responses now include lifecycle status (`connected`, `degraded`, `sync_error`, `disconnected`) plus `last_sync_at`, `last_activity_at`, and optional last error.
+- Authenticated users can perform minimal lifecycle actions directly from the app surface:
+  - connect/setup
+  - sync
+  - disconnect/deactivate
 
 ## Canonical production assumptions
 - Telegram bot username: `TaliTradeBot`
