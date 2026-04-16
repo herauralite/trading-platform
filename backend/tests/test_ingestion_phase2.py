@@ -62,35 +62,51 @@ def test_ingest_accounts_route(monkeypatch):
 
     monkeypatch.setattr("app.routers.ingest.upsert_trading_account", fake_upsert)
 
-    resp = post_json("/ingest/accounts", {
+    resp = post_json_auth("/ingest/accounts", {
         "connector_type": "csv_import",
-        "user_id": "u1",
         "external_account_id": "acct-1",
         "broker_name": "csv",
-    })
+    }, telegram_user_id="u1")
     assert resp.status_code == 200
     assert resp.json()["ok"] is True
     assert captured["payload"]["external_account_id"] == "acct-1"
+    assert captured["payload"]["user_id"] == "u1"
 
 
 def test_ingest_trades_route(monkeypatch):
     async def fake_ingest_trade(payload):
         assert payload["symbol"] == "NAS100"
         assert payload["connector_type"] == "manual"
+        assert payload["user_id"] == "u1"
         return True
 
     monkeypatch.setattr("app.routers.ingest.ingest_trade", fake_ingest_trade)
 
-    resp = post_json("/ingest/trades", {
+    resp = post_json_auth("/ingest/trades", {
         "connector_type": "manual",
-        "user_id": "u1",
         "external_account_id": "acct-2",
         "symbol": "NAS100",
         "side": "buy",
         "pnl": 12.5,
-    })
+    }, telegram_user_id="u1")
     assert resp.status_code == 200
     assert resp.json()["persisted"] is True
+
+
+def test_ingest_routes_reject_unauthenticated_and_explicit_identity():
+    unauth = post_json("/ingest/accounts", {
+        "connector_type": "manual",
+        "external_account_id": "acct-unauth",
+    })
+    assert unauth.status_code == 401
+
+    explicit = post_json_auth("/ingest/accounts", {
+        "connector_type": "manual",
+        "external_account_id": "acct-explicit",
+        "user_id": "999",
+    }, telegram_user_id="123")
+    assert explicit.status_code == 400
+    assert "Explicit user_id" in explicit.json()["detail"]
 
 
 def test_extension_trade_compatibility(monkeypatch):
@@ -370,13 +386,10 @@ def test_connectors_overview_route(monkeypatch):
     async def _run():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            return await client.get("/connectors/overview", params={"telegram_user_id": "123"})
+            return await client.get("/connectors/overview")
 
     resp = asyncio.run(_run())
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["count"] == 1
-    assert data["connectors"][0]["connector_type"] == "manual"
+    assert resp.status_code == 401
 
 
 def test_connectors_overview_authenticated_session(monkeypatch):
@@ -395,6 +408,50 @@ def test_connectors_overview_authenticated_session(monkeypatch):
     resp = asyncio.run(_run())
     assert resp.status_code == 200
     assert resp.json()["count"] == 1
+
+
+def test_auth_me_requires_authenticated_session(monkeypatch):
+    async def fake_accounts(uid):
+        assert uid == "123"
+        return [{"account_id": "acct-1"}]
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {"telegram_user_id": "123", "telegram_username": "alice"}
+
+    class FakeConn:
+        async def execute(self, _stmt, _params=None):
+            return FakeResult()
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    monkeypatch.setattr("app.core.database.engine", FakeEngine())
+    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+
+    async def _run(path: str, headers=None):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get(path, headers=headers)
+
+    unauth = asyncio.run(_run("/auth/me?telegram_user_id=123"))
+    assert unauth.status_code == 401
+
+    token = create_session_token("123")
+    auth = asyncio.run(_run("/auth/me", headers={"Authorization": f"Bearer {token}"}))
+    assert auth.status_code == 200
+    assert auth.json()["user"]["telegram_user_id"] == "123"
 
 
 def test_authenticated_ingest_manual_routes_use_session_user(monkeypatch):
@@ -607,3 +664,32 @@ def test_resolve_user_route_with_username(monkeypatch):
     payload = resp.json()
     assert payload["user"]["telegram_user_id"] == "123"
     assert payload["accounts"][0]["account_id"] == "1917136"
+
+
+def test_link_account_route_requires_authenticated_session(monkeypatch):
+    async def _run(headers=None):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/auth/link-account", params={"account_id": "acct-1"}, headers=headers)
+
+    unauth = asyncio.run(_run())
+    assert unauth.status_code == 401
+
+    captured = {}
+
+    async def fake_link(uid, account_id, *_args):
+        captured["uid"] = uid
+        captured["account_id"] = account_id
+
+    async def fake_accounts(uid):
+        return [{"account_id": "acct-1", "user_id": uid}]
+
+    monkeypatch.setattr(main_mod, "db_link_account", fake_link)
+    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+
+    token = create_session_token("session-77")
+    auth = asyncio.run(_run(headers={"Authorization": f"Bearer {token}"}))
+    assert auth.status_code == 200
+    assert captured["uid"] == "session-77"
+    assert captured["account_id"] == "acct-1"
+    assert auth.json()["accounts"][0]["user_id"] == "session-77"

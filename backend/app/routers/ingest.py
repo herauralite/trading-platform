@@ -20,17 +20,20 @@ from app.core.auth_session import decode_session_token, get_bearer_token
 router = APIRouter(prefix="/ingest", tags=["connector-ingest"])
 
 
-def _resolve_user_id(
+def _resolve_authenticated_user_id(
     payload_user_id: str | None,
     token: str | None,
-    require_session: bool = False,
-) -> str | None:
-    if token:
-        return str(decode_session_token(token)["sub"])
-    explicit = str(payload_user_id or "").strip() or None
-    if require_session and not explicit:
+) -> str:
+    if not token:
         raise HTTPException(status_code=401, detail="Missing authenticated session")
-    return explicit
+    session_user_id = str(decode_session_token(token)["sub"])
+    explicit = str(payload_user_id or "").strip()
+    if explicit:
+        raise HTTPException(
+            status_code=400,
+            detail="Explicit user_id is not accepted on authenticated ingest routes",
+        )
+    return session_user_id
 
 
 @router.post("/accounts")
@@ -39,7 +42,7 @@ async def ingest_accounts(
     token: str | None = Depends(get_bearer_token),
 ):
     normalized = payload.model_dump()
-    normalized["user_id"] = _resolve_user_id(payload.user_id, token, require_session=True)
+    normalized["user_id"] = _resolve_authenticated_user_id(payload.user_id, token)
     account = await upsert_trading_account(normalized)
     return {"ok": True, "account": account}
 
@@ -62,7 +65,7 @@ async def ingest_trades(
     token: str | None = Depends(get_bearer_token),
 ):
     normalized = payload.model_dump()
-    normalized["user_id"] = _resolve_user_id(payload.user_id, token, require_session=True)
+    normalized["user_id"] = _resolve_authenticated_user_id(payload.user_id, token)
     inserted = await ingest_trade(normalized)
     if not inserted:
         raise HTTPException(status_code=422, detail="Trade rejected: pnl exceeds account_size")
@@ -80,7 +83,7 @@ async def ingest_csv_trades(
     payload: CsvTradeImportRequest,
     token: str | None = Depends(get_bearer_token),
 ):
-    resolved_user_id = _resolve_user_id(payload.user_id, token, require_session=True)
+    resolved_user_id = _resolve_authenticated_user_id(payload.user_id, token)
     # CSV import connector path: creates account (if needed) and imports normalized trades.
     account_payload = {
         "user_id": resolved_user_id,

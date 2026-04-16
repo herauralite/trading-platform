@@ -1278,16 +1278,10 @@ async def telegram_login_oidc(data: TelegramOidcAuthData):
 
 @app.get("/auth/me")
 async def get_me(
-    session_user_id: str | None = Depends(get_authenticated_telegram_user_id),
-    telegram_user_id: str | None = None,
+    session_user_id: str = Depends(get_required_telegram_user_id),
 ):
-    """
-    Canonical route: read current user from authenticated session.
-    Backward-compat path: supports explicit telegram_user_id query temporarily.
-    """
-    resolved_uid = str(session_user_id or telegram_user_id or "").strip()
-    if not resolved_uid:
-        return JSONResponse(status_code=401, content={"detail": "Missing authenticated session"})
+    """Canonical route: read current user from authenticated session."""
+    resolved_uid = str(session_user_id).strip()
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(
@@ -1368,14 +1362,50 @@ async def create_bridge_session(
 @app.post("/auth/link-account")
 async def link_account(
     account_id: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+    account_type: str = None,
+    account_size: int = None,
+    label: str = None,
+    broker: str = "fundingpips",
+):
+    """Canonical account-link route for authenticated app sessions."""
+    resolved_uid = str(session_user_id).strip()
+    if not str(account_id or "").strip():
+        return JSONResponse(status_code=400, content={"detail": "account_id is required"})
+
+    await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
+    accounts = await db_get_user_accounts(resolved_uid)
+    logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
+    return {"ok": True, "accounts": accounts}
+
+
+@app.post("/auth/link-account/compat")
+async def link_account_compat(
+    account_id: str,
     telegram_user_id: str = None,
     telegram_username: str = None,
     account_type: str = None,
     account_size: int = None,
     label: str = None,
     broker: str = "fundingpips",
+    bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
 ):
-    """Link a prop account to a Telegram user. Called by the extension after detecting account info."""
+    """
+    Transitional compatibility route for extension/dev flows that still pass explicit identity.
+    Prefer /auth/link-account for bearer-authenticated app sessions.
+    """
+    bridge_enabled = str(os.getenv("AUTH_SESSION_BRIDGE_ENABLED", "")).strip().lower() in {"1", "true", "yes"}
+    if not bridge_enabled:
+        return JSONResponse(status_code=404, content={"detail": "Compatibility route is disabled"})
+    expected_secret = str(os.getenv("AUTH_SESSION_BRIDGE_SECRET") or "").strip()
+    if not expected_secret:
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Compatibility route misconfigured: AUTH_SESSION_BRIDGE_SECRET is required"},
+        )
+    if not bridge_secret or bridge_secret != expected_secret:
+        return JSONResponse(status_code=403, content={"detail": "Invalid bridge secret"})
+
     resolved_uid = str(telegram_user_id or "").strip()
     if not resolved_uid and telegram_username:
         from app.core.database import engine
@@ -1393,8 +1423,8 @@ async def link_account(
 
     await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
     accounts = await db_get_user_accounts(resolved_uid)
-    logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
-    return {"ok": True, "accounts": accounts}
+    logger.info("Account linked via /auth/link-account/compat user=%s account=%s", resolved_uid, account_id)
+    return {"ok": True, "accounts": accounts, "compatibility_mode": True}
 
 
 @app.get("/connectors/catalog")
@@ -1426,12 +1456,9 @@ async def connectors_catalog():
 
 @app.get("/connectors/overview")
 async def connectors_overview(
-    session_user_id: str | None = Depends(get_authenticated_telegram_user_id),
-    telegram_user_id: str | None = None,
+    session_user_id: str = Depends(get_required_telegram_user_id),
 ):
-    resolved_uid = str(session_user_id or telegram_user_id or "").strip()
-    if not resolved_uid:
-        return JSONResponse(status_code=401, content={"detail": "Missing authenticated session"})
+    resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
     return {"connectors": connectors, "count": len(connectors)}
 
