@@ -1,6 +1,5 @@
 export const SESSION_STORAGE_KEY = 'talitrade.sessionToken'
 export const USER_STORAGE_KEY = 'talitrade.sessionUser'
-export const DEV_MODE_KEY = 'talitrade.devMode'
 export const OIDC_NONCE_KEY = 'talitrade.oidc.nonce'
 export const OIDC_STATE_KEY = 'talitrade.oidc.state'
 
@@ -50,9 +49,6 @@ export function parseOidcCallbackPayload(hash, { expectedState = null, storedNon
   }
 }
 
-export function shouldShowBridgeFallback({ isDevEnv = false, devModeValue = null }) {
-  return Boolean(isDevEnv || devModeValue === '1')
-}
 
 export function buildManualAccountPayload(form) {
   return {

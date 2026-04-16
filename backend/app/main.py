@@ -5,7 +5,6 @@ import asyncio
 import hashlib
 import hmac
 import json
-from collections import Counter
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -42,7 +41,6 @@ if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
-COMPAT_ROUTE_USAGE = Counter()
 
 RAILWAY_URL     = "https://trading-platform-production-70e0.up.railway.app"
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
@@ -126,15 +124,6 @@ def get_required_telegram_user_id(token: str | None = Depends(get_bearer_token))
     payload = decode_session_token(token)
     return str(payload["sub"])
 
-
-def record_compat_route_usage(route_name: str, resolved_uid: str | None = None) -> None:
-    COMPAT_ROUTE_USAGE[route_name] += 1
-    logger.warning(
-        "Compatibility auth route used route=%s usage_count=%s user=%s",
-        route_name,
-        COMPAT_ROUTE_USAGE[route_name],
-        (str(resolved_uid or "").strip() or "unknown"),
-    )
 
 
 def _coerce_telegram_profile_from_claims(claims: dict[str, Any]) -> dict[str, Any]:
@@ -1307,70 +1296,20 @@ async def get_me(
     return {"user": user, "accounts": accounts}
 
 
-@app.get("/auth/resolve-user")
-async def resolve_user(telegram_user_id: str = None, telegram_username: str = None):
-    """Resolve identity for frontend flows without forcing raw Telegram ID entry."""
-    from app.core.database import engine
-    uid = str(telegram_user_id or "").strip() or None
-    uname = str(telegram_username or "").strip().lstrip("@").lower() or None
-    if not uid and not uname:
-        return JSONResponse(status_code=400, content={"detail": "telegram_user_id or telegram_username is required"})
-
-    query = """
-        SELECT * FROM users
-        WHERE (:uid IS NOT NULL AND telegram_user_id = :uid)
-           OR (:uname IS NOT NULL AND LOWER(COALESCE(telegram_username, '')) = :uname)
-        ORDER BY last_seen_at DESC NULLS LAST
-        LIMIT 1
-    """
-    async with engine.connect() as conn:
-        result = await conn.execute(text(query), {"uid": uid, "uname": uname})
-        user = dict(result.mappings().first() or {})
-    if not user:
-        return JSONResponse(status_code=404, content={"detail": "User not found"})
-
-    accounts = await db_get_user_accounts(str(user["telegram_user_id"]))
-    return {"user": user, "accounts": accounts}
-
 
 @app.post("/auth/session/bridge")
-async def create_bridge_session(
-    telegram_user_id: str = None,
-    telegram_username: str = None,
-    bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
-):
-    """
-    Transitional bridge for legacy/testing clients that still resolve user identity manually.
-    Prefer /auth/telegram or /auth/telegram/oidc for production login.
-    """
-    bridge_enabled = str(os.getenv("AUTH_SESSION_BRIDGE_ENABLED", "")).strip().lower() in {"1", "true", "yes"}
-    if not bridge_enabled:
-        return JSONResponse(status_code=404, content={"detail": "Bridge auth is disabled"})
+async def create_bridge_session_retired():
+    """Compatibility bridge route retired after caller migration."""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "detail": "Bridge compatibility route has been retired. Use /auth/telegram or /auth/telegram/oidc.",
+            "retired": True,
+            "replacement": "/auth/telegram",
+        },
+    )
 
-    expected_secret = str(os.getenv("AUTH_SESSION_BRIDGE_SECRET") or "").strip()
-    if not expected_secret:
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "Bridge auth misconfigured: AUTH_SESSION_BRIDGE_SECRET is required"},
-        )
-    if not bridge_secret or bridge_secret != expected_secret:
-        return JSONResponse(status_code=403, content={"detail": "Invalid bridge secret"})
 
-    resolved = await resolve_user(telegram_user_id=telegram_user_id, telegram_username=telegram_username)
-    if isinstance(resolved, JSONResponse):
-        return resolved
-    user = resolved.get("user") or {}
-    uid = str(user.get("telegram_user_id") or "").strip()
-    if not uid:
-        return JSONResponse(status_code=404, content={"detail": "User not found"})
-    record_compat_route_usage("auth.session.bridge", uid)
-    return {
-        **resolved,
-        "access_token": create_session_token(uid),
-        "token_type": "bearer",
-        "compatibility_mode": True,
-        "compatibility_path": "auth.session.bridge",
-    }
 
 
 @app.post("/auth/link-account")
@@ -1392,59 +1331,17 @@ async def link_account(
     logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
     return {"ok": True, "accounts": accounts}
 
-
 @app.post("/auth/link-account/compat")
-async def link_account_compat(
-    account_id: str,
-    telegram_user_id: str = None,
-    telegram_username: str = None,
-    account_type: str = None,
-    account_size: int = None,
-    label: str = None,
-    broker: str = "fundingpips",
-    bridge_secret: str | None = Header(default=None, alias="X-Bridge-Secret"),
-):
-    """
-    Transitional compatibility route for extension/dev flows that still pass explicit identity.
-    Prefer /auth/link-account for bearer-authenticated app sessions.
-    """
-    bridge_enabled = str(os.getenv("AUTH_SESSION_BRIDGE_ENABLED", "")).strip().lower() in {"1", "true", "yes"}
-    if not bridge_enabled:
-        return JSONResponse(status_code=404, content={"detail": "Compatibility route is disabled"})
-    expected_secret = str(os.getenv("AUTH_SESSION_BRIDGE_SECRET") or "").strip()
-    if not expected_secret:
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "Compatibility route misconfigured: AUTH_SESSION_BRIDGE_SECRET is required"},
-        )
-    if not bridge_secret or bridge_secret != expected_secret:
-        return JSONResponse(status_code=403, content={"detail": "Invalid bridge secret"})
-
-    resolved_uid = str(telegram_user_id or "").strip()
-    if not resolved_uid and telegram_username:
-        from app.core.database import engine
-        async with engine.connect() as conn:
-            result = await conn.execute(
-                text("SELECT telegram_user_id FROM users WHERE LOWER(COALESCE(telegram_username, '')) = :uname LIMIT 1"),
-                {"uname": str(telegram_username).strip().lstrip("@").lower()},
-            )
-            row = result.mappings().first()
-            resolved_uid = str(row["telegram_user_id"]) if row else ""
-    if not resolved_uid:
-        return JSONResponse(status_code=400, content={"detail": "telegram_user_id or telegram_username is required"})
-    if not str(account_id or "").strip():
-        return JSONResponse(status_code=400, content={"detail": "account_id is required"})
-
-    await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
-    accounts = await db_get_user_accounts(resolved_uid)
-    record_compat_route_usage("auth.link-account.compat", resolved_uid)
-    logger.info("Account linked via /auth/link-account/compat user=%s account=%s", resolved_uid, account_id)
-    return {
-        "ok": True,
-        "accounts": accounts,
-        "compatibility_mode": True,
-        "compatibility_path": "auth.link-account.compat",
-    }
+async def link_account_compat_retired():
+    """Compatibility account-link route retired after caller migration."""
+    return JSONResponse(
+        status_code=410,
+        content={
+            "detail": "Compatibility account-link route has been retired. Use /auth/link-account with bearer auth.",
+            "retired": True,
+            "replacement": "/auth/link-account",
+        },
+    )
 
 
 @app.get("/connectors/catalog")
