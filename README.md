@@ -39,13 +39,12 @@ Canonical callers now include:
 - `frontend/app.html` and `frontend/public/app.html` (static app shell)
 - `extension/content.js` account-link retry path, now using bearer session from extension storage
 
-### Transitional compatibility routes
+### Retired compatibility routes
 
-- `POST /auth/session/bridge`
-- `POST /auth/link-account/compat`
+- `POST /auth/session/bridge` → retired (`410 Gone`)
+- `POST /auth/link-account/compat` → retired (`410 Gone`)
 
-These compatibility routes are intentionally non-primary and require bridge gating (`AUTH_SESSION_BRIDGE_ENABLED=true`) plus `X-Bridge-Secret`.
-They now also return `compatibility_path` in responses and emit dedicated compatibility usage logs for lightweight visibility.
+These routes are no longer part of the supported auth contract. Canonical callers must use bearer-authenticated session flows (`/auth/telegram`, `/auth/telegram/oidc`, `/auth/me`, `/auth/link-account`).
 
 ### Backward compatibility
 

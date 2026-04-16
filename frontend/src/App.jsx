@@ -7,14 +7,12 @@ import {
   buildManualTradePayload,
   canHydrateSession,
   clearOidcCorrelation,
-  DEV_MODE_KEY,
   OIDC_NONCE_KEY,
   OIDC_STATE_KEY,
   parseOidcCallbackPayload,
   parseStoredUser,
   persistOidcCorrelation,
   SESSION_STORAGE_KEY,
-  shouldShowBridgeFallback,
   USER_STORAGE_KEY,
 } from './sessionAuth'
 
@@ -29,14 +27,11 @@ function App() {
   const [connectors, setConnectors] = useState([])
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
-  const [bridgeInput, setBridgeInput] = useState('')
-  const [bridgeSecret, setBridgeSecret] = useState('')
   const [manualAccount, setManualAccount] = useState({ externalAccountId: '', brokerName: 'Manual', displayLabel: '', accountType: 'demo', accountSize: 10000 })
   const [manualTrade, setManualTrade] = useState({ externalAccountId: '', symbol: 'NAS100', side: 'buy', size: 0.1, entryPrice: 15000, exitPrice: 15025, pnl: 25 })
   const [csvInput, setCsvInput] = useState('[{"symbol":"US30","side":"buy","open_time":"2026-04-16T10:00:00Z","close_time":"2026-04-16T10:10:00Z","pnl":18}]')
   const [csvAccount, setCsvAccount] = useState('csv-account-1')
 
-  const devMode = shouldShowBridgeFallback({ isDevEnv: import.meta.env.DEV, devModeValue: localStorage.getItem(DEV_MODE_KEY) })
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authHeaders = buildAuthHeaders(sessionToken)
 
@@ -215,29 +210,6 @@ function App() {
     }
   }
 
-  async function bridgeSession() {
-    if (!devMode) return
-    try {
-      const raw = bridgeInput.trim()
-      if (!raw) {
-        setStatus('Bridge mode expects Telegram @username or user id (testing only)')
-        return
-      }
-      const params = raw.startsWith('@') ? { telegram_username: raw } : (/^\d+$/.test(raw) ? { telegram_user_id: raw } : { telegram_username: raw })
-      const res = await axios.post(`${API}/auth/session/bridge`, null, {
-        params,
-        headers: bridgeSecret ? { 'X-Bridge-Secret': bridgeSecret } : undefined,
-      })
-      const user = res.data?.user || null
-      const token = String(res.data?.access_token || '')
-      if (!token || !user?.telegram_user_id) throw new Error('No bridge session returned')
-      commitSession(token, user)
-      setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id} (bridge testing mode)`)
-      await loadConnectorData({ token, silent: true })
-    } catch (e) {
-      setStatus(`Bridge session failed: ${e.message}`)
-    }
-  }
 
   const startOidcFlow = () => {
     const cfg = telegramConfig
@@ -299,17 +271,6 @@ function App() {
         )}
       </section>
 
-      {devMode ? (
-        <section className="panel dev-panel">
-          <h2>Developer fallback: Bridge session (transitional/testing only)</h2>
-          <p>This flow is hidden for normal users and only exists for compatibility tests.</p>
-          <label>Telegram @username or user id</label>
-          <input value={bridgeInput} onChange={(e) => setBridgeInput(e.target.value)} placeholder="@username or 123456" />
-          <label>Bridge secret</label>
-          <input value={bridgeSecret} onChange={(e) => setBridgeSecret(e.target.value)} placeholder="AUTH_SESSION_BRIDGE_SECRET" />
-          <button onClick={bridgeSession}>Create bridge session</button>
-        </section>
-      ) : null}
 
       <section className="panel">
         <h2>Connector Management</h2>

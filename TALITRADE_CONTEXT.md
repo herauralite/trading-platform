@@ -166,8 +166,8 @@ GET  /health/db                  — DB connectivity check
 POST /auth/telegram              — Telegram Login Widget verification + user upsert
 GET  /auth/me                    — get current user + accounts (bearer session required)
 POST /auth/link-account          — link prop account to current authenticated user (bearer required)
-POST /auth/link-account/compat   — transitional explicit-identity link path (bridge secret + bridge flag required, returns `compatibility_path`)
-POST /auth/session/bridge        — transitional session bridge for legacy/dev flows (bridge secret + bridge flag required, returns `compatibility_path`)
+POST /auth/link-account/compat   — retired compatibility endpoint (`410 Gone`)
+POST /auth/session/bridge        — retired compatibility endpoint (`410 Gone`)
 
 POST /telegram/webhook           — Telegram bot commands
 GET  /extension/status           — live account state (TTL: 120s)
@@ -186,8 +186,8 @@ GET  /test/db                    — count trades in DB
 ```
 
 Canonical caller note:
-- Static app and extension now pass bearer session context (`TALI_SET_SESSION` message + `Authorization: Bearer ...`) for `/auth/link-account`.
-- Compatibility endpoints remain transitional and should only be used for bridge/dev workflows.
+- Static app and extension pass bearer session context (`TALI_SET_SESSION` message + `Authorization: Bearer ...`) for `/auth/link-account`.
+- Compatibility auth endpoints are retired and no longer part of the active caller contract.
 
 ---
 

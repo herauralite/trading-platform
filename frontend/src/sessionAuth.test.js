@@ -13,7 +13,6 @@ import {
   parseOidcCallbackPayload,
   parseStoredUser,
   persistOidcCorrelation,
-  shouldShowBridgeFallback,
 } from './sessionAuth.js'
 
 test('authenticated boot hydration requires a telegram user id', () => {
@@ -82,11 +81,6 @@ test('connector/account/manual/csv flows use bearer auth and authenticated paylo
   })
 })
 
-test('bridge fallback visibility is dev-only', () => {
-  assert.equal(shouldShowBridgeFallback({ isDevEnv: false, devModeValue: null }), false)
-  assert.equal(shouldShowBridgeFallback({ isDevEnv: false, devModeValue: '1' }), true)
-  assert.equal(shouldShowBridgeFallback({ isDevEnv: true, devModeValue: null }), true)
-})
 
 test('OIDC flow start stores nonce and state correlation values', () => {
   const storage = new Map()
