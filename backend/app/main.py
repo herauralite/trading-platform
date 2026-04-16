@@ -24,9 +24,11 @@ from sqlalchemy import text
 from app.services.connector_ingest import (
     deactivate_missing_positions,
     ensure_connector_tables,
+    get_connector_lifecycle,
     ingest_account_snapshot,
     ingest_position,
     ingest_trade,
+    upsert_connector_lifecycle,
     upsert_trading_account,
 )
 from app.core.auth_session import (
@@ -561,9 +563,23 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 SELECT * FROM canonical_accounts
                 UNION ALL
                 SELECT * FROM legacy_only_accounts
+            ),
+            lifecycle AS (
+                SELECT *
+                FROM connector_lifecycle
+                WHERE user_id = :uid
             )
-            SELECT *
+            SELECT
+                ar.*,
+                lc.status AS lifecycle_status,
+                lc.is_connected AS lifecycle_is_connected,
+                lc.last_sync_at AS lifecycle_last_sync_at,
+                lc.last_activity_at AS lifecycle_last_activity_at,
+                lc.last_error AS lifecycle_last_error,
+                lc.last_error_at AS lifecycle_last_error_at
             FROM account_rows
+            LEFT JOIN lifecycle lc
+              ON lc.connector_type = ar.connector_type
             ORDER BY connector_type, created_at DESC NULLS LAST, id DESC
         """), {"uid": telegram_user_id})
 
@@ -574,8 +590,11 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 grouped[connector] = {
                     "connector_type": connector,
                     "status": "connected",
+                    "is_connected": True,
                     "last_activity_at": None,
                     "last_sync_at": None,
+                    "last_error": None,
+                    "last_error_at": None,
                     "account_count": 0,
                     "accounts": [],
                 }
@@ -596,12 +615,45 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
 
             activity = row["last_activity_at"]
             sync_at = row["last_snapshot_at"]
+            lifecycle_status = row.get("lifecycle_status")
+            if lifecycle_status:
+                connector_obj["status"] = lifecycle_status
+            if row.get("lifecycle_is_connected") is not None:
+                connector_obj["is_connected"] = bool(row["lifecycle_is_connected"])
+            if row.get("lifecycle_last_sync_at"):
+                sync_at = max(sync_at, row["lifecycle_last_sync_at"]) if sync_at else row["lifecycle_last_sync_at"]
+            if row.get("lifecycle_last_activity_at"):
+                activity = max(activity, row["lifecycle_last_activity_at"]) if activity else row["lifecycle_last_activity_at"]
+            if row.get("lifecycle_last_error"):
+                connector_obj["last_error"] = row["lifecycle_last_error"]
+                connector_obj["last_error_at"] = row["lifecycle_last_error_at"]
             if activity and (connector_obj["last_activity_at"] is None or activity > connector_obj["last_activity_at"]):
                 connector_obj["last_activity_at"] = activity
             if sync_at and (connector_obj["last_sync_at"] is None or sync_at > connector_obj["last_sync_at"]):
                 connector_obj["last_sync_at"] = sync_at
             if not row["is_active"]:
                 connector_obj["status"] = "degraded"
+
+        lifecycle_only = await conn.execute(text("""
+            SELECT connector_type, status, is_connected, last_sync_at, last_activity_at, last_error, last_error_at
+            FROM connector_lifecycle
+            WHERE user_id = :uid
+        """), {"uid": telegram_user_id})
+        for row in lifecycle_only.mappings().all():
+            connector = row["connector_type"] or "manual"
+            if connector in grouped:
+                continue
+            grouped[connector] = {
+                "connector_type": connector,
+                "status": row["status"] or "disconnected",
+                "is_connected": bool(row["is_connected"]),
+                "last_activity_at": row["last_activity_at"],
+                "last_sync_at": row["last_sync_at"],
+                "last_error": row["last_error"],
+                "last_error_at": row["last_error_at"],
+                "account_count": 0,
+                "accounts": [],
+            }
 
     return list(grouped.values())
 
@@ -1378,6 +1430,115 @@ async def connectors_overview(
     resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
     return {"connectors": connectors, "count": len(connectors)}
+
+
+class ConnectorActionRequest(BaseModel):
+    broker_name: str | None = None
+    external_account_id: str | None = None
+    display_label: str | None = None
+    account_type: str | None = None
+    account_size: int | None = None
+
+
+@app.get("/connectors/{connector_type}")
+async def connector_status_detail(
+    connector_type: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    connectors = await db_get_connectors_overview(resolved_uid)
+    normalized = connector_type.strip().lower().replace("-", "_")
+    connector = next((c for c in connectors if c["connector_type"] == normalized), None)
+    if connector is None:
+        lifecycle = await get_connector_lifecycle(resolved_uid, normalized)
+        if lifecycle is None:
+            raise HTTPException(status_code=404, detail="Connector not found for user")
+        connector = {
+            "connector_type": normalized,
+            "status": lifecycle["status"],
+            "is_connected": lifecycle["is_connected"],
+            "last_activity_at": lifecycle["last_activity_at"],
+            "last_sync_at": lifecycle["last_sync_at"],
+            "last_error": lifecycle["last_error"],
+            "last_error_at": lifecycle["last_error_at"],
+            "account_count": 0,
+            "accounts": [],
+        }
+    return {"connector": connector}
+
+
+@app.post("/connectors/{connector_type}/connect")
+async def connector_connect(
+    connector_type: str,
+    payload: ConnectorActionRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    if payload.external_account_id:
+        await upsert_trading_account({
+            "user_id": resolved_uid,
+            "connector_type": normalized,
+            "broker_name": payload.broker_name or normalized,
+            "external_account_id": payload.external_account_id,
+            "display_label": payload.display_label,
+            "account_type": payload.account_type,
+            "account_size": payload.account_size,
+            "is_active": True,
+        })
+    lifecycle = await upsert_connector_lifecycle(
+        user_id=resolved_uid,
+        connector_type=normalized,
+        status="connected",
+        is_connected=True,
+        last_activity_at=datetime.now(timezone.utc),
+        metadata={"action": "connect"},
+    )
+    return {"ok": True, "connector": lifecycle}
+
+
+@app.post("/connectors/{connector_type}/sync")
+async def connector_sync(
+    connector_type: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    lifecycle = await upsert_connector_lifecycle(
+        user_id=resolved_uid,
+        connector_type=normalized,
+        status="connected",
+        is_connected=True,
+        last_sync_at=datetime.now(timezone.utc),
+        last_activity_at=datetime.now(timezone.utc),
+        metadata={"action": "manual_sync"},
+    )
+    return {"ok": True, "connector": lifecycle}
+
+
+@app.post("/connectors/{connector_type}/disconnect")
+async def connector_disconnect(
+    connector_type: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("""
+            UPDATE trading_accounts
+            SET is_active = FALSE, updated_at = NOW()
+            WHERE user_id = :uid AND connector_type = :connector
+        """), {"uid": resolved_uid, "connector": normalized})
+    lifecycle = await upsert_connector_lifecycle(
+        user_id=resolved_uid,
+        connector_type=normalized,
+        status="disconnected",
+        is_connected=False,
+        last_activity_at=datetime.now(timezone.utc),
+        metadata={"action": "disconnect"},
+    )
+    return {"ok": True, "connector": lifecycle}
 
 
 @app.exception_handler(Exception)

@@ -679,3 +679,94 @@ def test_retired_link_account_compat_route_returns_gone():
     assert resp.status_code == 410
     assert resp.json()["retired"] is True
     assert resp.json()["replacement"] == "/auth/link-account"
+
+
+def test_connector_lifecycle_routes_require_authenticated_session():
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/connectors/manual/sync")
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 401
+
+
+def test_connector_connect_sync_disconnect_flow(monkeypatch):
+    captured = {"upserts": [], "trading_accounts_sql": []}
+
+    async def fake_lifecycle(**kwargs):
+        captured["upserts"].append(kwargs)
+        return {"connector_type": kwargs["connector_type"], "status": kwargs["status"], "is_connected": kwargs["is_connected"]}
+
+    async def fake_account_upsert(payload):
+        return {"id": 44, **payload}
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            captured["trading_accounts_sql"].append((str(stmt), params))
+            return None
+
+    class FakeBegin:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(main_mod, "upsert_connector_lifecycle", fake_lifecycle)
+    monkeypatch.setattr(main_mod, "upsert_trading_account", fake_account_upsert)
+    monkeypatch.setattr("app.core.database.engine", FakeEngine())
+
+    async def _run(path, payload=None):
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("flow-1")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(path, json=payload or {}, headers={"Authorization": f"Bearer {token}"})
+
+    connect = asyncio.run(_run("/connectors/manual/connect", {"external_account_id": "manual-a"}))
+    sync = asyncio.run(_run("/connectors/manual/sync"))
+    disconnect = asyncio.run(_run("/connectors/manual/disconnect"))
+
+    assert connect.status_code == 200
+    assert sync.status_code == 200
+    assert disconnect.status_code == 200
+    assert captured["upserts"][0]["status"] == "connected"
+    assert captured["upserts"][1]["status"] == "connected"
+    assert captured["upserts"][2]["status"] == "disconnected"
+    assert any("UPDATE trading_accounts" in sql for sql, _ in captured["trading_accounts_sql"])
+
+
+def test_connector_status_detail_uses_lifecycle_fallback(monkeypatch):
+    async def fake_overview(_uid):
+        return []
+
+    async def fake_lifecycle(_uid, connector_type):
+        assert connector_type == "csv_import"
+        return {
+            "status": "degraded",
+            "is_connected": True,
+            "last_activity_at": "2026-04-16T12:00:00Z",
+            "last_sync_at": "2026-04-16T11:00:00Z",
+            "last_error": "sync timeout",
+            "last_error_at": "2026-04-16T12:01:00Z",
+        }
+
+    monkeypatch.setattr(main_mod, "db_get_connectors_overview", fake_overview)
+    monkeypatch.setattr(main_mod, "get_connector_lifecycle", fake_lifecycle)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("user-55")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/connectors/csv_import", headers={"Authorization": f"Bearer {token}"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    connector = resp.json()["connector"]
+    assert connector["status"] == "degraded"
+    assert connector["connector_type"] == "csv_import"
+    assert connector["account_count"] == 0
