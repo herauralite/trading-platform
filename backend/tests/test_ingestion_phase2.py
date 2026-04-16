@@ -25,6 +25,7 @@ if "jwt" not in sys.modules:
     sys.modules["jwt"] = fake_jwt
 
 from app.main import app
+from app import main as main_mod
 from app.services.connector_ingest import compute_account_key
 from app.services import connector_ingest as ci
 
@@ -361,3 +362,125 @@ def test_connectors_overview_route(monkeypatch):
     data = resp.json()
     assert data["count"] == 1
     assert data["connectors"][0]["connector_type"] == "manual"
+
+
+def test_db_link_account_mirrors_legacy_to_canonical(monkeypatch):
+    captured = {}
+
+    class FakeConn:
+        async def execute(self, _stmt, _params=None):
+            return None
+
+    class FakeBegin:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    async def fake_upsert(payload):
+        captured.update(payload)
+        return {"id": 1}
+
+    monkeypatch.setattr("app.core.database.engine", FakeEngine())
+    monkeypatch.setattr(main_mod, "upsert_trading_account", fake_upsert)
+
+    asyncio.run(main_mod.db_link_account(
+        telegram_user_id="123",
+        account_id="1917136",
+        account_type="2_step_master",
+        account_size=10000,
+        label="Primary",
+        broker="fundingpips",
+    ))
+
+    assert captured["user_id"] == "123"
+    assert captured["connector_type"] == "fundingpips_extension"
+    assert captured["external_account_id"] == "1917136"
+    assert captured["metadata"]["compat_source"] == "prop_accounts"
+
+
+def test_db_unified_queries_include_legacy_bridge(monkeypatch):
+    executed = {"sql": []}
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class FakeConn:
+        async def execute(self, stmt, _params=None):
+            executed["sql"].append(str(stmt))
+            return FakeResult()
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    monkeypatch.setattr("app.core.database.engine", FakeEngine())
+    asyncio.run(main_mod.db_get_user_accounts("123"))
+    asyncio.run(main_mod.db_get_connectors_overview("123"))
+
+    joined = "\n".join(executed["sql"])
+    assert "canonical_accounts" in joined
+    assert "legacy_fallback" in joined
+    assert "legacy_only_accounts" in joined
+
+
+def test_resolve_user_route_with_username(monkeypatch):
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {
+                "telegram_user_id": "123",
+                "telegram_username": "alice",
+                "first_name": "Alice",
+            }
+
+    class FakeConn:
+        async def execute(self, _stmt, _params=None):
+            return FakeResult()
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    async def fake_accounts(uid):
+        assert uid == "123"
+        return [{"account_id": "1917136"}]
+
+    monkeypatch.setattr("app.core.database.engine", FakeEngine())
+    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/auth/resolve-user", params={"telegram_username": "@alice"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["user"]["telegram_user_id"] == "123"
+    assert payload["accounts"][0]["account_id"] == "1917136"
