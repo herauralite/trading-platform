@@ -406,11 +406,57 @@ async def db_upsert_user(tg_data: dict) -> dict:
 
 
 async def db_get_user_accounts(telegram_user_id: str) -> list:
-    """Return all prop accounts linked to a Telegram user."""
+    """Return unified account visibility (canonical trading_accounts + legacy fallback)."""
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(
-            text("SELECT * FROM prop_accounts WHERE telegram_user_id = :uid AND is_active = TRUE ORDER BY created_at"),
+            text("""
+                WITH canonical_accounts AS (
+                    SELECT
+                        ta.id AS id,
+                        ta.user_id AS telegram_user_id,
+                        ta.external_account_id AS account_id,
+                        COALESCE(NULLIF(ta.broker_name, ''), ta.connector_type, 'unknown') AS broker,
+                        ta.account_type AS account_type,
+                        ta.account_size AS account_size,
+                        ta.display_label AS label,
+                        ta.is_active AS is_active,
+                        ta.created_at AS created_at,
+                        ta.connector_type AS connector_type,
+                        'trading_accounts'::text AS source_model
+                    FROM trading_accounts ta
+                    WHERE ta.user_id = :uid AND ta.is_active = TRUE
+                ),
+                legacy_fallback AS (
+                    SELECT
+                        pa.id AS id,
+                        pa.telegram_user_id AS telegram_user_id,
+                        pa.account_id AS account_id,
+                        pa.broker AS broker,
+                        pa.account_type AS account_type,
+                        pa.account_size AS account_size,
+                        pa.label AS label,
+                        pa.is_active AS is_active,
+                        pa.created_at AS created_at,
+                        'fundingpips_extension'::text AS connector_type,
+                        'prop_accounts_compat'::text AS source_model
+                    FROM prop_accounts pa
+                    WHERE pa.telegram_user_id = :uid
+                      AND pa.is_active = TRUE
+                      AND NOT EXISTS (
+                          SELECT 1
+                          FROM canonical_accounts ca
+                          WHERE ca.account_id = pa.account_id
+                      )
+                )
+                SELECT *
+                FROM (
+                    SELECT * FROM canonical_accounts
+                    UNION ALL
+                    SELECT * FROM legacy_fallback
+                ) merged_accounts
+                ORDER BY created_at DESC NULLS LAST, account_id
+            """),
             {"uid": telegram_user_id}
         )
         return [dict(r) for r in result.mappings().all()]
@@ -438,7 +484,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 WHERE trading_account_id IS NOT NULL
                 GROUP BY trading_account_id
             ),
-            account_rows AS (
+            canonical_accounts AS (
                 SELECT
                     ta.id,
                     ta.connector_type,
@@ -460,7 +506,34 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 LEFT JOIN latest_snapshots ls ON ls.trading_account_id = ta.id
                 LEFT JOIN latest_trades lt ON lt.trading_account_id = ta.id
                 LEFT JOIN latest_events le ON le.trading_account_id = ta.id
-                WHERE ta.user_id = :uid
+                WHERE ta.user_id = :uid AND ta.is_active = TRUE
+            ),
+            legacy_only_accounts AS (
+                SELECT
+                    pa.id AS id,
+                    'fundingpips_extension'::TEXT AS connector_type,
+                    COALESCE(NULLIF(pa.broker, ''), 'fundingpips') AS broker_name,
+                    pa.account_id AS external_account_id,
+                    pa.label AS display_label,
+                    pa.account_type,
+                    pa.account_size,
+                    pa.is_active,
+                    pa.created_at,
+                    pa.created_at AS last_activity_at,
+                    NULL::TIMESTAMPTZ AS last_snapshot_at
+                FROM prop_accounts pa
+                WHERE pa.telegram_user_id = :uid
+                  AND pa.is_active = TRUE
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM canonical_accounts ca
+                      WHERE ca.external_account_id = pa.account_id
+                  )
+            ),
+            account_rows AS (
+                SELECT * FROM canonical_accounts
+                UNION ALL
+                SELECT * FROM legacy_only_accounts
             )
             SELECT *
             FROM account_rows
@@ -508,7 +581,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
 
 async def db_link_account(telegram_user_id: str, account_id: str, account_type: str = None,
                            account_size: int = None, label: str = None, broker: str = "fundingpips"):
-    """Link a prop account to a Telegram user. Safe to call multiple times."""
+    """Link account in legacy table and mirror into canonical connector model."""
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -526,6 +599,40 @@ async def db_link_account(telegram_user_id: str, account_id: str, account_type: 
             "acct_type": account_type,
             "acct_size": account_size,
             "label":     label,
+        })
+    await upsert_trading_account({
+        "user_id": telegram_user_id,
+        "connector_type": "fundingpips_extension",
+        "broker_name": broker,
+        "external_account_id": account_id,
+        "display_label": label,
+        "account_type": account_type,
+        "account_size": account_size,
+        "metadata": {"compat_source": "prop_accounts"},
+    })
+
+
+async def backfill_legacy_prop_accounts_to_trading_accounts():
+    """Compatibility bridge: ensure legacy prop_accounts exist in canonical trading_accounts."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text("""
+            SELECT telegram_user_id, account_id, broker, account_type, account_size, label
+            FROM prop_accounts
+            WHERE is_active = TRUE
+        """))
+        rows = result.mappings().all()
+
+    for row in rows:
+        await upsert_trading_account({
+            "user_id": row["telegram_user_id"],
+            "connector_type": "fundingpips_extension",
+            "broker_name": row["broker"],
+            "external_account_id": row["account_id"],
+            "display_label": row["label"],
+            "account_type": row["account_type"],
+            "account_size": row["account_size"],
+            "metadata": {"compat_source": "prop_accounts_backfill"},
         })
 
 
@@ -911,6 +1018,7 @@ async def lifespan(app: FastAPI):
     await ensure_trades_table()
     await ensure_users_tables()
     await ensure_connector_tables()
+    await backfill_legacy_prop_accounts_to_trading_accounts()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
     await setup_telegram_webhook()
@@ -1158,24 +1266,61 @@ async def get_me(telegram_user_id: str):
     return {"user": user, "accounts": accounts}
 
 
+@app.get("/auth/resolve-user")
+async def resolve_user(telegram_user_id: str = None, telegram_username: str = None):
+    """Resolve identity for frontend flows without forcing raw Telegram ID entry."""
+    from app.core.database import engine
+    uid = str(telegram_user_id or "").strip() or None
+    uname = str(telegram_username or "").strip().lstrip("@").lower() or None
+    if not uid and not uname:
+        return JSONResponse(status_code=400, content={"detail": "telegram_user_id or telegram_username is required"})
+
+    query = """
+        SELECT * FROM users
+        WHERE (:uid IS NOT NULL AND telegram_user_id = :uid)
+           OR (:uname IS NOT NULL AND LOWER(COALESCE(telegram_username, '')) = :uname)
+        ORDER BY last_seen_at DESC NULLS LAST
+        LIMIT 1
+    """
+    async with engine.connect() as conn:
+        result = await conn.execute(text(query), {"uid": uid, "uname": uname})
+        user = dict(result.mappings().first() or {})
+    if not user:
+        return JSONResponse(status_code=404, content={"detail": "User not found"})
+
+    accounts = await db_get_user_accounts(str(user["telegram_user_id"]))
+    return {"user": user, "accounts": accounts}
+
+
 @app.post("/auth/link-account")
 async def link_account(
-    telegram_user_id: str,
     account_id: str,
+    telegram_user_id: str = None,
+    telegram_username: str = None,
     account_type: str = None,
     account_size: int = None,
     label: str = None,
     broker: str = "fundingpips",
 ):
     """Link a prop account to a Telegram user. Called by the extension after detecting account info."""
-    if not str(telegram_user_id or "").strip():
-        return JSONResponse(status_code=400, content={"detail": "telegram_user_id is required"})
+    resolved_uid = str(telegram_user_id or "").strip()
+    if not resolved_uid and telegram_username:
+        from app.core.database import engine
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text("SELECT telegram_user_id FROM users WHERE LOWER(COALESCE(telegram_username, '')) = :uname LIMIT 1"),
+                {"uname": str(telegram_username).strip().lstrip("@").lower()},
+            )
+            row = result.mappings().first()
+            resolved_uid = str(row["telegram_user_id"]) if row else ""
+    if not resolved_uid:
+        return JSONResponse(status_code=400, content={"detail": "telegram_user_id or telegram_username is required"})
     if not str(account_id or "").strip():
         return JSONResponse(status_code=400, content={"detail": "account_id is required"})
 
-    await db_link_account(telegram_user_id, account_id, account_type, account_size, label, broker)
-    accounts = await db_get_user_accounts(telegram_user_id)
-    logger.info("Account linked via /auth/link-account user=%s account=%s", telegram_user_id, account_id)
+    await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
+    accounts = await db_get_user_accounts(resolved_uid)
+    logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
     return {"ok": True, "accounts": accounts}
 
 
@@ -1291,7 +1436,13 @@ async def daily_summary_scheduler():
                     try:
                         async with engine.connect() as conn:
                             result = await conn.execute(text(
-                                "SELECT DISTINCT telegram_user_id FROM prop_accounts WHERE is_active=TRUE"
+                                """
+                                SELECT DISTINCT uid FROM (
+                                    SELECT telegram_user_id AS uid FROM prop_accounts WHERE is_active = TRUE
+                                    UNION
+                                    SELECT user_id AS uid FROM trading_accounts WHERE is_active = TRUE AND user_id IS NOT NULL
+                                ) uids
+                                """
                             ))
                             user_ids = [r[0] for r in result.fetchall()]
                     except Exception:
@@ -2173,24 +2324,52 @@ async def get_leaderboard(limit: int = 10):
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("""
+            WITH canonical_accounts AS (
+                SELECT
+                    ta.user_id AS telegram_user_id,
+                    ta.external_account_id AS account_id,
+                    ta.account_type AS account_type,
+                    ta.account_size AS account_size
+                FROM trading_accounts ta
+                WHERE ta.user_id IS NOT NULL AND ta.is_active = TRUE
+            ),
+            legacy_fallback AS (
+                SELECT
+                    pa.telegram_user_id,
+                    pa.account_id,
+                    pa.account_type,
+                    pa.account_size
+                FROM prop_accounts pa
+                WHERE pa.is_active = TRUE
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM canonical_accounts ca
+                      WHERE ca.telegram_user_id = pa.telegram_user_id
+                        AND ca.account_id = pa.account_id
+                  )
+            ),
+            all_accounts AS (
+                SELECT * FROM canonical_accounts
+                UNION ALL
+                SELECT * FROM legacy_fallback
+            )
             SELECT
-                pa.telegram_user_id,
+                aa.telegram_user_id,
                 COALESCE(u.first_name, 'Trader') AS display_name,
-                pa.account_id,
-                pa.account_type,
-                pa.account_size,
+                aa.account_id,
+                aa.account_type,
+                aa.account_size,
                 COUNT(t.id)                            AS trade_count,
                 COALESCE(SUM(t.pnl), 0)               AS total_pnl,
                 COALESCE(SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
                 COALESCE(SUM(CASE WHEN t.pnl <= 0 THEN 1 ELSE 0 END), 0) AS losses
-            FROM prop_accounts pa
+            FROM all_accounts aa
             LEFT JOIN trades t
-                   ON t.account_id = pa.account_id
+                   ON t.account_id = aa.account_id
                   AND (t.source = 'scraper' OR t.source IS NULL)
             LEFT JOIN users u
-                   ON u.telegram_user_id = pa.telegram_user_id
-            WHERE pa.is_active = TRUE
-            GROUP BY pa.telegram_user_id, u.first_name, pa.account_id, pa.account_type, pa.account_size
+                   ON u.telegram_user_id = aa.telegram_user_id
+            GROUP BY aa.telegram_user_id, u.first_name, aa.account_id, aa.account_type, aa.account_size
             ORDER BY total_pnl DESC
             LIMIT :lim
         """), {"lim": limit})
