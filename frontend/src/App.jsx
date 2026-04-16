@@ -4,10 +4,11 @@ import axios from 'axios'
 const API = 'https://trading-platform-production-70e0.up.railway.app'
 
 function App() {
-  const [telegramUserId, setTelegramUserId] = useState('123456789')
+  const [identityInput, setIdentityInput] = useState(localStorage.getItem('talitrade.identity') || '')
+  const [telegramUserId, setTelegramUserId] = useState(localStorage.getItem('talitrade.telegramUserId') || '')
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
-  const [status, setStatus] = useState('Enter a Telegram user id and load connectors')
+  const [status, setStatus] = useState('Resolve your Telegram identity, then load connectors')
   const [manualAccount, setManualAccount] = useState({
     externalAccountId: '',
     brokerName: 'Manual',
@@ -42,6 +43,28 @@ function App() {
   }
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
+
+  async function resolveIdentity() {
+    try {
+      const raw = identityInput.trim()
+      if (!raw) {
+        setStatus('Enter a Telegram @username or user id')
+        return
+      }
+      const params = raw.startsWith('@')
+        ? { telegram_username: raw }
+        : (/^\d+$/.test(raw) ? { telegram_user_id: raw } : { telegram_username: raw })
+      const res = await axios.get(`${API}/auth/resolve-user`, { params })
+      const uid = String(res.data?.user?.telegram_user_id || '')
+      if (!uid) throw new Error('No telegram_user_id returned')
+      setTelegramUserId(uid)
+      localStorage.setItem('talitrade.telegramUserId', uid)
+      localStorage.setItem('talitrade.identity', identityInput)
+      setStatus(`Identity resolved for ${res.data?.user?.telegram_username || uid}`)
+    } catch (e) {
+      setStatus(`Identity resolve failed: ${e.message}`)
+    }
+  }
 
   async function loadConnectorData() {
     try {
@@ -121,8 +144,12 @@ function App() {
       <p>Status: {status}</p>
       <section className="panel">
         <h2>Workspace</h2>
-        <label>Telegram user id</label>
-        <input value={telegramUserId} onChange={(e) => setTelegramUserId(e.target.value)} />
+        <label>Telegram identity (@username or user id)</label>
+        <input value={identityInput} onChange={(e) => setIdentityInput(e.target.value)} />
+        <div className="row">
+          <button onClick={resolveIdentity}>Resolve identity</button>
+          <span>Resolved user id: {telegramUserId || '—'}</span>
+        </div>
         <button onClick={loadConnectorData}>Load connectors</button>
       </section>
 
