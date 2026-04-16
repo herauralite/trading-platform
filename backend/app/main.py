@@ -416,6 +416,96 @@ async def db_get_user_accounts(telegram_user_id: str) -> list:
         return [dict(r) for r in result.mappings().all()]
 
 
+async def db_get_connectors_overview(telegram_user_id: str) -> list:
+    """Return connector-centric account and activity view for a user."""
+    from app.core.database import engine
+    async with engine.connect() as conn:
+        result = await conn.execute(text("""
+            WITH latest_snapshots AS (
+                SELECT trading_account_id, MAX(snapshot_time) AS last_snapshot_at
+                FROM account_snapshots
+                GROUP BY trading_account_id
+            ),
+            latest_trades AS (
+                SELECT trading_account_id, MAX(COALESCE(close_time, closed_at, logged_at)) AS last_trade_at
+                FROM trades
+                WHERE trading_account_id IS NOT NULL
+                GROUP BY trading_account_id
+            ),
+            latest_events AS (
+                SELECT trading_account_id, MAX(event_time) AS last_event_at
+                FROM connector_events
+                WHERE trading_account_id IS NOT NULL
+                GROUP BY trading_account_id
+            ),
+            account_rows AS (
+                SELECT
+                    ta.id,
+                    ta.connector_type,
+                    COALESCE(NULLIF(ta.broker_name, ''), ta.connector_type) AS broker_name,
+                    ta.external_account_id,
+                    ta.display_label,
+                    ta.account_type,
+                    ta.account_size,
+                    ta.is_active,
+                    ta.created_at,
+                    GREATEST(
+                        COALESCE(ls.last_snapshot_at, 'epoch'::timestamptz),
+                        COALESCE(lt.last_trade_at, 'epoch'::timestamptz),
+                        COALESCE(le.last_event_at, 'epoch'::timestamptz),
+                        ta.updated_at
+                    ) AS last_activity_at,
+                    ls.last_snapshot_at
+                FROM trading_accounts ta
+                LEFT JOIN latest_snapshots ls ON ls.trading_account_id = ta.id
+                LEFT JOIN latest_trades lt ON lt.trading_account_id = ta.id
+                LEFT JOIN latest_events le ON le.trading_account_id = ta.id
+                WHERE ta.user_id = :uid
+            )
+            SELECT *
+            FROM account_rows
+            ORDER BY connector_type, created_at DESC NULLS LAST, id DESC
+        """), {"uid": telegram_user_id})
+
+        grouped: dict[str, dict[str, Any]] = {}
+        for row in result.mappings().all():
+            connector = row["connector_type"] or "manual"
+            if connector not in grouped:
+                grouped[connector] = {
+                    "connector_type": connector,
+                    "status": "connected",
+                    "last_activity_at": None,
+                    "last_sync_at": None,
+                    "account_count": 0,
+                    "accounts": [],
+                }
+
+            connector_obj = grouped[connector]
+            connector_obj["account_count"] += 1
+            connector_obj["accounts"].append({
+                "id": row["id"],
+                "external_account_id": row["external_account_id"],
+                "display_label": row["display_label"],
+                "broker_name": row["broker_name"],
+                "account_type": row["account_type"],
+                "account_size": row["account_size"],
+                "is_active": row["is_active"],
+                "last_activity_at": row["last_activity_at"],
+                "last_sync_at": row["last_snapshot_at"],
+            })
+
+            activity = row["last_activity_at"]
+            sync_at = row["last_snapshot_at"]
+            if activity and (connector_obj["last_activity_at"] is None or activity > connector_obj["last_activity_at"]):
+                connector_obj["last_activity_at"] = activity
+            if sync_at and (connector_obj["last_sync_at"] is None or sync_at > connector_obj["last_sync_at"]):
+                connector_obj["last_sync_at"] = sync_at
+            if not row["is_active"]:
+                connector_obj["status"] = "degraded"
+
+    return list(grouped.values())
+
+
 async def db_link_account(telegram_user_id: str, account_id: str, account_type: str = None,
                            account_size: int = None, label: str = None, broker: str = "fundingpips"):
     """Link a prop account to a Telegram user. Safe to call multiple times."""
@@ -1087,6 +1177,40 @@ async def link_account(
     accounts = await db_get_user_accounts(telegram_user_id)
     logger.info("Account linked via /auth/link-account user=%s account=%s", telegram_user_id, account_id)
     return {"ok": True, "accounts": accounts}
+
+
+@app.get("/connectors/catalog")
+async def connectors_catalog():
+    """Expose connectors available in the current product surface."""
+    return {
+        "connectors": [
+            {
+                "connector_type": "fundingpips_extension",
+                "label": "FundingPips Extension",
+                "category": "extension",
+                "supports_live_sync": True,
+            },
+            {
+                "connector_type": "csv_import",
+                "label": "CSV Import",
+                "category": "file_import",
+                "supports_live_sync": False,
+            },
+            {
+                "connector_type": "manual",
+                "label": "Manual Journal",
+                "category": "manual",
+                "supports_live_sync": False,
+            },
+        ]
+    }
+
+
+@app.get("/connectors/overview")
+async def connectors_overview(telegram_user_id: str):
+    connectors = await db_get_connectors_overview(telegram_user_id)
+    return {"connectors": connectors, "count": len(connectors)}
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
