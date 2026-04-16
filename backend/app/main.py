@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import hmac
 import json
+from collections import Counter
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -41,6 +42,7 @@ if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
+COMPAT_ROUTE_USAGE = Counter()
 
 RAILWAY_URL     = "https://trading-platform-production-70e0.up.railway.app"
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
@@ -123,6 +125,16 @@ def get_required_telegram_user_id(token: str | None = Depends(get_bearer_token))
         raise HTTPException(status_code=401, detail="Missing authenticated session")
     payload = decode_session_token(token)
     return str(payload["sub"])
+
+
+def record_compat_route_usage(route_name: str, resolved_uid: str | None = None) -> None:
+    COMPAT_ROUTE_USAGE[route_name] += 1
+    logger.warning(
+        "Compatibility auth route used route=%s usage_count=%s user=%s",
+        route_name,
+        COMPAT_ROUTE_USAGE[route_name],
+        (str(resolved_uid or "").strip() or "unknown"),
+    )
 
 
 def _coerce_telegram_profile_from_claims(claims: dict[str, Any]) -> dict[str, Any]:
@@ -1351,11 +1363,13 @@ async def create_bridge_session(
     uid = str(user.get("telegram_user_id") or "").strip()
     if not uid:
         return JSONResponse(status_code=404, content={"detail": "User not found"})
+    record_compat_route_usage("auth.session.bridge", uid)
     return {
         **resolved,
         "access_token": create_session_token(uid),
         "token_type": "bearer",
         "compatibility_mode": True,
+        "compatibility_path": "auth.session.bridge",
     }
 
 
@@ -1423,8 +1437,14 @@ async def link_account_compat(
 
     await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
     accounts = await db_get_user_accounts(resolved_uid)
+    record_compat_route_usage("auth.link-account.compat", resolved_uid)
     logger.info("Account linked via /auth/link-account/compat user=%s account=%s", resolved_uid, account_id)
-    return {"ok": True, "accounts": accounts, "compatibility_mode": True}
+    return {
+        "ok": True,
+        "accounts": accounts,
+        "compatibility_mode": True,
+        "compatibility_path": "auth.link-account.compat",
+    }
 
 
 @app.get("/connectors/catalog")

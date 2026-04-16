@@ -34,12 +34,18 @@ TaliTrade now uses a connector-first ingestion layer. The FundingPips extension 
 - `POST /auth/link-account` (requires bearer session)
 - `POST /ingest/accounts`, `POST /ingest/trades`, `POST /ingest/csv/trades` (require bearer session)
 
+Canonical callers now include:
+- `frontend/src/App.jsx` (primary app console flows)
+- `frontend/app.html` and `frontend/public/app.html` (static app shell)
+- `extension/content.js` account-link retry path, now using bearer session from extension storage
+
 ### Transitional compatibility routes
 
 - `POST /auth/session/bridge`
 - `POST /auth/link-account/compat`
 
 These compatibility routes are intentionally non-primary and require bridge gating (`AUTH_SESSION_BRIDGE_ENABLED=true`) plus `X-Bridge-Secret`.
+They now also return `compatibility_path` in responses and emit dedicated compatibility usage logs for lightweight visibility.
 
 ### Backward compatibility
 

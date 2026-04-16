@@ -786,7 +786,7 @@ window.onTelegramAuth = async function(tgUser) {
       if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
         chrome.runtime.sendMessage(
           TALI_EXTENSION_ID,
-          { type: 'TALI_SET_UID', telegramUserId: user.telegramUserId },
+          { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token },
           (response) => {
             if (chrome.runtime.lastError) {
               console.warn('TaliTrade: extension message failed (extension not installed or ID wrong)');
@@ -811,7 +811,6 @@ window.onTelegramAuth = async function(tgUser) {
         const liveAccounts = statusData.accounts || {};
         for (const [acctId, acct] of Object.entries(liveAccounts)) {
           const params = new URLSearchParams({
-            telegram_user_id: user.telegramUserId,
             account_id:       acctId,
             account_type:     acct.accountType  || '',
             account_size:     acct.accountSize  || 0,
