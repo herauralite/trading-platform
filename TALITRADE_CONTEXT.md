@@ -9,13 +9,15 @@
 
 **Core vision:** "Your entire trading desk in one place." Not a bot. A full platform.
 
-**Architecture:**
+**Architecture (current, connector-first):**
 ```
-Chrome Extension (content.js)
-    ↓ scrapes FundingPips every 5s
-    ↓ POSTs to Railway backend
-Backend API (FastAPI / Railway)
-    ↓ stores trades in Neon PostgreSQL
+Connectors (FundingPips extension, CSV import, future MT5/manual)
+    ↓ POST normalized payloads to /ingest/*
+Normalization + ingestion services (FastAPI / Railway)
+    ↓ stores canonical records in Neon PostgreSQL
+Legacy /extension/* compatibility routes
+    ↓ translate FundingPips extension payloads into canonical ingest records
+Core APIs
     ↓ sends Telegram alerts
 Dashboard (app.html / Vercel → talitrade.com/app)
     ↓ reads live data from backend
