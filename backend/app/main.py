@@ -21,6 +21,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
+from app.services.connector_ingest import (
+    deactivate_missing_positions,
+    ensure_connector_tables,
+    ingest_account_snapshot,
+    ingest_position,
+    ingest_trade,
+    upsert_trading_account,
+)
 
 if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
     raise RuntimeError("Set WEB_CONCURRENCY=1.")
@@ -812,6 +820,7 @@ async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
     await ensure_trades_table()
     await ensure_users_tables()
+    await ensure_connector_tables()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
     await setup_telegram_webhook()
@@ -843,6 +852,8 @@ app.add_middleware(
 
 from app.routers import accounts
 app.include_router(accounts.router)
+from app.routers import ingest
+app.include_router(ingest.router)
 from app.core.database import engine
 
 
@@ -1769,6 +1780,53 @@ async def receive_extension_data(data: ExtensionData):
         "last_updated": datetime.utcnow().isoformat(),
     }
 
+    if account_id != "unknown":
+        connector_account_payload = {
+            "user_id": tg_uid,
+            "connector_type": "fundingpips_extension",
+            "broker_name": "fundingpips",
+            "external_account_id": account_id,
+            "display_label": data.accountLabel,
+            "account_type": data.accountType,
+            "account_size": data.accountSize,
+            "metadata": {"source": "legacy_extension"},
+        }
+        normalized_account = await upsert_trading_account(connector_account_payload)
+        await ingest_account_snapshot({
+            **connector_account_payload,
+            "timestamp": data.timestamp or datetime.utcnow().isoformat(),
+            "balance": data.balance,
+            "equity": data.equity,
+            "drawdown": (data.overallLoss or {}).get("used"),
+            "risk_used": (data.dailyLoss or {}).get("used"),
+            "source_metadata": {
+                "legacy_route": "/extension/data",
+                "has_positions": data.hasPositions,
+                "open_position_count": data.openPositionCount,
+            },
+        })
+        seen_position_keys: list[str] = []
+        for pos in data.positions or []:
+            position_key = await ingest_position({
+                **connector_account_payload,
+                "symbol": pos.get("symbol") or pos.get("instrument") or "unknown",
+                "side": pos.get("direction") or pos.get("side"),
+                "size": pos.get("volume") or pos.get("size"),
+                "average_entry": pos.get("entryPrice") or pos.get("openPrice"),
+                "unrealized_pnl": pos.get("pnl") or pos.get("profit"),
+                "stop_loss": pos.get("stopLoss"),
+                "take_profit": pos.get("takeProfit"),
+                "opened_at": pos.get("openedAt"),
+                "source_metadata": {"legacy_route": "/extension/data"},
+            })
+            seen_position_keys.append(position_key)
+        # Only close out missing positions if the connector explicitly reports no open positions.
+        await deactivate_missing_positions(
+            trading_account_id=normalized_account["id"],
+            seen_position_keys=seen_position_keys,
+            allow_empty_snapshot=not data.hasPositions,
+        )
+
     # Auto-link account to telegram user if telegramUserId is provided
     if tg_uid and account_id != "unknown":
         try:
@@ -1839,8 +1897,30 @@ async def receive_extension_data(data: ExtensionData):
 @app.post("/extension/trade")
 async def log_trade(trade: TradeData):
     """Scraper-only endpoint. Persists closed trades to DB. No Telegram — that comes via /extension/data."""
-    await db_insert_trade(trade.dict())
-    return {"status": "ok", "persisted": True}
+    payload = trade.dict()
+    persisted = await ingest_trade({
+        "user_id": payload.get("telegramUserId"),
+        "connector_type": "fundingpips_extension",
+        "external_account_id": payload.get("accountId"),
+        "account_type": payload.get("accountType"),
+        "account_size": payload.get("accountSize"),
+        "symbol": payload.get("symbol"),
+        "side": payload.get("direction"),
+        "size": payload.get("volume"),
+        "entry_price": payload.get("openPrice"),
+        "exit_price": payload.get("closePrice"),
+        "close_time": payload.get("closedAt"),
+        "pnl": payload.get("pnl"),
+        "balance_after": payload.get("balanceAfter"),
+        "equity_after": payload.get("equityAfter"),
+        "daily_loss_used": payload.get("dailyLossUsed"),
+        "daily_loss_limit": payload.get("dailyLossLimit"),
+        "overall_loss_used": payload.get("overallLossUsed"),
+        "overall_loss_limit": payload.get("overallLossLimit"),
+        "source": payload.get("source") or "scraper",
+        "source_metadata": {"legacy_route": "/extension/trade"},
+    })
+    return {"status": "ok", "persisted": persisted}
 
 
 # Backward-compat alias — older extension versions posted here

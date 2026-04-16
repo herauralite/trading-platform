@@ -7,10 +7,37 @@ TaliTrade is a premium SaaS trading platform for prop firm traders. It combines 
 - The original 25-file TaliTrade model is the intended blueprint, not an assumption that every detail is already implemented in this repo.
 
 ## Current architecture
-- **Backend (`backend/`)**: FastAPI API, Telegram webhook/bot logic, account/trade persistence, health/admin endpoints.
+- **Backend (`backend/`)**: FastAPI API, Telegram webhook/bot logic, connector ingestion pipeline, account/trade persistence, health/admin endpoints.
 - **Frontend (`frontend/`)**: Vercel-hosted landing + `/app` SPA, onboarding gate, Telegram login widget, analytics UI.
-- **Extension (`extension/`)**: FundingPips scraper bridge that posts live state and closed trades to backend.
+- **Extension (`extension/`)**: FundingPips scraper bridge (legacy-compatible connector) that posts live state and closed trades.
 - **Data plane**: Neon PostgreSQL behind backend persistence.
+
+## Connector-first ingestion model (2026 pivot)
+
+TaliTrade now uses a connector-first ingestion layer. The FundingPips extension remains fully supported, but it is treated as one connector that feeds canonical ingestion services.
+
+### Canonical ingestion routes
+
+- `POST /ingest/accounts`
+- `POST /ingest/account-snapshots`
+- `POST /ingest/positions`
+- `POST /ingest/trades`
+- `POST /ingest/events`
+- `POST /ingest/csv/trades` (non-extension connector path)
+
+### Backward compatibility
+
+- Existing `/extension/*` routes still work.
+- `/extension/data` now translates extension payloads into canonical `trading_accounts`, `account_snapshots`, and `positions`.
+- `/extension/trade` now writes through the same normalized ingestion service used by `/ingest/trades`.
+
+### Phase 2 hardening
+
+- Deterministic `trading_accounts` dedup via computed `account_key` unique index (avoids nullable `user_id` conflict gaps).
+- Safe stale-position handling (`is_active`, `last_seen_at`, `closed_at`) with guarded deactivation logic.
+- Snapshot insert throttling by short dedupe window when values are unchanged.
+- Richer normalized trade persistence (`connector_type`, `open_time`, `fees`, `tags`, `source_metadata`, `import_provenance`).
+- Phase 2.5 blocker fix: startup-safe connector table initialization ordering and `position_key`-first position identity (legacy symbol/side uniqueness removed).
 
 ## Canonical production assumptions
 - Telegram bot username: `TaliTradeBot`
