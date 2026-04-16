@@ -26,6 +26,7 @@ if "jwt" not in sys.modules:
 
 from app.main import app
 from app import main as main_mod
+from app.core.auth_session import create_session_token
 from app.services.connector_ingest import compute_account_key
 from app.services import connector_ingest as ci
 
@@ -35,6 +36,16 @@ def post_json(path: str, payload: dict):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             return await client.post(path, json=payload)
+
+    return asyncio.run(_run())
+
+
+def post_json_auth(path: str, payload: dict, telegram_user_id: str = "123"):
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token(telegram_user_id)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(path, json=payload, headers={"Authorization": f"Bearer {token}"})
 
     return asyncio.run(_run())
 
@@ -69,6 +80,7 @@ def test_ingest_trades_route(monkeypatch):
 
     resp = post_json("/ingest/trades", {
         "connector_type": "manual",
+        "user_id": "u1",
         "external_account_id": "acct-2",
         "symbol": "NAS100",
         "side": "buy",
@@ -362,6 +374,81 @@ def test_connectors_overview_route(monkeypatch):
     data = resp.json()
     assert data["count"] == 1
     assert data["connectors"][0]["connector_type"] == "manual"
+
+
+def test_connectors_overview_authenticated_session(monkeypatch):
+    async def fake_overview(user_id):
+        assert user_id == "777"
+        return [{"connector_type": "manual", "status": "connected", "account_count": 0, "accounts": []}]
+
+    monkeypatch.setattr("app.main.db_get_connectors_overview", fake_overview)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("777")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/connectors/overview", headers={"Authorization": f"Bearer {token}"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert resp.json()["count"] == 1
+
+
+def test_authenticated_ingest_manual_routes_use_session_user(monkeypatch):
+    captured = {"account": None, "trade": None}
+
+    async def fake_upsert(payload):
+        captured["account"] = payload
+        return {"id": 1, "external_account_id": payload["external_account_id"]}
+
+    async def fake_ingest(payload):
+        captured["trade"] = payload
+        return True
+
+    monkeypatch.setattr("app.routers.ingest.upsert_trading_account", fake_upsert)
+    monkeypatch.setattr("app.routers.ingest.ingest_trade", fake_ingest)
+
+    account_resp = post_json_auth("/ingest/accounts", {
+        "connector_type": "manual",
+        "external_account_id": "manual-1",
+    }, telegram_user_id="999")
+    trade_resp = post_json_auth("/ingest/trades", {
+        "connector_type": "manual",
+        "external_account_id": "manual-1",
+        "symbol": "NAS100",
+        "side": "buy",
+        "pnl": 5.0,
+    }, telegram_user_id="999")
+
+    assert account_resp.status_code == 200
+    assert trade_resp.status_code == 200
+    assert captured["account"]["user_id"] == "999"
+    assert captured["trade"]["user_id"] == "999"
+
+
+def test_authenticated_csv_import_uses_session_user(monkeypatch):
+    captured = {"accounts": [], "trades": []}
+
+    async def fake_upsert(payload):
+        captured["accounts"].append(payload)
+        return {"id": 1}
+
+    async def fake_ingest(payload):
+        captured["trades"].append(payload)
+        return True
+
+    monkeypatch.setattr("app.routers.ingest.upsert_trading_account", fake_upsert)
+    monkeypatch.setattr("app.routers.ingest.ingest_trade", fake_ingest)
+
+    resp = post_json_auth("/ingest/csv/trades", {
+        "connector_type": "csv_import",
+        "external_account_id": "csv-1",
+        "rows": [{"symbol": "US30", "side": "buy", "pnl": 10}],
+    }, telegram_user_id="abc-1")
+
+    assert resp.status_code == 200
+    assert captured["accounts"][0]["user_id"] == "abc-1"
+    assert captured["trades"][0]["user_id"] == "abc-1"
 
 
 def test_db_link_account_mirrors_legacy_to_canonical(monkeypatch):
