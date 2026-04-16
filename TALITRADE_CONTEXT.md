@@ -29,6 +29,13 @@ Telegram Bot
 **Why extension instead of direct API:**
 FundingPips (Match Trader platform) does not expose a public API. The Chrome extension scrapes the UI to extract trade data and account state.
 
+## PHASE 2 HARDENING STATUS (connector ingestion)
+
+- Added deterministic account dedup keying for `trading_accounts` so nullable `user_id` does not create duplicate logical accounts.
+- Added position state lifecycle fields (`is_active`, `last_seen_at`, `closed_at`, `position_key`) and guarded stale-position deactivation.
+- Added account snapshot dedupe window to reduce high-frequency write amplification.
+- Extended trade ingestion to preserve richer normalized metadata fields without breaking legacy trade readers.
+
 ---
 
 ## DEPLOYED INFRASTRUCTURE

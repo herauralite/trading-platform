@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from app.services.connector_ingest import (
+    deactivate_missing_positions,
     ensure_connector_tables,
     ingest_account_snapshot,
     ingest_position,
@@ -1790,7 +1791,7 @@ async def receive_extension_data(data: ExtensionData):
             "account_size": data.accountSize,
             "metadata": {"source": "legacy_extension"},
         }
-        await upsert_trading_account(connector_account_payload)
+        normalized_account = await upsert_trading_account(connector_account_payload)
         await ingest_account_snapshot({
             **connector_account_payload,
             "timestamp": data.timestamp or datetime.utcnow().isoformat(),
@@ -1804,8 +1805,9 @@ async def receive_extension_data(data: ExtensionData):
                 "open_position_count": data.openPositionCount,
             },
         })
+        seen_position_keys: list[str] = []
         for pos in data.positions or []:
-            await ingest_position({
+            position_key = await ingest_position({
                 **connector_account_payload,
                 "symbol": pos.get("symbol") or pos.get("instrument") or "unknown",
                 "side": pos.get("direction") or pos.get("side"),
@@ -1817,6 +1819,13 @@ async def receive_extension_data(data: ExtensionData):
                 "opened_at": pos.get("openedAt"),
                 "source_metadata": {"legacy_route": "/extension/data"},
             })
+            seen_position_keys.append(position_key)
+        # Only close out missing positions if the connector explicitly reports no open positions.
+        await deactivate_missing_positions(
+            trading_account_id=normalized_account["id"],
+            seen_position_keys=seen_position_keys,
+            allow_empty_snapshot=not data.hasPositions,
+        )
 
     # Auto-link account to telegram user if telegramUserId is provided
     if tg_uid and account_id != "unknown":
