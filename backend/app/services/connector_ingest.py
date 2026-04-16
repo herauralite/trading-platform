@@ -112,6 +112,19 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
         await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW()"))
         await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ"))
+        # Ensure position_key is always present so ON CONFLICT target is deterministic.
+        await conn.execute(text("""
+            UPDATE positions
+            SET position_key = CONCAT(
+                COALESCE(UPPER(symbol), 'UNKNOWN'),
+                '|',
+                COALESCE(LOWER(side), 'unknown'),
+                '|',
+                COALESCE(to_char(opened_at, 'YYYY-MM-DD\"T\"HH24:MI:SS.USOF'), CONCAT('legacy-', id::text))
+            )
+            WHERE position_key IS NULL
+        """))
+        await conn.execute(text("ALTER TABLE positions ALTER COLUMN position_key SET NOT NULL"))
         # Neutralize legacy uniqueness that conflicts with position_key identity.
         await conn.execute(text("ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_trading_account_id_symbol_side_key"))
         await conn.execute(text("DROP INDEX IF EXISTS positions_trading_account_id_symbol_side_key"))
@@ -140,7 +153,8 @@ async def ensure_connector_tables() -> None:
         # 2) Create/repair indexes & constraints needed by new logic.
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS trading_accounts_account_key_uq ON trading_accounts(account_key)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS account_snapshots_account_time_idx ON account_snapshots(trading_account_id, snapshot_time DESC)"))
-        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq ON positions(trading_account_id, position_key) WHERE position_key IS NOT NULL"))
+        await conn.execute(text("DROP INDEX IF EXISTS positions_account_position_key_uq"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq ON positions(trading_account_id, position_key)"))
 
         # 3) Backfill + dedupe/rewire logic once all referenced tables exist.
         rows = (await conn.execute(text("""
