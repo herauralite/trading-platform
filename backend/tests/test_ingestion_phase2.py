@@ -521,27 +521,16 @@ def test_session_token_fails_closed_without_secret(monkeypatch):
     assert "SECRET_KEY" in str(decode_exc.value)
 
 
-def test_bridge_route_disabled_by_default():
+def test_retired_bridge_route_returns_gone():
     async def _run():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             return await client.post("/auth/session/bridge", params={"telegram_username": "@alice"})
 
     resp = asyncio.run(_run())
-    assert resp.status_code == 404
-
-
-def test_bridge_route_requires_secret_when_enabled(monkeypatch):
-    monkeypatch.setenv("AUTH_SESSION_BRIDGE_ENABLED", "true")
-    monkeypatch.setenv("AUTH_SESSION_BRIDGE_SECRET", "bridge-test-secret")
-
-    async def _run():
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            return await client.post("/auth/session/bridge", params={"telegram_username": "@alice"})
-
-    resp = asyncio.run(_run())
-    assert resp.status_code == 403
+    assert resp.status_code == 410
+    assert resp.json()["retired"] is True
+    assert resp.json()["replacement"] == "/auth/telegram"
 
 
 def test_db_link_account_mirrors_legacy_to_canonical(monkeypatch):
@@ -620,51 +609,6 @@ def test_db_unified_queries_include_legacy_bridge(monkeypatch):
     assert "legacy_only_accounts" in joined
 
 
-def test_resolve_user_route_with_username(monkeypatch):
-    class FakeResult:
-        def mappings(self):
-            return self
-
-        def first(self):
-            return {
-                "telegram_user_id": "123",
-                "telegram_username": "alice",
-                "first_name": "Alice",
-            }
-
-    class FakeConn:
-        async def execute(self, _stmt, _params=None):
-            return FakeResult()
-
-    class FakeConnect:
-        async def __aenter__(self):
-            return FakeConn()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeEngine:
-        def connect(self):
-            return FakeConnect()
-
-    async def fake_accounts(uid):
-        assert uid == "123"
-        return [{"account_id": "1917136"}]
-
-    monkeypatch.setattr("app.core.database.engine", FakeEngine())
-    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
-
-    async def _run():
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            return await client.get("/auth/resolve-user", params={"telegram_username": "@alice"})
-
-    resp = asyncio.run(_run())
-    assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["user"]["telegram_user_id"] == "123"
-    assert payload["accounts"][0]["account_id"] == "1917136"
-
 
 def test_link_account_route_requires_authenticated_session(monkeypatch):
     async def _run(headers=None):
@@ -725,44 +669,13 @@ def test_link_account_route_ignores_explicit_identity_params(monkeypatch):
     assert resp.json()["accounts"][0]["user_id"] == "session-canonical"
 
 
-def test_compat_routes_emit_compatibility_path(monkeypatch):
-    monkeypatch.setenv("AUTH_SESSION_BRIDGE_ENABLED", "true")
-    monkeypatch.setenv("AUTH_SESSION_BRIDGE_SECRET", "bridge-test-secret")
-
-    async def fake_resolve(*_args, **_kwargs):
-        return {"user": {"telegram_user_id": "123", "telegram_username": "alice"}, "accounts": []}
-
-    async def fake_link(uid, account_id, *_args):
-        assert uid == "123"
-        assert account_id == "acct-1"
-
-    async def fake_accounts(_uid):
-        return [{"account_id": "acct-1"}]
-
-    monkeypatch.setattr(main_mod, "resolve_user", fake_resolve)
-    monkeypatch.setattr(main_mod, "db_link_account", fake_link)
-    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
-
+def test_retired_link_account_compat_route_returns_gone():
     async def _run():
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-            bridge_resp = await client.post(
-                "/auth/session/bridge",
-                params={"telegram_username": "@alice"},
-                headers={"X-Bridge-Secret": "bridge-test-secret"},
-            )
-            compat_resp = await client.post(
-                "/auth/link-account/compat",
-                params={"telegram_user_id": "123", "account_id": "acct-1"},
-                headers={"X-Bridge-Secret": "bridge-test-secret"},
-            )
-            return bridge_resp, compat_resp
+            return await client.post("/auth/link-account/compat", params={"telegram_user_id": "123", "account_id": "acct-1"})
 
-    bridge_resp, compat_resp = asyncio.run(_run())
-    assert bridge_resp.status_code == 200
-    assert bridge_resp.json()["compatibility_mode"] is True
-    assert bridge_resp.json()["compatibility_path"] == "auth.session.bridge"
-
-    assert compat_resp.status_code == 200
-    assert compat_resp.json()["compatibility_mode"] is True
-    assert compat_resp.json()["compatibility_path"] == "auth.link-account.compat"
+    resp = asyncio.run(_run())
+    assert resp.status_code == 410
+    assert resp.json()["retired"] is True
+    assert resp.json()["replacement"] == "/auth/link-account"
