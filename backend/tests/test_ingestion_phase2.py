@@ -693,3 +693,76 @@ def test_link_account_route_requires_authenticated_session(monkeypatch):
     assert captured["uid"] == "session-77"
     assert captured["account_id"] == "acct-1"
     assert auth.json()["accounts"][0]["user_id"] == "session-77"
+
+
+def test_link_account_route_ignores_explicit_identity_params(monkeypatch):
+    captured = {}
+
+    async def fake_link(uid, account_id, *_args):
+        captured["uid"] = uid
+        captured["account_id"] = account_id
+
+    async def fake_accounts(uid):
+        return [{"account_id": "acct-legacy", "user_id": uid}]
+
+    monkeypatch.setattr(main_mod, "db_link_account", fake_link)
+    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+
+    async def _run():
+        token = create_session_token("session-canonical")
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/auth/link-account",
+                params={"account_id": "acct-legacy", "telegram_user_id": "explicit-should-be-ignored"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert captured["uid"] == "session-canonical"
+    assert captured["account_id"] == "acct-legacy"
+    assert resp.json()["accounts"][0]["user_id"] == "session-canonical"
+
+
+def test_compat_routes_emit_compatibility_path(monkeypatch):
+    monkeypatch.setenv("AUTH_SESSION_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("AUTH_SESSION_BRIDGE_SECRET", "bridge-test-secret")
+
+    async def fake_resolve(*_args, **_kwargs):
+        return {"user": {"telegram_user_id": "123", "telegram_username": "alice"}, "accounts": []}
+
+    async def fake_link(uid, account_id, *_args):
+        assert uid == "123"
+        assert account_id == "acct-1"
+
+    async def fake_accounts(_uid):
+        return [{"account_id": "acct-1"}]
+
+    monkeypatch.setattr(main_mod, "resolve_user", fake_resolve)
+    monkeypatch.setattr(main_mod, "db_link_account", fake_link)
+    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            bridge_resp = await client.post(
+                "/auth/session/bridge",
+                params={"telegram_username": "@alice"},
+                headers={"X-Bridge-Secret": "bridge-test-secret"},
+            )
+            compat_resp = await client.post(
+                "/auth/link-account/compat",
+                params={"telegram_user_id": "123", "account_id": "acct-1"},
+                headers={"X-Bridge-Secret": "bridge-test-secret"},
+            )
+            return bridge_resp, compat_resp
+
+    bridge_resp, compat_resp = asyncio.run(_run())
+    assert bridge_resp.status_code == 200
+    assert bridge_resp.json()["compatibility_mode"] is True
+    assert bridge_resp.json()["compatibility_path"] == "auth.session.bridge"
+
+    assert compat_resp.status_code == 200
+    assert compat_resp.json()["compatibility_mode"] is True
+    assert compat_resp.json()["compatibility_path"] == "auth.link-account.compat"
