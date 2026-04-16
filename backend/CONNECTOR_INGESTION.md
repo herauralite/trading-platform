@@ -38,3 +38,8 @@ This backend now supports a connector-first ingestion pipeline.
 - **Stale position cleanup:** open positions now track `position_key`, `is_active`, `last_seen_at`, and `closed_at`; legacy extension ingestion deactivates missing positions only when a snapshot explicitly indicates no open positions.
 - **Snapshot growth guard:** account snapshots use short-window dedupe (`SNAPSHOT_DEDUPE_WINDOW_SECONDS`) and skip inserts when account state is unchanged.
 - **Richer trade normalization:** canonical trade ingest now preserves `connector_type`, `open_time`, `fees`, `tags`, `source_metadata`, and `import_provenance` (JSON fields) while keeping legacy readers intact.
+
+## Phase 2.5 blocker fixes
+
+- **Startup ordering safety:** `ensure_connector_tables()` now performs table/column/index creation before any dedup/rewire statements that reference those tables.
+- **Position identity consistency:** removed legacy `(trading_account_id, symbol, side)` uniqueness assumption and standardized on `position_key` as the canonical conflict identity.

@@ -51,6 +51,7 @@ def compute_position_key(symbol: str | None, side: str | None, opened_at: Any = 
 
 async def ensure_connector_tables() -> None:
     async with engine.begin() as conn:
+        # 1) Create core tables first (fresh DB safe).
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trading_accounts (
                 id SERIAL PRIMARY KEY,
@@ -71,6 +72,77 @@ async def ensure_connector_tables() -> None:
         """))
         await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS account_key TEXT"))
 
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS account_snapshots (
+                id SERIAL PRIMARY KEY,
+                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE CASCADE,
+                snapshot_time TIMESTAMPTZ NOT NULL,
+                balance DOUBLE PRECISION,
+                equity DOUBLE PRECISION,
+                drawdown DOUBLE PRECISION,
+                risk_used DOUBLE PRECISION,
+                source_metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS account_snapshots_account_time_idx ON account_snapshots(trading_account_id, snapshot_time DESC)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS positions (
+                id SERIAL PRIMARY KEY,
+                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE CASCADE,
+                symbol TEXT NOT NULL,
+                side TEXT,
+                size DOUBLE PRECISION,
+                average_entry DOUBLE PRECISION,
+                unrealized_pnl DOUBLE PRECISION,
+                stop_loss DOUBLE PRECISION,
+                take_profit DOUBLE PRECISION,
+                opened_at TIMESTAMPTZ,
+                position_key TEXT,
+                is_active BOOLEAN DEFAULT TRUE,
+                last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+                closed_at TIMESTAMPTZ,
+                source_metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS position_key TEXT"))
+        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
+        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW()"))
+        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ"))
+        # Neutralize legacy uniqueness that conflicts with position_key identity.
+        await conn.execute(text("ALTER TABLE positions DROP CONSTRAINT IF EXISTS positions_trading_account_id_symbol_side_key"))
+        await conn.execute(text("DROP INDEX IF EXISTS positions_trading_account_id_symbol_side_key"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS connector_events (
+                id SERIAL PRIMARY KEY,
+                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE SET NULL,
+                user_id TEXT,
+                connector_type TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                event_payload JSONB DEFAULT '{}'::jsonb,
+                event_time TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """))
+
+        # Preserve richer canonical trade ingestion data without breaking existing readers.
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS connector_type TEXT"))
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS open_time TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS fees DOUBLE PRECISION"))
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb"))
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS source_metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS import_provenance JSONB DEFAULT '{}'::jsonb"))
+
+        # 2) Create/repair indexes & constraints needed by new logic.
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS trading_accounts_account_key_uq ON trading_accounts(account_key)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS account_snapshots_account_time_idx ON account_snapshots(trading_account_id, snapshot_time DESC)"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq ON positions(trading_account_id, position_key) WHERE position_key IS NOT NULL"))
+
+        # 3) Backfill + dedupe/rewire logic once all referenced tables exist.
         rows = (await conn.execute(text("""
             SELECT id, connector_type, user_id, external_account_id
             FROM trading_accounts
@@ -86,7 +158,6 @@ async def ensure_connector_tables() -> None:
                 "account_key": compute_account_key(row["connector_type"], row["user_id"], row["external_account_id"]),
             })
 
-        # deterministic dedup by account_key before creating unique index
         await conn.execute(text("""
             WITH ranked AS (
                 SELECT id, account_key,
@@ -136,71 +207,6 @@ async def ensure_connector_tables() -> None:
             ) d
             WHERE t.id = d.id AND d.rn > 1
         """))
-        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS trading_accounts_account_key_uq ON trading_accounts(account_key)"))
-
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS account_snapshots (
-                id SERIAL PRIMARY KEY,
-                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE CASCADE,
-                snapshot_time TIMESTAMPTZ NOT NULL,
-                balance DOUBLE PRECISION,
-                equity DOUBLE PRECISION,
-                drawdown DOUBLE PRECISION,
-                risk_used DOUBLE PRECISION,
-                source_metadata JSONB DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """))
-        await conn.execute(text("CREATE INDEX IF NOT EXISTS account_snapshots_account_time_idx ON account_snapshots(trading_account_id, snapshot_time DESC)"))
-
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS positions (
-                id SERIAL PRIMARY KEY,
-                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE CASCADE,
-                symbol TEXT NOT NULL,
-                side TEXT,
-                size DOUBLE PRECISION,
-                average_entry DOUBLE PRECISION,
-                unrealized_pnl DOUBLE PRECISION,
-                stop_loss DOUBLE PRECISION,
-                take_profit DOUBLE PRECISION,
-                opened_at TIMESTAMPTZ,
-                position_key TEXT,
-                is_active BOOLEAN DEFAULT TRUE,
-                last_seen_at TIMESTAMPTZ DEFAULT NOW(),
-                closed_at TIMESTAMPTZ,
-                source_metadata JSONB DEFAULT '{}'::jsonb,
-                created_at TIMESTAMPTZ DEFAULT NOW(),
-                updated_at TIMESTAMPTZ DEFAULT NOW(),
-                UNIQUE (trading_account_id, symbol, side)
-            )
-        """))
-        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS position_key TEXT"))
-        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE"))
-        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS last_seen_at TIMESTAMPTZ DEFAULT NOW()"))
-        await conn.execute(text("ALTER TABLE positions ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ"))
-        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq ON positions(trading_account_id, position_key) WHERE position_key IS NOT NULL"))
-
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS connector_events (
-                id SERIAL PRIMARY KEY,
-                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE SET NULL,
-                user_id TEXT,
-                connector_type TEXT NOT NULL,
-                event_type TEXT NOT NULL,
-                event_payload JSONB DEFAULT '{}'::jsonb,
-                event_time TIMESTAMPTZ NOT NULL,
-                created_at TIMESTAMPTZ DEFAULT NOW()
-            )
-        """))
-
-        # Preserve richer canonical trade ingestion data without breaking existing readers.
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS connector_type TEXT"))
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS open_time TIMESTAMPTZ"))
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS fees DOUBLE PRECISION"))
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS tags JSONB DEFAULT '[]'::jsonb"))
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS source_metadata JSONB DEFAULT '{}'::jsonb"))
-        await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS import_provenance JSONB DEFAULT '{}'::jsonb"))
 
 
 async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:

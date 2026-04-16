@@ -26,6 +26,7 @@ if "jwt" not in sys.modules:
 
 from app.main import app
 from app.services.connector_ingest import compute_account_key
+from app.services import connector_ingest as ci
 
 
 def post_json(path: str, payload: dict):
@@ -182,3 +183,137 @@ def test_account_key_dedup_behavior():
     m1 = compute_account_key("manual", "u-1", "journal-default")
     m2 = compute_account_key("manual", "u-2", "journal-default")
     assert m1 != m2
+
+
+def test_ensure_connector_tables_fresh_db_ordering(monkeypatch):
+    executed_sql = []
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            executed_sql.append(sql)
+            if "SELECT id, connector_type, user_id, external_account_id" in sql:
+                return FakeResult()
+            return FakeResult()
+
+    class FakeBegin:
+        def __init__(self):
+            self.conn = FakeConn()
+
+        async def __aenter__(self):
+            return self.conn
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    asyncio.run(ci.ensure_connector_tables())
+
+    joined = "\n".join(executed_sql)
+    assert "CREATE TABLE IF NOT EXISTS account_snapshots" in joined
+    assert "CREATE TABLE IF NOT EXISTS positions" in joined
+    assert "CREATE TABLE IF NOT EXISTS connector_events" in joined
+
+    idx_create_snapshots = joined.index("CREATE TABLE IF NOT EXISTS account_snapshots")
+    idx_rewire_snapshots = joined.index("UPDATE account_snapshots s")
+    assert idx_create_snapshots < idx_rewire_snapshots
+
+    idx_create_positions = joined.index("CREATE TABLE IF NOT EXISTS positions")
+    idx_rewire_positions = joined.index("UPDATE positions p")
+    assert idx_create_positions < idx_rewire_positions
+
+    idx_create_events = joined.index("CREATE TABLE IF NOT EXISTS connector_events")
+    idx_rewire_events = joined.index("UPDATE connector_events e")
+    assert idx_create_events < idx_rewire_events
+
+
+def test_ensure_connector_tables_drops_legacy_position_uniqueness(monkeypatch):
+    executed_sql = []
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def all(self):
+            return []
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            executed_sql.append(sql)
+            return FakeResult()
+
+    class FakeBegin:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    asyncio.run(ci.ensure_connector_tables())
+    joined = "\n".join(executed_sql)
+    assert "DROP CONSTRAINT IF EXISTS positions_trading_account_id_symbol_side_key" in joined
+    assert "CREATE UNIQUE INDEX IF NOT EXISTS positions_account_position_key_uq" in joined
+
+
+def test_same_symbol_side_positions_get_distinct_position_keys(monkeypatch):
+    seen_params = []
+
+    async def fake_upsert(_payload):
+        return {"id": 7}
+
+    class FakeResult:
+        rowcount = 1
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            if params:
+                seen_params.append(params)
+            return FakeResult()
+
+    class FakeBegin:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(ci, "upsert_trading_account", fake_upsert)
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+
+    k1 = asyncio.run(ci.ingest_position({
+        "connector_type": "fundingpips_extension",
+        "external_account_id": "1917136",
+        "symbol": "US30",
+        "side": "buy",
+        "opened_at": "2026-04-16T10:00:00Z",
+    }))
+    k2 = asyncio.run(ci.ingest_position({
+        "connector_type": "fundingpips_extension",
+        "external_account_id": "1917136",
+        "symbol": "US30",
+        "side": "buy",
+        "opened_at": "2026-04-16T10:01:00Z",
+    }))
+    assert k1 != k2
+    assert seen_params[0]["position_key"] != seen_params[1]["position_key"]

@@ -37,6 +37,7 @@ TaliTrade now uses a connector-first ingestion layer. The FundingPips extension 
 - Safe stale-position handling (`is_active`, `last_seen_at`, `closed_at`) with guarded deactivation logic.
 - Snapshot insert throttling by short dedupe window when values are unchanged.
 - Richer normalized trade persistence (`connector_type`, `open_time`, `fees`, `tags`, `source_metadata`, `import_provenance`).
+- Phase 2.5 blocker fix: startup-safe connector table initialization ordering and `position_key`-first position identity (legacy symbol/side uniqueness removed).
 
 ## Canonical production assumptions
 - Telegram bot username: `TaliTradeBot`
