@@ -16,6 +16,7 @@ import {
   USER_STORAGE_KEY,
 } from './sessionAuth'
 import { formatSyncRunDiagnostics } from './syncRunDiagnostics'
+import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connectorConfig'
 
 const API = 'https://trading-platform-production-70e0.up.railway.app'
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
@@ -33,6 +34,7 @@ function App() {
   const [csvInput, setCsvInput] = useState('[{"symbol":"US30","side":"buy","open_time":"2026-04-16T10:00:00Z","close_time":"2026-04-16T10:10:00Z","pnl":18}]')
   const [csvAccount, setCsvAccount] = useState('csv-account-1')
   const [connectorDrafts, setConnectorDrafts] = useState({})
+  const [configDrafts, setConfigDrafts] = useState({})
   const [syncHistory, setSyncHistory] = useState({})
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
@@ -210,6 +212,20 @@ function App() {
       setCatalog(catalogRes.data.connectors || [])
       const overviewConnectors = overviewRes.data.connectors || []
       setConnectors(overviewConnectors)
+      const configEntries = await Promise.all(
+        overviewConnectors.map(async (connector) => {
+          try {
+            const configRes = await axios.get(
+              `${API}/connectors/${connector.connector_type}/config`,
+              { headers: buildAuthHeaders(token) }
+            )
+            return [connector.connector_type, buildConnectorConfigDraft(configRes.data || {})]
+          } catch {
+            return [connector.connector_type, buildConnectorConfigDraft()]
+          }
+        })
+      )
+      setConfigDrafts((prev) => ({ ...prev, ...Object.fromEntries(configEntries) }))
       if (overviewConnectors.length > 0) {
         const historyEntries = await Promise.all(
           overviewConnectors.map(async (connector) => {
@@ -278,6 +294,42 @@ function App() {
       await loadConnectorData({ silent: true })
     } catch (e) {
       setStatus(`${sourceLabel(connectorType)} ${action} failed: ${e.message}`)
+    }
+  }
+
+  async function saveConnectorConfig(connectorType) {
+    const draft = configDrafts[connectorType] || buildConnectorConfigDraft()
+    try {
+      await axios.put(`${API}/connectors/${connectorType}/config`, {
+        non_secret_config: {
+          healthcheck_url: draft.healthcheck_url,
+          external_account_id: draft.external_account_id,
+          timeout_seconds: Number(draft.timeout_seconds || 8),
+        },
+        secret_config: draft.api_token ? { api_token: draft.api_token } : {},
+      }, { headers: authHeaders })
+      setStatus(`${sourceLabel(connectorType)} config saved`)
+      setConfigDrafts((prev) => ({
+        ...prev,
+        [connectorType]: { ...prev[connectorType], api_token: '', hasSecret: true },
+      }))
+      await loadConnectorData({ silent: true })
+    } catch (e) {
+      setStatus(`${sourceLabel(connectorType)} config save failed: ${e.message}`)
+    }
+  }
+
+  async function clearConnectorConfig(connectorType) {
+    try {
+      await axios.delete(`${API}/connectors/${connectorType}/config`, { headers: authHeaders })
+      setStatus(`${sourceLabel(connectorType)} config cleared`)
+      setConfigDrafts((prev) => ({
+        ...prev,
+        [connectorType]: buildConnectorConfigDraft(),
+      }))
+      await loadConnectorData({ silent: true })
+    } catch (e) {
+      setStatus(`${sourceLabel(connectorType)} config clear failed: ${e.message}`)
     }
   }
 
@@ -358,6 +410,10 @@ function App() {
             <div className="meta">
               Sync state: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
             </div>
+            <div className="meta">
+              Config: {connectorConfigStateLabel(connector)} {connector.configured_secret_fields?.length ? `· secret fields: ${connector.configured_secret_fields.join(', ')}` : ''}
+            </div>
+            {connector.config_validation_error ? <p className="error-text">Config issue: {connector.config_validation_error}</p> : null}
             {connector.last_error ? <p className="error-text">Last error: {connector.last_error} ({formatDate(connector.last_error_at)})</p> : null}
             <ul>
               {connector.accounts.map((account) => (
@@ -435,6 +491,64 @@ function App() {
                 ))}
               </ul>
             </details>
+            {connector.supports_live_sync ? (
+              <details>
+                <summary>Connector credentials/config</summary>
+                <div className="row">
+                  <input
+                    placeholder="Healthcheck URL"
+                    value={(configDrafts[connector.connector_type] || {}).healthcheck_url || ''}
+                    onChange={(e) => setConfigDrafts((prev) => ({
+                      ...prev,
+                      [connector.connector_type]: {
+                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
+                        healthcheck_url: e.target.value,
+                      },
+                    }))}
+                  />
+                  <input
+                    placeholder="External account id"
+                    value={(configDrafts[connector.connector_type] || {}).external_account_id || ''}
+                    onChange={(e) => setConfigDrafts((prev) => ({
+                      ...prev,
+                      [connector.connector_type]: {
+                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
+                        external_account_id: e.target.value,
+                      },
+                    }))}
+                  />
+                  <input
+                    type="number"
+                    placeholder="Timeout seconds"
+                    value={(configDrafts[connector.connector_type] || {}).timeout_seconds || 8}
+                    onChange={(e) => setConfigDrafts((prev) => ({
+                      ...prev,
+                      [connector.connector_type]: {
+                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
+                        timeout_seconds: e.target.value,
+                      },
+                    }))}
+                  />
+                </div>
+                <div className="row">
+                  <input
+                    type="password"
+                    placeholder={(configDrafts[connector.connector_type] || {}).hasSecret ? 'API token saved (enter to rotate)' : 'API token'}
+                    value={(configDrafts[connector.connector_type] || {}).api_token || ''}
+                    onChange={(e) => setConfigDrafts((prev) => ({
+                      ...prev,
+                      [connector.connector_type]: {
+                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
+                        api_token: e.target.value,
+                      },
+                    }))}
+                  />
+                  <button disabled={!signedIn} onClick={() => saveConnectorConfig(connector.connector_type)}>Save config</button>
+                  <button disabled={!signedIn} onClick={() => clearConnectorConfig(connector.connector_type)}>Clear config</button>
+                </div>
+                <p className="hint">Secrets are write-only in API responses. Saved tokens are never returned to the client.</p>
+              </details>
+            ) : null}
           </div>
         ))}
       </section>
