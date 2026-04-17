@@ -17,8 +17,8 @@ import {
 } from './sessionAuth'
 import { formatSyncRunDiagnostics } from './syncRunDiagnostics'
 import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connectorConfig'
+import { buildApiUrl } from './apiBase'
 
-const API = 'https://trading-platform-production-70e0.up.railway.app'
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
 const CANONICAL_HOST = 'www.talitrade.com'
 
@@ -162,12 +162,18 @@ function App() {
   const syncStateLabel = (state) => state || 'idle'
 
   async function loadTelegramAuthConfig() {
+    const requestUrl = buildApiUrl('/auth/telegram/config')
     try {
-      const res = await axios.get(`${API}/auth/telegram/config`)
+      const res = await axios.get(requestUrl, { withCredentials: true })
+      if (!res?.data || typeof res.data !== 'object') {
+        throw new Error(`invalid_json url=${requestUrl}`)
+      }
       setTelegramConfig(res.data || null)
-    } catch {
+    } catch (error) {
       setTelegramConfig(null)
-      setWidgetStatus('Could not load Telegram config (/auth/telegram/config). Login may fail.')
+      const status = error?.response?.status
+      const reason = status === 404 ? 'http_404' : status ? `http_${status}` : 'network_or_cors'
+      setWidgetStatus(`Could not load Telegram config (${requestUrl}) reason=${reason}. Login may fail.`)
     }
   }
 
@@ -185,7 +191,7 @@ function App() {
   async function bootstrapSession(token) {
     setIsBootstrapping(true)
     try {
-      const meRes = await axios.get(`${API}/auth/me`, { headers: buildAuthHeaders(token) })
+      const meRes = await axios.get(buildApiUrl('/auth/me'), { headers: buildAuthHeaders(token) })
       const user = normalizeSessionUser(meRes.data?.user)
       if (!canHydrateSession(meRes.data)) throw new Error('No authenticated user found in session')
       commitSession(token, user)
@@ -219,7 +225,7 @@ function App() {
 
   async function signInWithTelegramWidget(authData) {
     try {
-      const res = await axios.post(`${API}/auth/telegram`, authData)
+      const res = await axios.post(buildApiUrl('/auth/telegram'), authData)
       const user = normalizeSessionUser(res.data?.user)
       const token = res.data?.access_token || ''
       if (!token || !user?.telegram_user_id) throw new Error('Telegram auth returned no session token')
@@ -234,7 +240,7 @@ function App() {
   async function signInWithOidcToken(idToken, nonce = null) {
     setIsBootstrapping(true)
     try {
-      const res = await axios.post(`${API}/auth/telegram/oidc`, { id_token: idToken, nonce })
+      const res = await axios.post(buildApiUrl('/auth/telegram/oidc'), { id_token: idToken, nonce })
       const user = normalizeSessionUser(res.data?.user)
       const token = res.data?.access_token || ''
       if (!token || !user?.telegram_user_id) throw new Error('Telegram OIDC returned no session token')
@@ -252,8 +258,8 @@ function App() {
   async function loadConnectorData({ token = sessionToken, silent = false } = {}) {
     try {
       const [catalogRes, overviewRes] = await Promise.all([
-        axios.get(`${API}/connectors/catalog`),
-        axios.get(`${API}/connectors/overview`, { headers: buildAuthHeaders(token) })
+        axios.get(buildApiUrl('/connectors/catalog')),
+        axios.get(buildApiUrl('/connectors/overview'), { headers: buildAuthHeaders(token) })
       ])
       setCatalog(catalogRes.data.connectors || [])
       const overviewConnectors = overviewRes.data.connectors || []
@@ -262,7 +268,7 @@ function App() {
         overviewConnectors.map(async (connector) => {
           try {
             const configRes = await axios.get(
-              `${API}/connectors/${connector.connector_type}/config`,
+              buildApiUrl(`/connectors/${connector.connector_type}/config`),
               { headers: buildAuthHeaders(token) }
             )
             return [connector.connector_type, buildConnectorConfigDraft(configRes.data || {})]
@@ -277,7 +283,7 @@ function App() {
           overviewConnectors.map(async (connector) => {
             try {
               const historyRes = await axios.get(
-                `${API}/connectors/${connector.connector_type}/sync-runs?limit=5`,
+                buildApiUrl(`/connectors/${connector.connector_type}/sync-runs?limit=5`),
                 { headers: buildAuthHeaders(token) }
               )
               return [connector.connector_type, historyRes.data?.runs || []]
@@ -303,7 +309,7 @@ function App() {
 
   async function createManualAccount() {
     try {
-      await axios.post(`${API}/ingest/accounts`, buildManualAccountPayload(manualAccount), { headers: authHeaders })
+      await axios.post(buildApiUrl('/ingest/accounts'), buildManualAccountPayload(manualAccount), { headers: authHeaders })
       setStatus('Manual account created for authenticated user')
       setManualTrade((prev) => ({ ...prev, externalAccountId: manualAccount.externalAccountId }))
       await loadConnectorData()
@@ -314,7 +320,7 @@ function App() {
 
   async function createManualTrade() {
     try {
-      await axios.post(`${API}/ingest/trades`, buildManualTradePayload(manualTrade), { headers: authHeaders })
+      await axios.post(buildApiUrl('/ingest/trades'), buildManualTradePayload(manualTrade), { headers: authHeaders })
       setStatus('Manual trade recorded for authenticated user')
       await loadConnectorData()
     } catch (e) {
@@ -325,7 +331,7 @@ function App() {
   async function importCsvTrades() {
     try {
       const rows = JSON.parse(csvInput)
-      await axios.post(`${API}/ingest/csv/trades`, buildCsvImportPayload(csvAccount, rows), { headers: authHeaders })
+      await axios.post(buildApiUrl('/ingest/csv/trades'), buildCsvImportPayload(csvAccount, rows), { headers: authHeaders })
       setStatus(`Imported ${rows.length} CSV trade row(s) into authenticated workspace`)
       await loadConnectorData()
     } catch (e) {
@@ -335,7 +341,7 @@ function App() {
 
   async function connectorAction(connectorType, action, payload = {}) {
     try {
-      await axios.post(`${API}/connectors/${connectorType}/${action}`, payload, { headers: authHeaders })
+      await axios.post(buildApiUrl(`/connectors/${connectorType}/${action}`), payload, { headers: authHeaders })
       setStatus(`${sourceLabel(connectorType)} ${action} action completed`)
       await loadConnectorData({ silent: true })
     } catch (e) {
@@ -346,7 +352,7 @@ function App() {
   async function saveConnectorConfig(connectorType) {
     const draft = configDrafts[connectorType] || buildConnectorConfigDraft()
     try {
-      await axios.put(`${API}/connectors/${connectorType}/config`, {
+      await axios.put(buildApiUrl(`/connectors/${connectorType}/config`), {
         non_secret_config: {
           healthcheck_url: draft.healthcheck_url,
           external_account_id: draft.external_account_id,
@@ -367,7 +373,7 @@ function App() {
 
   async function clearConnectorConfig(connectorType) {
     try {
-      await axios.delete(`${API}/connectors/${connectorType}/config`, { headers: authHeaders })
+      await axios.delete(buildApiUrl(`/connectors/${connectorType}/config`), { headers: authHeaders })
       setStatus(`${sourceLabel(connectorType)} config cleared`)
       setConfigDrafts((prev) => ({
         ...prev,
