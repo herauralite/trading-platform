@@ -1,24 +1,33 @@
-import uuid
 import os
+import uuid
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import JWTError, jwt
 from pydantic import BaseModel
-from jose import jwt, JWTError
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.core.database import get_db
 from app.models.linked_account import LinkedAccount
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 security = HTTPBearer()
 
-SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 
 
+def _get_required_env(name: str) -> str:
+    value = os.getenv(name, "").strip()
+    if not value:
+        raise HTTPException(status_code=500, detail=f"Missing required auth configuration: {name}")
+    return value
+
+
 def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    secret_key = _get_required_env("SECRET_KEY")
     try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(credentials.credentials, secret_key, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
         if not user_id:
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -41,12 +50,12 @@ class SetPrimaryRequest(BaseModel):
 @router.get("/")
 async def list_accounts(
     user_id: uuid.UUID = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     result = await db.execute(
         select(LinkedAccount).where(
             LinkedAccount.user_id == user_id,
-            LinkedAccount.is_active == True
+            LinkedAccount.is_active == True,
         )
     )
     accounts = result.scalars().all()
@@ -68,7 +77,7 @@ async def list_accounts(
 async def add_account(
     data: AddAccountRequest,
     user_id: uuid.UUID = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
     account = LinkedAccount(
         user_id=user_id,
@@ -87,11 +96,9 @@ async def add_account(
 async def set_primary(
     data: SetPrimaryRequest,
     user_id: uuid.UUID = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ):
-    result = await db.execute(
-        select(LinkedAccount).where(LinkedAccount.user_id == user_id)
-    )
+    result = await db.execute(select(LinkedAccount).where(LinkedAccount.user_id == user_id))
     accounts = result.scalars().all()
     for a in accounts:
         a.is_primary = str(a.id) == data.account_id

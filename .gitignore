@@ -2,7 +2,26 @@ backend/venv/
 frontend/node_modules/
 __pycache__/
 *.pyc
-.env
 *.egg-info/
 dist/
 build/
+
+# Local environment and secrets
+.env
+.env.*
+*.env
+*.env.*
+config.env
+config.env.*
+*.local
+*.secrets
+
+# Session/auth artifacts
+*.session
+*.session-journal
+tdata/
+.telegram/
+telegram-desktop/
+.auth/
+auth_dump*
+token_cache*
