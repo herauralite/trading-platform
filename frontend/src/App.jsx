@@ -165,7 +165,7 @@ function App() {
     const resolvedBase = resolveApiBase()
     const requestUrl = buildApiUrl('/auth/telegram/config')
     try {
-      const res = await axios.get(requestUrl, { withCredentials: true })
+      const res = await axios.get(requestUrl, { withCredentials: true, timeout: 8000 })
       if (!res?.data || typeof res.data !== 'object') {
         throw new SyntaxError(`invalid_json url=${requestUrl}`)
       }
@@ -173,13 +173,20 @@ function App() {
     } catch (error) {
       setTelegramConfig(null)
       const status = error?.response?.status
+      const code = error?.code
       const reason = status === 404
         ? 'http_404'
+        : status === 500
+          ? 'http_500'
         : status
           ? `http_${status}`
+          : code === 'ECONNABORTED'
+            ? 'timeout'
           : error instanceof SyntaxError
             ? 'invalid_json'
-            : 'network_or_cors'
+            : (typeof navigator !== 'undefined' && navigator.onLine === false)
+              ? 'transport_offline'
+              : 'cors_rejected_or_transport'
       setWidgetStatus(`Could not load Telegram config. api_base=${resolvedBase} url=${requestUrl} reason=${reason}. Login may fail.`)
     }
   }

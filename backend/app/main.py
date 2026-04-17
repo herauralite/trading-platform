@@ -22,6 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from app.core.config import settings, normalize_origin
 from app.services.connector_ingest import (
     SYNC_WORKER_ID,
     clear_connector_config,
@@ -63,20 +64,7 @@ logger = logging.getLogger(__name__)
 
 RAILWAY_URL     = "https://trading-platform-production-70e0.up.railway.app"
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
-
-
-def parse_allowed_origins(raw: str | None) -> list[str]:
-    default_origins = [
-        "https://www.talitrade.com",
-        "https://talitrade.com",
-        "https://mtr-platform.fundingpips.com",
-        "https://app.fundingpips.com",
-    ]
-    configured = [item.strip() for item in str(raw or "").split(",") if item.strip()]
-    return configured or default_origins
-
-
-FRONTEND_ALLOWED_ORIGINS = parse_allowed_origins(os.getenv("FRONTEND_ALLOWED_ORIGINS"))
+FRONTEND_ALLOWED_ORIGINS = settings.FRONTEND_ALLOWED_ORIGINS
 
 # How long live data stays valid — if the extension hasn't polled in this window
 # we treat the account as offline rather than serving stale values.
@@ -1293,12 +1281,18 @@ logger.info(
     telegram_auth_mode(),
     resolved_oidc_authorize_host() or "none",
 )
+logger.info("CORS allow_origins resolved: %s", FRONTEND_ALLOWED_ORIGINS)
 if ".co" in TELEGRAM_LOGIN_DOMAIN and ".com" not in TELEGRAM_LOGIN_DOMAIN:
     logger.warning(
         "Telegram login domain may be incorrect (possible .co/.com mismatch): raw=%s normalized=%s",
         TELEGRAM_LOGIN_DOMAIN_RAW,
         TELEGRAM_LOGIN_DOMAIN,
     )
+
+
+def is_frontend_origin_allowed(origin: str | None) -> bool:
+    normalized = normalize_origin(origin)
+    return bool(normalized and normalized in FRONTEND_ALLOWED_ORIGINS)
 
 
 @app.get("/health")
@@ -1397,35 +1391,64 @@ async def demo_leaderboard(limit: int = 10):
 @app.get("/auth/telegram/config")
 async def telegram_auth_config(request: Request):
     """Expose canonical Telegram auth config used by the frontend."""
-    mode = telegram_auth_mode()
     request_origin = request.headers.get("origin", "")
     request_host = request.headers.get("host", "")
     frontend_host = normalize_hostname(request_origin or request_host, "")
+    origin_allowed = is_frontend_origin_allowed(request_origin)
+    mode = telegram_auth_mode()
     authorize_host = resolved_oidc_authorize_host()
-    logger.info(
-        "Telegram config request: bot_username=%s login_domain=%s auth_mode=%s frontend_host=%s oidc_authorize_host=%s",
-        TELEGRAM_BOT_USERNAME,
-        TELEGRAM_LOGIN_DOMAIN,
-        mode,
-        frontend_host or "unknown",
-        authorize_host or "none",
-    )
-    return {
-        "authMode": mode,
-        "botUsername": TELEGRAM_BOT_USERNAME,
-        "canonicalBotUsername": TELEGRAM_BOT_USERNAME,
-        "botUsernameMatchesCanonical": True,
-        "loginDomain": TELEGRAM_LOGIN_DOMAIN,
-        "canonicalLoginDomain": TELEGRAM_LOGIN_DOMAIN,
-        "loginDomainMatchesCanonical": True,
-        "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
-        "oidcEnabled": mode == "oidc",
-        "oidcClientId": TELEGRAM_OIDC_CLIENT_ID,
-        "oidcAuthorizeUrl": TELEGRAM_OIDC_AUTHORIZE_URL,
-        "oidcAuthorizeHost": authorize_host,
-        "oidcIssuer": TELEGRAM_OIDC_ISSUER,
-        "oidcScopes": ["openid", "profile"],
-    }
+    try:
+        payload = {
+            "authMode": mode,
+            "botUsername": TELEGRAM_BOT_USERNAME,
+            "canonicalBotUsername": TELEGRAM_BOT_USERNAME,
+            "botUsernameMatchesCanonical": True,
+            "loginDomain": TELEGRAM_LOGIN_DOMAIN,
+            "canonicalLoginDomain": TELEGRAM_LOGIN_DOMAIN,
+            "loginDomainMatchesCanonical": True,
+            "hasBotToken": bool(os.getenv("TELEGRAM_BOT_TOKEN", "")),
+            "oidcEnabled": mode == "oidc",
+            "oidcClientId": TELEGRAM_OIDC_CLIENT_ID,
+            "oidcAuthorizeUrl": TELEGRAM_OIDC_AUTHORIZE_URL,
+            "oidcAuthorizeHost": authorize_host,
+            "oidcIssuer": TELEGRAM_OIDC_ISSUER,
+            "oidcScopes": ["openid", "profile"],
+        }
+        logger.info(
+            "Telegram config request served: origin=%s origin_allowed=%s auth_mode=%s frontend_host=%s oidc_authorize_host=%s has_bot_token=%s login_domain=%s status=200",
+            request_origin or "none",
+            origin_allowed,
+            mode,
+            frontend_host or "unknown",
+            authorize_host or "none",
+            payload["hasBotToken"],
+            TELEGRAM_LOGIN_DOMAIN,
+        )
+        return JSONResponse(
+            status_code=200,
+            content=payload,
+            headers={
+                "X-Tali-Auth-Mode": mode,
+                "X-Tali-Config-Version": "2026-04-17",
+            },
+        )
+    except Exception as exc:
+        logger.exception(
+            "Telegram config request failed: origin=%s origin_allowed=%s auth_mode=%s frontend_host=%s status=500 error=%s",
+            request_origin or "none",
+            origin_allowed,
+            mode,
+            frontend_host or "unknown",
+            exc.__class__.__name__,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "telegram_config_unavailable"},
+            headers={
+                "X-Tali-Auth-Mode": mode,
+                "X-Tali-Config-Version": "2026-04-17",
+            },
+        )
 
 
 class TelegramAuthData(BaseModel):
