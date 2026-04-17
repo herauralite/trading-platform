@@ -2,6 +2,7 @@ import os
 import sys
 import types
 import asyncio
+from datetime import datetime, timedelta, timezone
 import httpx
 import pytest
 
@@ -480,6 +481,116 @@ def test_connector_sync_runs_route_authenticated(monkeypatch):
     assert resp.json()["runs"][0]["status"] == "succeeded"
 
 
+def test_perform_fundingpips_sync_returns_structured_summary(monkeypatch):
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+        def first(self):
+            return self._rows[0] if self._rows else None
+
+    class FakeConn:
+        async def execute(self, stmt, _params=None):
+            sql = str(stmt)
+            if "FROM trading_accounts ta" in sql:
+                return FakeResult([{
+                    "id": 1,
+                    "external_account_id": "fp-1",
+                    "display_label": "FundingPips One",
+                    "last_snapshot_at": datetime.now(timezone.utc),
+                    "open_positions": 2,
+                }])
+            if "FROM trades" in sql:
+                return FakeResult([{"total": 4}])
+            if "FROM connector_events" in sql:
+                return FakeResult([{"total": 1}])
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    result = asyncio.run(ci._perform_connector_sync({
+        "id": 10,
+        "user_id": "u1",
+        "connector_type": "fundingpips_extension",
+    }))
+    assert result["result_category"] == "connector_sync_summary"
+    assert result["counts"]["accounts_total"] == 1
+    assert result["counts"]["accounts_fresh"] == 1
+    assert result["counts"]["trades_24h"] == 4
+
+
+def test_perform_fundingpips_sync_stale_data_raises_structured_error(monkeypatch):
+    stale_snapshot = datetime.now(timezone.utc) - timedelta(hours=2)
+
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+        def first(self):
+            return self._rows[0] if self._rows else None
+
+    class FakeConn:
+        async def execute(self, stmt, _params=None):
+            sql = str(stmt)
+            if "FROM trading_accounts ta" in sql:
+                return FakeResult([{
+                    "id": 1,
+                    "external_account_id": "fp-1",
+                    "display_label": "FundingPips One",
+                    "last_snapshot_at": stale_snapshot,
+                    "open_positions": 0,
+                }])
+            if "FROM trades" in sql:
+                return FakeResult([{"total": 0}])
+            if "FROM connector_events" in sql:
+                return FakeResult([{"total": 0}])
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    with pytest.raises(ci.ConnectorSyncError) as exc:
+        asyncio.run(ci._perform_connector_sync({
+            "id": 10,
+            "user_id": "u1",
+            "connector_type": "fundingpips_extension",
+        }))
+    assert exc.value.code == "stale_source_data"
+    assert exc.value.category == "source_staleness"
+    assert exc.value.transient is True
+
+
 def test_execute_connector_sync_run_retries_then_fails(monkeypatch):
     updates = []
     lifecycle_updates = []
@@ -537,6 +648,66 @@ def test_execute_connector_sync_run_retries_then_fails(monkeypatch):
     assert updates[1][1]["retry_count"] == 1
     assert updates[1][1]["next_retry_at"] is not None
     assert lifecycle_updates[-1]["status"] == "sync_retrying"
+
+
+def test_execute_connector_sync_run_non_transient_errors_fail_without_retry(monkeypatch):
+    updates = []
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {
+                "id": 43,
+                "user_id": "u1",
+                "connector_type": "fundingpips_extension",
+                "status": "running",
+                "max_retries": 2,
+                "retry_count": 0,
+                "lease_owner": "worker-1",
+            }
+
+    class FakeConn:
+        async def execute(self, _stmt, _params=None):
+            return FakeResult()
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    async def fake_set_status(run_id, **kwargs):
+        updates.append((run_id, kwargs))
+        return {"id": run_id, "status": kwargs["status"], "result_detail": kwargs.get("result_detail")}
+
+    async def fake_lifecycle(**kwargs):
+        return kwargs
+
+    async def fake_perform(_run):
+        raise ci.ConnectorSyncError(
+            "Manual connector cannot execute remote sync",
+            code="unsupported_live_sync_connector",
+            category="not_supported",
+            transient=False,
+            status_detail="Unsupported for this connector",
+        )
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    monkeypatch.setattr(ci, "_set_sync_run_status", fake_set_status)
+    monkeypatch.setattr(ci, "upsert_connector_lifecycle", fake_lifecycle)
+    monkeypatch.setattr(ci, "_perform_connector_sync", fake_perform)
+
+    result = asyncio.run(ci.execute_connector_sync_run(43, worker_id="worker-1"))
+    assert result["status"] == "failed"
+    assert [u[1]["status"] for u in updates] == ["running", "failed"]
+    assert updates[1][1]["result_detail"]["error_code"] == "unsupported_live_sync_connector"
 
 
 def test_run_connector_sync_once_claims_and_executes(monkeypatch):

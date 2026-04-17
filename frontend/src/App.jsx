@@ -15,6 +15,7 @@ import {
   SESSION_STORAGE_KEY,
   USER_STORAGE_KEY,
 } from './sessionAuth'
+import { formatSyncRunDiagnostics } from './syncRunDiagnostics'
 
 const API = 'https://trading-platform-production-70e0.up.railway.app'
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
@@ -415,8 +416,21 @@ function App() {
               <ul>
                 {(syncHistory[connector.connector_type] || []).map((run) => (
                   <li key={`run-${run.id}`}>
-                    #{run.id} · {run.status} · retries {run.retry_count}/{run.max_retries} · created {formatDate(run.created_at)}
-                    {run.error_detail ? ` · error: ${run.error_detail}` : ''}
+                    {(() => {
+                      const diag = formatSyncRunDiagnostics(run)
+                      return (
+                        <>
+                          #{run.id} · {run.status} · retries {run.retry_count}/{run.max_retries} · created {formatDate(run.created_at)}
+                          {diag.resultCategory ? ` · category: ${diag.resultCategory}` : ''}
+                          {diag.summary ? ` · ${diag.summary}` : ''}
+                          {run.error_detail ? ` · error: ${run.error_detail}` : ''}
+                          {diag.errorCode ? ` · code: ${diag.errorCode}` : ''}
+                          {diag.errorCategory ? ` · failure: ${diag.errorCategory}` : ''}
+                          {diag.isTransient === true ? ' · transient' : ''}
+                          {diag.isTransient === false ? ' · structural' : ''}
+                        </>
+                      )
+                    })()}
                   </li>
                 ))}
               </ul>

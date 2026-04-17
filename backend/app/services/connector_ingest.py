@@ -21,6 +21,39 @@ SYNC_RUN_RETRY_DELAYS_SECONDS = [2, 5]
 SYNC_RUN_LEASE_SECONDS = 300
 SYNC_WORKER_IDLE_POLL_SECONDS = 1.0
 SYNC_WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
+FUNDINGPIPS_SYNC_FRESHNESS_SLA_MINUTES = 15
+
+
+class ConnectorSyncError(RuntimeError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        category: str,
+        transient: bool,
+        status_detail: str | None = None,
+        source_summary: dict[str, Any] | None = None,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.category = category
+        self.transient = transient
+        self.status_detail = status_detail or message
+        self.source_summary = source_summary or {}
+        self.diagnostics = diagnostics or {}
+
+    def to_result_detail(self) -> dict[str, Any]:
+        return {
+            "result_category": "error",
+            "error_code": self.code,
+            "error_category": self.category,
+            "is_transient": self.transient,
+            "status_detail": self.status_detail,
+            "source_summary": self.source_summary,
+            "diagnostics": self.diagnostics,
+        }
 
 
 def _normalize_connector(value: str | None) -> str:
@@ -460,22 +493,134 @@ async def get_latest_connector_sync_run(user_id: str, connector_type: str) -> di
     return rows[0] if rows else None
 
 
+async def _perform_fundingpips_sync(run: dict[str, Any]) -> dict[str, Any]:
+    async with engine.connect() as conn:
+        account_rows = (await conn.execute(text("""
+            SELECT
+                ta.id,
+                ta.external_account_id,
+                ta.display_label,
+                MAX(s.snapshot_time) AS last_snapshot_at,
+                COUNT(*) FILTER (WHERE p.is_active = TRUE) AS open_positions
+            FROM trading_accounts ta
+            LEFT JOIN account_snapshots s ON s.trading_account_id = ta.id
+            LEFT JOIN positions p ON p.trading_account_id = ta.id
+            WHERE ta.user_id = :uid
+              AND ta.connector_type = :connector
+              AND ta.is_active = TRUE
+            GROUP BY ta.id, ta.external_account_id, ta.display_label
+            ORDER BY ta.id
+        """), {"uid": run["user_id"], "connector": run["connector_type"]})).mappings().all()
+        trades_row = (await conn.execute(text("""
+            SELECT COUNT(*) AS total
+            FROM trades
+            WHERE user_id = :uid
+              AND connector_type = :connector
+              AND close_time >= NOW() - INTERVAL '24 hours'
+        """), {"uid": run["user_id"], "connector": run["connector_type"]})).mappings().first()
+        event_row = (await conn.execute(text("""
+            SELECT COUNT(*) AS total
+            FROM connector_events
+            WHERE user_id = :uid
+              AND connector_type = :connector
+              AND event_time >= NOW() - INTERVAL '24 hours'
+        """), {"uid": run["user_id"], "connector": run["connector_type"]})).mappings().first()
+
+    accounts = [dict(row) for row in account_rows]
+    if not accounts:
+        raise ConnectorSyncError(
+            "No active FundingPips accounts available for sync",
+            code="no_active_accounts",
+            category="configuration",
+            transient=False,
+            status_detail="No active FundingPips accounts are linked for this user.",
+            source_summary={"connector_mode": "extension_push"},
+        )
+
+    now = datetime.now(timezone.utc)
+    freshness_sla = timedelta(minutes=FUNDINGPIPS_SYNC_FRESHNESS_SLA_MINUTES)
+    fresh_accounts = 0
+    stale_accounts: list[dict[str, Any]] = []
+    total_open_positions = 0
+    freshest_snapshot_at = None
+
+    for account in accounts:
+        snapshot_at = _parse_dt(account.get("last_snapshot_at"))
+        open_positions = int(account.get("open_positions") or 0)
+        total_open_positions += open_positions
+        if snapshot_at and (freshest_snapshot_at is None or snapshot_at > freshest_snapshot_at):
+            freshest_snapshot_at = snapshot_at
+        is_fresh = bool(snapshot_at and (now - snapshot_at) <= freshness_sla)
+        if is_fresh:
+            fresh_accounts += 1
+            continue
+        stale_for_minutes = int((now - snapshot_at).total_seconds() // 60) if snapshot_at else None
+        stale_accounts.append({
+            "account_id": account["external_account_id"],
+            "display_label": account.get("display_label"),
+            "last_snapshot_at": snapshot_at.isoformat() if snapshot_at else None,
+            "stale_for_minutes": stale_for_minutes,
+            "open_positions": open_positions,
+        })
+
+    counts = {
+        "accounts_total": len(accounts),
+        "accounts_fresh": fresh_accounts,
+        "accounts_stale": len(stale_accounts),
+        "open_positions": total_open_positions,
+        "trades_24h": int((trades_row or {}).get("total") or 0),
+        "events_24h": int((event_row or {}).get("total") or 0),
+    }
+    source_summary = {
+        "connector_mode": "extension_push",
+        "freshness_sla_minutes": FUNDINGPIPS_SYNC_FRESHNESS_SLA_MINUTES,
+        "freshest_snapshot_at": freshest_snapshot_at.isoformat() if freshest_snapshot_at else None,
+        "stale_account_ids": [a["account_id"] for a in stale_accounts],
+    }
+    if fresh_accounts == 0:
+        raise ConnectorSyncError(
+            "FundingPips account data is stale; no recent snapshots were observed",
+            code="stale_source_data",
+            category="source_staleness",
+            transient=True,
+            status_detail="No FundingPips accounts have recent snapshots. Ensure the extension is online and connected.",
+            source_summary=source_summary,
+            diagnostics={"counts": counts, "stale_accounts": stale_accounts},
+        )
+
+    return {
+        "result_category": "connector_sync_summary",
+        "connector_type": run["connector_type"],
+        "status_detail": f"FundingPips sync checked {counts['accounts_total']} accounts; {counts['accounts_fresh']} account(s) are fresh.",
+        "counts": counts,
+        "source_summary": source_summary,
+        "warnings": [{
+            "code": "stale_accounts_detected",
+            "status_detail": f"{len(stale_accounts)} account(s) have stale snapshots.",
+            "account_ids": source_summary["stale_account_ids"],
+        }] if stale_accounts else [],
+    }
+
+
 async def _perform_connector_sync(run: dict[str, Any]) -> dict[str, Any]:
     connector = run["connector_type"]
     if connector == "manual":
-        raise RuntimeError("Manual connector cannot execute remote sync")
-    async with engine.connect() as conn:
-        row = (await conn.execute(text("""
-            SELECT COUNT(*) AS total
-            FROM trading_accounts
-            WHERE user_id = :uid
-              AND connector_type = :connector
-              AND is_active = TRUE
-        """), {"uid": run["user_id"], "connector": connector})).mappings().first()
-    count = int(row["total"] or 0)
-    if count == 0:
-        raise RuntimeError("No active accounts available for sync")
-    return {"synced_accounts": count}
+        raise ConnectorSyncError(
+            "Manual connector cannot execute remote sync",
+            code="unsupported_live_sync_connector",
+            category="not_supported",
+            transient=False,
+            status_detail="Manual connector does not support remote sync execution.",
+        )
+    if connector == "fundingpips_extension":
+        return await _perform_fundingpips_sync(run)
+    raise ConnectorSyncError(
+        f"Unsupported live sync connector: {connector}",
+        code="unsupported_live_sync_connector",
+        category="not_supported",
+        transient=False,
+        status_detail=f"No connector-specific sync executor is registered for '{connector}'.",
+    )
 
 
 async def claim_next_connector_sync_run(
@@ -580,8 +725,18 @@ async def execute_connector_sync_run(run_id: int, *, worker_id: str = SYNC_WORKE
         )
         return row
     except Exception as exc:
-        err = str(exc)
-        if attempt < max_retries:
+        sync_error = exc if isinstance(exc, ConnectorSyncError) else ConnectorSyncError(
+            f"Unexpected sync execution failure: {exc}",
+            code="unexpected_exception",
+            category="internal",
+            transient=True,
+            status_detail="Unexpected connector sync failure during execution.",
+            diagnostics={"exception_type": exc.__class__.__name__},
+        )
+        err = str(sync_error)
+        result_detail = sync_error.to_result_detail()
+        should_retry = sync_error.transient and attempt < max_retries
+        if should_retry:
             delay = SYNC_RUN_RETRY_DELAYS_SECONDS[min(attempt, len(SYNC_RUN_RETRY_DELAYS_SECONDS) - 1)]
             retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
             row = await _set_sync_run_status(
@@ -593,6 +748,7 @@ async def execute_connector_sync_run(run_id: int, *, worker_id: str = SYNC_WORKE
                 retry_count=attempt + 1,
                 next_retry_at=retry_at,
                 error_detail=err,
+                result_detail=result_detail,
                 metadata={"last_retry_delay_seconds": delay},
             )
             await upsert_connector_lifecycle(
@@ -616,6 +772,7 @@ async def execute_connector_sync_run(run_id: int, *, worker_id: str = SYNC_WORKE
             retry_count=attempt,
             next_retry_at=None,
             error_detail=err,
+            result_detail=result_detail,
         )
         await upsert_connector_lifecycle(
             user_id=run["user_id"],
