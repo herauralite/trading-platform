@@ -556,13 +556,12 @@ function normalizeTelegramBotUsername(value) {
   return raw.replace(/^@+/, '');
 }
 
-function normalizeLoginHost(value, stripWww = false) {
+function normalizeLoginHost(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
-  const withoutScheme = raw.replace(/^https?:\/\//, '');
-  const hostPart = withoutScheme.split('/')[0].split(':')[0];
+  const withoutScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  const hostPart = withoutScheme.split('/')[0].split('?')[0].split('#')[0].split(':')[0].replace(/\.+$/, '');
   if (!hostPart) return '';
-  if (stripWww && hostPart.startsWith('www.')) return hostPart.slice(4);
   return hostPart;
 }
 
@@ -582,9 +581,9 @@ function randomToken(size = 24) {
 
 function validateTelegramLoginConfig() {
   const issues = [];
-  const currentHost = normalizeLoginHost(window.location.host, true);
-  const canonicalHost = normalizeLoginHost(TALI_LOGIN_CONFIG.canonicalLoginDomain, true);
-  const loginHost = normalizeLoginHost(TALI_LOGIN_CONFIG.loginDomain, true);
+  const currentHost = normalizeLoginHost(window.location.hostname);
+  const canonicalHost = normalizeLoginHost(TALI_LOGIN_CONFIG.canonicalLoginDomain);
+  const loginHost = normalizeLoginHost(TALI_LOGIN_CONFIG.loginDomain);
 
   if (TALI_LOGIN_CONFIG.authMode === 'oidc') {
     if (!TALI_LOGIN_CONFIG.oidcClientId) issues.push('oidc_client_id_missing');
@@ -616,11 +615,23 @@ async function hydrateTelegramWidgetConfig() {
       ...cfg,
       botUsername: normalizeTelegramBotUsername(cfg?.botUsername || cfg?.canonicalBotUsername || TALI_LOGIN_CONFIG.botUsername),
       canonicalBotUsername: normalizeTelegramBotUsername(cfg?.canonicalBotUsername || cfg?.botUsername || TALI_LOGIN_CONFIG.canonicalBotUsername),
-      loginDomain: normalizeLoginHost(cfg?.loginDomain || cfg?.canonicalLoginDomain || TALI_LOGIN_CONFIG.loginDomain, true),
-      canonicalLoginDomain: normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || TALI_LOGIN_CONFIG.canonicalLoginDomain, true),
+      loginDomain: normalizeLoginHost(cfg?.loginDomain || cfg?.canonicalLoginDomain || TALI_LOGIN_CONFIG.loginDomain),
+      canonicalLoginDomain: normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || TALI_LOGIN_CONFIG.canonicalLoginDomain),
     };
     TALI_LOGIN_CONFIG.oidcEnabled = !!cfg?.oidcEnabled;
   } catch (_) {}
+}
+
+function maybeRedirectToCanonicalTelegramHost() {
+  const currentHost = normalizeLoginHost(window.location.hostname);
+  const canonicalHost = normalizeLoginHost(TALI_LOGIN_CONFIG.canonicalLoginDomain || TALI_LOGIN_CONFIG.loginDomain);
+  if (!currentHost || !canonicalHost || currentHost === canonicalHost) return false;
+  if (currentHost === `www.${canonicalHost}`) {
+    const next = `${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.replace(next);
+    return true;
+  }
+  return false;
 }
 
 function parseTelegramAuthFailure(res, body) {
@@ -721,6 +732,7 @@ function renderTelegramLegacyWidget() {
 
 async function showTelegramStep() {
   await hydrateTelegramWidgetConfig();
+  if (maybeRedirectToCanonicalTelegramHost()) return;
   const step2 = document.getElementById('gate-step2');
   step2.style.display = 'block';
   step2.classList.add('visible');
@@ -738,6 +750,13 @@ async function showTelegramStep() {
   }
 
   const mode = TALI_LOGIN_CONFIG.authMode === 'oidc' && TALI_LOGIN_CONFIG.oidcEnabled ? 'oidc' : 'legacy_widget';
+  const oidcAuthorizeHost = normalizeLoginHost(TALI_LOGIN_CONFIG.oidcAuthorizeHost || TALI_LOGIN_CONFIG.oidcAuthorizeUrl || '');
+  console.info('TaliTrade: telegram auth resolved config', {
+    botUsername: TALI_LOGIN_CONFIG.botUsername,
+    loginDomain: TALI_LOGIN_CONFIG.loginDomain,
+    authMode: mode,
+    callbackAuthHost: oidcAuthorizeHost || window.location.hostname,
+  });
   taliStep2RenderedMode = mode;
   if (mode === 'oidc') renderTelegramOidcButton();
   else renderTelegramLegacyWidget();
