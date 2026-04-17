@@ -849,8 +849,43 @@ footer{
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 const RAILWAY_URL = 'https://trading-platform-production-70e0.up.railway.app';
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
-const DEMO_BOT_USERNAME = 'TaliTradeBot';
-const DEMO_BOT_USERNAME_SOURCE = 'hardcoded_canonical'; // must match BotFather @username exactly
+const DEMO_CANONICAL_HOST = 'talitrade.com';
+let DEMO_LOGIN_DOMAIN = DEMO_CANONICAL_HOST;
+let DEMO_BOT_USERNAME = 'TaliTradeBot';
+let DEMO_BOT_USERNAME_SOURCE = 'hardcoded_canonical'; // must match BotFather @username exactly
+let demoTelegramConfigFailed = false;
+
+function normalizeLoginHost(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  const withoutScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  const hostPart = withoutScheme.split('/')[0].split('?')[0].split('#')[0].split(':')[0].replace(/\.+$/, '');
+  return hostPart || '';
+}
+
+function isDemoCanonicalHost() {
+  return normalizeLoginHost(window.location.hostname) === normalizeLoginHost(DEMO_CANONICAL_HOST);
+}
+
+async function hydrateDemoTelegramConfig() {
+  try {
+    const res = await fetch(RAILWAY_URL + '/auth/telegram/config');
+    if (!res.ok) {
+      demoTelegramConfigFailed = true;
+      return;
+    }
+    const cfg = await res.json();
+    const bot = String(cfg?.canonicalBotUsername || cfg?.botUsername || '').replace(/^@+/, '');
+    if (bot) {
+      DEMO_BOT_USERNAME = bot;
+      DEMO_BOT_USERNAME_SOURCE = 'backend_config';
+    }
+    DEMO_LOGIN_DOMAIN = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || DEMO_CANONICAL_HOST) || DEMO_CANONICAL_HOST;
+    demoTelegramConfigFailed = false;
+  } catch (_) {
+    demoTelegramConfigFailed = true;
+  }
+}
 
 // ── Demo leaderboard ──────────────────────────────────────────────────────────
 function fetchDemoLeaderboard(){
@@ -920,10 +955,30 @@ window.onTelegramDemoAuth = function(user){
 };
 
 // Inject Telegram Login Widget into the outcome overlay
-function injectDemoTelegramWidget(){
+async function injectDemoTelegramWidget(){
   const wrap = document.getElementById('tgDemoWidgetWrap');
   if(!wrap || wrap.dataset.injected) return;
+  await hydrateDemoTelegramConfig();
+  const currentHost = normalizeLoginHost(window.location.hostname);
+  const canonicalHost = normalizeLoginHost(DEMO_CANONICAL_HOST);
+  const loginDomain = normalizeLoginHost(DEMO_LOGIN_DOMAIN);
+  if (currentHost === `www.${canonicalHost}`) {
+    window.location.replace(`${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`);
+    return;
+  }
+  if (!isDemoCanonicalHost()) {
+    wrap.innerHTML = `<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login is disabled on <b>${window.location.hostname}</b>. Use <b>${DEMO_CANONICAL_HOST}</b>.</div>`;
+    return;
+  }
+  if (loginDomain && loginDomain !== canonicalHost) {
+    wrap.innerHTML = `<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login misconfigured: login domain is <b>${loginDomain}</b>, expected <b>${canonicalHost}</b>.</div>`;
+    return;
+  }
   wrap.dataset.injected = '1';
+  if (demoTelegramConfigFailed) {
+    wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Could not load Telegram login config. Please retry.</div>';
+    return;
+  }
   if(!DEMO_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(DEMO_BOT_USERNAME)){
     wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login temporarily unavailable (bot username misconfigured).</div>';
     console.error('TaliTrade: demo telegram widget blocked by invalid bot username', { bot: DEMO_BOT_USERNAME, source: DEMO_BOT_USERNAME_SOURCE, host: window.location.hostname });
@@ -938,6 +993,14 @@ function injectDemoTelegramWidget(){
   s.setAttribute('data-onauth', 'onTelegramDemoAuth(user)');
   s.setAttribute('data-request-access', 'write');
   s.async = true;
+  s.onload = function(){
+    setTimeout(function(){
+      const rendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
+      if (!rendered) {
+        wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram script loaded but widget did not render. Confirm host is talitrade.com and disable blockers.</div>';
+      }
+    }, 3000);
+  };
   s.onerror = function(){
     wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Could not load Telegram login. Please disable blockers and retry.</div>';
     console.error('TaliTrade: failed to load demo telegram widget script');

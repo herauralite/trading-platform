@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import axios from 'axios'
 import {
   buildAuthHeaders,
@@ -20,6 +20,13 @@ import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connecto
 
 const API = 'https://trading-platform-production-70e0.up.railway.app'
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
+const CANONICAL_HOST = 'talitrade.com'
+
+const normalizeHost = (value) => {
+  const raw = String(value || '').trim().toLowerCase()
+  if (!raw) return ''
+  return raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').split('/')[0].split('?')[0].split('#')[0].split(':')[0].replace(/\.+$/, '')
+}
 
 function App() {
   const [sessionToken, setSessionToken] = useState(localStorage.getItem(SESSION_STORAGE_KEY) || '')
@@ -28,7 +35,10 @@ function App() {
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
   const [status, setStatus] = useState(DEFAULT_STATUS)
+  const [widgetStatus, setWidgetStatus] = useState('')
+  const [widgetScriptLoaded, setWidgetScriptLoaded] = useState(false)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
+  const widgetWrapRef = useRef(null)
   const [manualAccount, setManualAccount] = useState({ externalAccountId: '', brokerName: 'Manual', displayLabel: '', accountType: 'demo', accountSize: 10000 })
   const [manualTrade, setManualTrade] = useState({ externalAccountId: '', symbol: 'NAS100', side: 'buy', size: 0.1, entryPrice: 15000, exitPrice: 15025, pnl: 25 })
   const [csvInput, setCsvInput] = useState('[{"symbol":"US30","side":"buy","open_time":"2026-04-16T10:00:00Z","close_time":"2026-04-16T10:10:00Z","pnl":18}]')
@@ -39,6 +49,9 @@ function App() {
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authHeaders = buildAuthHeaders(sessionToken)
+  const currentHost = normalizeHost(window.location.hostname)
+  const canonicalHost = normalizeHost(telegramConfig?.canonicalLoginDomain || telegramConfig?.loginDomain || CANONICAL_HOST)
+  const isCanonicalHost = Boolean(currentHost && canonicalHost && currentHost === canonicalHost)
 
   const allAccounts = useMemo(
     () => connectors.flatMap((connector) => connector.accounts.map((account) => ({ ...account, connector_type: connector.connector_type }))),
@@ -135,8 +148,20 @@ function App() {
       setTelegramConfig(res.data || null)
     } catch {
       setTelegramConfig(null)
+      setWidgetStatus('Could not load Telegram config (/auth/telegram/config). Login may fail.')
     }
   }
+
+  useEffect(() => {
+    if (!widgetScriptLoaded || signedIn) return
+    const timer = window.setTimeout(() => {
+      const rendered = Boolean(widgetWrapRef.current?.querySelector('iframe, .telegram-login, div[id^="telegram-login"]'))
+      if (!rendered) {
+        setWidgetStatus('Telegram script loaded but widget did not render. Use talitrade.com and disable blockers.')
+      }
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [widgetScriptLoaded, signedIn])
 
   async function bootstrapSession(token) {
     setIsBootstrapping(true)
@@ -375,17 +400,26 @@ function App() {
             {telegramConfig?.oidcEnabled ? (
               <button onClick={startOidcFlow}>Sign in with Telegram</button>
             ) : (
-              <div>
-                <script
-                  async
-                  src="https://telegram.org/js/telegram-widget.js?22"
-                  data-telegram-login={telegramConfig?.botUsername || 'TaliTradeBot'}
-                  data-size="large"
-                  data-userpic="false"
-                  data-request-access="write"
-                  data-onauth="onTelegramAuth(user)"
-                />
-                <p className="hint">Telegram widget mode enabled.</p>
+              <div ref={widgetWrapRef}>
+                {!isCanonicalHost ? (
+                  <p className="error-text">Telegram login is disabled on {window.location.hostname}. Use {canonicalHost || CANONICAL_HOST}.</p>
+                ) : (
+                  <>
+                    <script
+                      async
+                      src="https://telegram.org/js/telegram-widget.js?22"
+                      data-telegram-login={telegramConfig?.botUsername || 'TaliTradeBot'}
+                      data-size="large"
+                      data-userpic="false"
+                      data-request-access="write"
+                      data-onauth="onTelegramAuth(user)"
+                      onLoad={() => setWidgetScriptLoaded(true)}
+                      onError={() => setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')}
+                    />
+                    <p className="hint">Telegram widget mode enabled.</p>
+                  </>
+                )}
+                {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
               </div>
             )}
           </>
