@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any
 import hashlib
@@ -11,6 +12,11 @@ SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
 DEFAULT_CONNECTOR_STATUS = "connected"
 ALLOWED_CONNECTOR_STATUSES = {"connected", "degraded", "disconnected", "sync_error"}
+ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying"})
+SYNC_RUN_FINAL_STATUSES = {"succeeded", "failed"}
+SYNC_RUN_RETRY_DELAYS_SECONDS = [2, 5]
+
+_SYNC_CONNECTOR_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _normalize_connector(value: str | None) -> str:
@@ -76,6 +82,26 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("ALTER TABLE connector_lifecycle ADD COLUMN IF NOT EXISTS last_error TEXT"))
         await conn.execute(text("ALTER TABLE connector_lifecycle ADD COLUMN IF NOT EXISTS last_error_at TIMESTAMPTZ"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_lifecycle_user_idx ON connector_lifecycle(user_id)"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS connector_sync_runs (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                connector_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                trigger TEXT NOT NULL DEFAULT 'manual',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                started_at TIMESTAMPTZ,
+                finished_at TIMESTAMPTZ,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                max_retries INTEGER NOT NULL DEFAULT 2,
+                next_retry_at TIMESTAMPTZ,
+                error_detail TEXT,
+                result_detail JSONB DEFAULT '{}'::jsonb,
+                metadata JSONB DEFAULT '{}'::jsonb
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_user_connector_idx ON connector_sync_runs(user_id, connector_type, created_at DESC)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_pending_idx ON connector_sync_runs(status, next_retry_at, created_at)"))
 
         # 1) Create core tables first (fresh DB safe).
         await conn.execute(text("""
@@ -298,6 +324,252 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
             metadata={"source": "upsert_trading_account"},
         )
     return dict(row)
+
+
+def _get_sync_lock(user_id: str, connector_type: str) -> asyncio.Lock:
+    key = f"{_normalize_user_id(user_id)}::{_normalize_connector(connector_type)}"
+    if key not in _SYNC_CONNECTOR_LOCKS:
+        _SYNC_CONNECTOR_LOCKS[key] = asyncio.Lock()
+    return _SYNC_CONNECTOR_LOCKS[key]
+
+
+async def _set_sync_run_status(
+    run_id: int,
+    *,
+    status: str,
+    started_at: datetime | None = None,
+    finished_at: datetime | None = None,
+    retry_count: int | None = None,
+    next_retry_at: datetime | None = None,
+    error_detail: str | None = None,
+    result_detail: dict[str, Any] | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    params = {
+        "id": run_id,
+        "status": status,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "retry_count": retry_count,
+        "next_retry_at": next_retry_at,
+        "error_detail": error_detail,
+        "result_detail": json.dumps(result_detail or {}),
+        "metadata": json.dumps(metadata or {}),
+    }
+    async with engine.begin() as conn:
+        row = (await conn.execute(text("""
+            UPDATE connector_sync_runs
+            SET
+                status = :status,
+                started_at = COALESCE(:started_at, started_at),
+                finished_at = COALESCE(:finished_at, finished_at),
+                retry_count = COALESCE(:retry_count, retry_count),
+                next_retry_at = :next_retry_at,
+                error_detail = :error_detail,
+                result_detail = CASE
+                    WHEN :result_detail::jsonb = '{}'::jsonb THEN result_detail
+                    ELSE result_detail || :result_detail::jsonb
+                END,
+                metadata = metadata || :metadata::jsonb
+            WHERE id = :id
+            RETURNING *
+        """), params)).mappings().first()
+    if not row:
+        raise ValueError(f"sync run not found: {run_id}")
+    return dict(row)
+
+
+async def create_connector_sync_run(
+    user_id: str,
+    connector_type: str,
+    *,
+    trigger: str = "manual",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_user = _normalize_user_id(user_id)
+    if not normalized_user:
+        raise ValueError("user_id is required")
+    normalized_connector = _normalize_connector(connector_type)
+    async with engine.begin() as conn:
+        run = (await conn.execute(text("""
+            INSERT INTO connector_sync_runs (
+                user_id, connector_type, status, trigger, metadata
+            ) VALUES (
+                :user_id, :connector_type, 'queued', :trigger, CAST(:metadata AS jsonb)
+            )
+            RETURNING *
+        """), {
+            "user_id": normalized_user,
+            "connector_type": normalized_connector,
+            "trigger": trigger,
+            "metadata": json.dumps(metadata or {}),
+        })).mappings().first()
+    await upsert_connector_lifecycle(
+        user_id=normalized_user,
+        connector_type=normalized_connector,
+        status="sync_queued",
+        is_connected=True,
+        last_activity_at=datetime.now(timezone.utc),
+        metadata={"sync_run_id": run["id"], "sync_state": "queued"},
+    )
+    return dict(run)
+
+
+async def get_connector_sync_runs(
+    user_id: str,
+    connector_type: str,
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    async with engine.connect() as conn:
+        rows = (await conn.execute(text("""
+            SELECT *
+            FROM connector_sync_runs
+            WHERE user_id = :user_id AND connector_type = :connector_type
+            ORDER BY created_at DESC
+            LIMIT :limit
+        """), {
+            "user_id": _normalize_user_id(user_id),
+            "connector_type": _normalize_connector(connector_type),
+            "limit": max(1, min(limit, 50)),
+        })).mappings().all()
+    return [dict(row) for row in rows]
+
+
+async def get_latest_connector_sync_run(user_id: str, connector_type: str) -> dict[str, Any] | None:
+    rows = await get_connector_sync_runs(user_id, connector_type, limit=1)
+    return rows[0] if rows else None
+
+
+async def _perform_connector_sync(run: dict[str, Any]) -> dict[str, Any]:
+    connector = run["connector_type"]
+    if connector == "manual":
+        raise RuntimeError("Manual connector cannot execute remote sync")
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("""
+            SELECT COUNT(*) AS total
+            FROM trading_accounts
+            WHERE user_id = :uid
+              AND connector_type = :connector
+              AND is_active = TRUE
+        """), {"uid": run["user_id"], "connector": connector})).mappings().first()
+    count = int(row["total"] or 0)
+    if count == 0:
+        raise RuntimeError("No active accounts available for sync")
+    return {"synced_accounts": count}
+
+
+async def execute_connector_sync_run(run_id: int) -> dict[str, Any]:
+    async with engine.connect() as conn:
+        run_row = (await conn.execute(text("""
+            SELECT *
+            FROM connector_sync_runs
+            WHERE id = :id
+            LIMIT 1
+        """), {"id": run_id})).mappings().first()
+    if not run_row:
+        raise ValueError(f"sync run not found: {run_id}")
+
+    run = dict(run_row)
+    lock = _get_sync_lock(run["user_id"], run["connector_type"])
+    async with lock:
+        max_retries = int(run.get("max_retries") or 0)
+        attempts = max_retries + 1
+        for attempt in range(attempts):
+            now = datetime.now(timezone.utc)
+            await _set_sync_run_status(
+                run_id,
+                status="running",
+                started_at=now,
+                retry_count=attempt,
+                next_retry_at=None,
+                error_detail=None,
+            )
+            await upsert_connector_lifecycle(
+                user_id=run["user_id"],
+                connector_type=run["connector_type"],
+                status="sync_running",
+                is_connected=True,
+                last_activity_at=now,
+                metadata={"sync_run_id": run_id, "sync_state": "running", "attempt": attempt + 1},
+            )
+            try:
+                result_detail = await _perform_connector_sync(run)
+                finished = datetime.now(timezone.utc)
+                row = await _set_sync_run_status(
+                    run_id,
+                    status="succeeded",
+                    finished_at=finished,
+                    retry_count=attempt,
+                    result_detail=result_detail,
+                )
+                await upsert_connector_lifecycle(
+                    user_id=run["user_id"],
+                    connector_type=run["connector_type"],
+                    status="connected",
+                    is_connected=True,
+                    last_sync_at=finished,
+                    last_activity_at=finished,
+                    error=None,
+                    metadata={"sync_run_id": run_id, "sync_state": "succeeded"},
+                )
+                return row
+            except Exception as exc:
+                err = str(exc)
+                if attempt < max_retries:
+                    delay = SYNC_RUN_RETRY_DELAYS_SECONDS[min(attempt, len(SYNC_RUN_RETRY_DELAYS_SECONDS) - 1)]
+                    retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+                    await _set_sync_run_status(
+                        run_id,
+                        status="retrying",
+                        retry_count=attempt + 1,
+                        next_retry_at=retry_at,
+                        error_detail=err,
+                        metadata={"last_retry_delay_seconds": delay},
+                    )
+                    await upsert_connector_lifecycle(
+                        user_id=run["user_id"],
+                        connector_type=run["connector_type"],
+                        status="sync_retrying",
+                        is_connected=True,
+                        last_activity_at=datetime.now(timezone.utc),
+                        error=err,
+                        metadata={"sync_run_id": run_id, "sync_state": "retrying", "next_retry_at": retry_at.isoformat()},
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                finished = datetime.now(timezone.utc)
+                row = await _set_sync_run_status(
+                    run_id,
+                    status="failed",
+                    finished_at=finished,
+                    retry_count=attempt,
+                    next_retry_at=None,
+                    error_detail=err,
+                )
+                await upsert_connector_lifecycle(
+                    user_id=run["user_id"],
+                    connector_type=run["connector_type"],
+                    status="sync_error",
+                    is_connected=True,
+                    last_activity_at=finished,
+                    error=err,
+                    metadata={"sync_run_id": run_id, "sync_state": "failed"},
+                )
+                return row
+    raise RuntimeError("Failed to execute sync run")
+
+
+async def enqueue_connector_sync_run(
+    user_id: str,
+    connector_type: str,
+    *,
+    trigger: str = "manual",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    run = await create_connector_sync_run(user_id, connector_type, trigger=trigger, metadata=metadata)
+    asyncio.create_task(execute_connector_sync_run(int(run["id"])))
+    return run
 
 
 async def upsert_connector_lifecycle(
