@@ -880,9 +880,13 @@ function getBaseApiUrl() {
 
 function classifyAuthConfigFailure(error, status) {
   if (status === 404) return 'http_404';
+  if (status === 500) return 'http_500';
   if (status && status >= 400) return `http_${status}`;
   if (error instanceof SyntaxError) return 'invalid_json';
-  return 'network_or_cors';
+  if (error?.name === 'AbortError') return 'timeout';
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'transport_offline';
+  if (error instanceof TypeError) return 'cors_rejected_or_transport';
+  return 'transport_failure';
 }
 
 function pushHomepageAuthDiag(message) {
@@ -916,11 +920,15 @@ function isDemoCanonicalHost() {
 async function hydrateDemoTelegramConfig() {
   const apiBase = getBaseApiUrl();
   const configUrl = apiBase + '/auth/telegram/config';
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 8000);
   try {
     pushHomepageAuthDiag(`resolved_api_base=${apiBase}`);
     pushHomepageAuthDiag(`config_url=${configUrl}`);
-    const res = await fetch(configUrl, { credentials: 'include' });
+    const res = await fetch(configUrl, { credentials: 'include', mode: 'cors', signal: controller.signal });
     pushHomepageAuthDiag(`config_fetch_status=${res.status}`);
+    pushHomepageAuthDiag(`config_fetch_content_type=${res.headers.get('content-type') || 'missing'}`);
+    pushHomepageAuthDiag(`config_fetch_auth_mode_header=${res.headers.get('x-tali-auth-mode') || 'missing'}`);
     if (!res.ok) {
       demoTelegramConfigFailed = true;
       pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(null, res.status)}`);
@@ -938,7 +946,11 @@ async function hydrateDemoTelegramConfig() {
     demoTelegramConfigFailed = false;
   } catch (error) {
     pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(error)}`);
+    pushHomepageAuthDiag(`config_fetch_error_name=${error?.name || 'unknown'}`);
+    pushHomepageAuthDiag(`config_fetch_error_message=${String(error?.message || '').slice(0, 120) || 'n/a'}`);
     demoTelegramConfigFailed = true;
+  } finally {
+    window.clearTimeout(timeoutId);
   }
 }
 
