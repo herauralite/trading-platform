@@ -735,6 +735,13 @@ def test_session_token_fails_closed_without_secret(monkeypatch):
     assert "SECRET_KEY" in str(decode_exc.value)
 
 
+def test_runtime_guard_rejects_multi_process_web(monkeypatch):
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    with pytest.raises(RuntimeError) as excinfo:
+        main_mod.enforce_single_process_runtime()
+    assert "WEB_CONCURRENCY=1" in str(excinfo.value)
+
+
 def test_retired_bridge_route_returns_gone():
     async def _run():
         transport = httpx.ASGITransport(app=app)
