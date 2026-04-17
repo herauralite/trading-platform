@@ -870,14 +870,11 @@ footer{
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 const DEFAULT_API_BASE = 'https://trading-platform-production-70e0.up.railway.app';
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
-const TALITRADE_HOSTS = new Set(['www.talitrade.com', 'talitrade.com']);
 const AUTH_DIAGNOSTICS = [];
 
 function getBaseApiUrl() {
   const configured = String(TALI_CONFIG.apiBase || TALI_CONFIG.api_base || '').trim();
   if (configured) return configured.replace(/\/$/, '');
-  const currentHost = normalizeLoginHost(window.location.hostname);
-  if (TALITRADE_HOSTS.has(currentHost)) return window.location.origin.replace(/\/$/, '');
   return DEFAULT_API_BASE;
 }
 
@@ -917,8 +914,10 @@ function isDemoCanonicalHost() {
 }
 
 async function hydrateDemoTelegramConfig() {
-  const configUrl = getBaseApiUrl() + '/auth/telegram/config';
+  const apiBase = getBaseApiUrl();
+  const configUrl = apiBase + '/auth/telegram/config';
   try {
+    pushHomepageAuthDiag(`resolved_api_base=${apiBase}`);
     pushHomepageAuthDiag(`config_url=${configUrl}`);
     const res = await fetch(configUrl, { credentials: 'include' });
     pushHomepageAuthDiag(`config_fetch_status=${res.status}`);

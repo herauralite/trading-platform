@@ -17,7 +17,7 @@ import {
 } from './sessionAuth'
 import { formatSyncRunDiagnostics } from './syncRunDiagnostics'
 import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connectorConfig'
-import { buildApiUrl } from './apiBase'
+import { buildApiUrl, resolveApiBase } from './apiBase'
 
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
 const CANONICAL_HOST = 'www.talitrade.com'
@@ -162,18 +162,25 @@ function App() {
   const syncStateLabel = (state) => state || 'idle'
 
   async function loadTelegramAuthConfig() {
+    const resolvedBase = resolveApiBase()
     const requestUrl = buildApiUrl('/auth/telegram/config')
     try {
       const res = await axios.get(requestUrl, { withCredentials: true })
       if (!res?.data || typeof res.data !== 'object') {
-        throw new Error(`invalid_json url=${requestUrl}`)
+        throw new SyntaxError(`invalid_json url=${requestUrl}`)
       }
       setTelegramConfig(res.data || null)
     } catch (error) {
       setTelegramConfig(null)
       const status = error?.response?.status
-      const reason = status === 404 ? 'http_404' : status ? `http_${status}` : 'network_or_cors'
-      setWidgetStatus(`Could not load Telegram config (${requestUrl}) reason=${reason}. Login may fail.`)
+      const reason = status === 404
+        ? 'http_404'
+        : status
+          ? `http_${status}`
+          : error instanceof SyntaxError
+            ? 'invalid_json'
+            : 'network_or_cors'
+      setWidgetStatus(`Could not load Telegram config. api_base=${resolvedBase} url=${requestUrl} reason=${reason}. Login may fail.`)
     }
   }
 
