@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 from app.services.connector_ingest import (
+    SYNC_WORKER_ID,
+    connector_sync_worker_loop,
     enqueue_connector_sync_run,
     deactivate_missing_positions,
     ensure_connector_tables,
@@ -39,9 +41,6 @@ from app.core.auth_session import (
     decode_session_token,
     get_bearer_token,
 )
-
-if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
-    raise RuntimeError("Set WEB_CONCURRENCY=1.")
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
@@ -1169,12 +1168,15 @@ async def lifespan(app: FastAPI):
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
     await setup_telegram_webhook()
+    stop_event = asyncio.Event()
     tasks = [
         asyncio.create_task(news_scheduler()),
         asyncio.create_task(weekend_scheduler()),
         asyncio.create_task(daily_summary_scheduler()),
+        asyncio.create_task(connector_sync_worker_loop(stop_event, worker_id=SYNC_WORKER_ID)),
     ]
     yield
+    stop_event.set()
     for t in tasks:
         t.cancel()
     logger.info("Shutting down.")

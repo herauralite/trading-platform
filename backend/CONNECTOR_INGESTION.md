@@ -42,9 +42,9 @@ Lifecycle state is persisted in `connector_lifecycle` with:
 
 Account membership remains represented by `trading_accounts` rows grouped by `connector_type`.
 
-## Sync execution model (Issue #52)
+## Sync execution model (Issue #54)
 
-Sync execution is now persisted in `connector_sync_runs` and driven by a minimal in-process async orchestrator.
+Sync execution is persisted in `connector_sync_runs` and executed by a durable database-claim worker loop.
 
 `connector_sync_runs` fields:
 - `status`: `queued` → `running` → `succeeded` / `failed`, with `retrying` between attempts.
@@ -52,11 +52,16 @@ Sync execution is now persisted in `connector_sync_runs` and driven by a minimal
 - `retry_count`, `max_retries`, `next_retry_at`.
 - `error_detail`, `result_detail`, `metadata`.
 
-Current retry behavior:
-- Manual sync enqueue creates a run in `queued`.
-- Worker executes one connector at a time per `(user_id, connector_type)` lock.
-- Failures retry with exponential-ish backoff using delays `[2s, 5s]` (up to `max_retries=2`).
-- If all attempts fail, run is marked `failed` and lifecycle moves to `sync_error`.
+Durable claim/lease behavior:
+- Manual sync enqueue creates a run in `queued` (DB is source of truth).
+- Worker claims runs with `FOR UPDATE SKIP LOCKED` and writes a lease (`lease_owner`, `lease_expires_at`).
+- Due `retrying` runs (`next_retry_at <= NOW()`) are claimable without in-memory timers.
+- Stale `running` runs whose lease expired are reclaimable after restart/process loss.
+
+Retry behavior:
+- Failures set run state to `retrying` and persist `next_retry_at` + incremented `retry_count`.
+- No in-memory `sleep` controls run timing; workers poll DB for due work.
+- If retries are exhausted, run is marked `failed` and lifecycle moves to `sync_error`.
 
 Lifecycle integration:
 - Queue/run/retry transitions push lifecycle into `sync_queued`, `sync_running`, `sync_retrying`.
@@ -95,7 +100,12 @@ What exists now:
 - Persistent sync run history and asynchronous manual sync orchestration.
 - Retry/backoff and per-run error visibility in connector surfaces.
 
-Future work (not in this minimal issue scope):
-- Durable multi-process worker (today orchestration is single-process in-app).
-- Connector-specific sync implementations and credential refresh workflows.
+Restart behavior:
+- If app stops mid-run, the run remains `running` with a lease timestamp.
+- On restart (or on another process), expired leases are reclaimed and re-executed safely.
+- Queued and retrying work survives process restarts because scheduling data is persisted.
+
+Future work (not in this issue scope):
+- External worker deployment topology/metrics dashboards.
+- Lease heartbeats for very long-running connector sync implementations.
 - Cancellation controls, dead-letter handling, and richer incident analytics.
