@@ -105,6 +105,12 @@ Restart behavior:
 - On restart (or on another process), expired leases are reclaimed and re-executed safely.
 - Queued and retrying work survives process restarts because scheduling data is persisted.
 
+## Operational concurrency guardrails
+
+- The app currently keeps `WEB_CONCURRENCY=1` enforced at startup.
+- Reason: legacy non-sync schedulers (news/weekend/daily-summary) still run from web-process lifespan and are not yet isolated with leader election.
+- Durable connector sync claim/lease logic remains in place, but global multi-process web execution is intentionally blocked until non-sync schedulers are split or leader-gated.
+
 Future work (not in this issue scope):
 - External worker deployment topology/metrics dashboards.
 - Lease heartbeats for very long-running connector sync implementations.

@@ -42,6 +42,17 @@ from app.core.auth_session import (
     get_bearer_token,
 )
 
+
+def enforce_single_process_runtime() -> None:
+    if int(os.getenv("WEB_CONCURRENCY", "1")) > 1:
+        raise RuntimeError(
+            "Set WEB_CONCURRENCY=1. Non-sync background schedulers are not yet multi-process safe."
+        )
+
+
+enforce_single_process_runtime()
+
+
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
