@@ -848,7 +848,7 @@ footer{
     <p id="homepageAuthCopy" style="margin-top:10px;font-size:14px;line-height:1.6;color:rgba(232,240,255,0.74);">Sign in with Telegram to continue.</p>
     <div id="homepageAuthError" style="display:none;margin-top:12px;padding:11px 12px;border-radius:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);font-size:12px;line-height:1.5;color:#fca5a5;"></div>
     <div id="homepageAuthWidgetWrap" style="margin-top:16px;display:flex;justify-content:center;min-height:48px;align-items:center;"></div>
-    <div style="margin-top:12px;font-size:12px;color:rgba(148,163,184,0.85);text-align:center;">Once hosting sends traffic to <b>talitrade.com</b>, sign-in and app entry will work consistently.</div>
+    <div style="margin-top:12px;font-size:12px;color:rgba(148,163,184,0.85);text-align:center;">Once hosting sends traffic to <b>www.talitrade.com</b>, sign-in and app entry will work consistently.</div>
   </div>
 </div>
 
@@ -870,7 +870,7 @@ footer{
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
 const RAILWAY_URL = 'https://trading-platform-production-70e0.up.railway.app';
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
-const DEMO_CANONICAL_HOST = 'talitrade.com';
+const DEMO_CANONICAL_HOST = 'www.talitrade.com';
 let DEMO_LOGIN_DOMAIN = DEMO_CANONICAL_HOST;
 let DEMO_BOT_USERNAME = 'TaliTradeBot';
 let DEMO_BOT_USERNAME_SOURCE = 'hardcoded_canonical'; // must match BotFather @username exactly
@@ -1043,7 +1043,7 @@ async function ensureHomepageAuthWidget(){
   const canonicalHost = normalizeLoginHost(DEMO_CANONICAL_HOST);
   const loginDomain = normalizeLoginHost(DEMO_LOGIN_DOMAIN);
   if (!isDemoCanonicalHost()) {
-    setHomepageAuthError('Open talitrade.com to continue with Telegram sign-in.');
+    setHomepageAuthError('Open www.talitrade.com to continue with Telegram sign-in.');
     wrap.innerHTML = '';
     return;
   }
@@ -1074,7 +1074,7 @@ async function ensureHomepageAuthWidget(){
     setTimeout(function(){
       const rendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
       if (!rendered) {
-        setHomepageAuthError('Telegram script loaded but widget did not render. Confirm you are on talitrade.com and disable blockers.');
+        setHomepageAuthError('Telegram script loaded but widget did not render. Confirm you are on www.talitrade.com and disable blockers.');
       }
     }, 3000);
   };
