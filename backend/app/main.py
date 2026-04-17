@@ -19,21 +19,25 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 from app.services.connector_ingest import (
     SYNC_WORKER_ID,
+    clear_connector_config,
     connector_sync_worker_loop,
     enqueue_connector_sync_run,
     deactivate_missing_positions,
     ensure_connector_tables,
+    get_connector_config,
     get_connector_sync_runs,
     get_connector_lifecycle,
     ingest_account_snapshot,
     ingest_position,
     ingest_trade,
+    upsert_connector_config,
     upsert_connector_lifecycle,
     upsert_trading_account,
+    validate_fundingpips_connector_config,
 )
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
@@ -102,6 +106,14 @@ CONNECTOR_CATALOG = {
     },
 }
 
+CONNECTOR_CONFIG_SPEC: dict[str, dict[str, Any]] = {
+    "fundingpips_extension": {
+        "non_secret_fields": ["healthcheck_url", "external_account_id", "timeout_seconds"],
+        "secret_fields": ["api_token"],
+        "supports_external_sync": True,
+    }
+}
+
 
 def telegram_oidc_enabled() -> bool:
     if TELEGRAM_OIDC_MODE == "legacy_widget":
@@ -116,6 +128,20 @@ def telegram_auth_mode() -> str:
 def connector_supports_live_sync(connector_type: str) -> bool:
     normalized = connector_type.strip().lower().replace("-", "_")
     return bool(CONNECTOR_CATALOG.get(normalized, {}).get("supports_live_sync", False))
+
+
+def connector_config_spec(connector_type: str) -> dict[str, Any]:
+    normalized = connector_type.strip().lower().replace("-", "_")
+    return CONNECTOR_CONFIG_SPEC.get(normalized, {"non_secret_fields": [], "secret_fields": [], "supports_external_sync": False})
+
+
+def sanitize_connector_config_payload(connector_type: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    spec = connector_config_spec(connector_type)
+    allowed_non_secret = set(spec.get("non_secret_fields") or [])
+    allowed_secret = set(spec.get("secret_fields") or [])
+    non_secret = {k: v for k, v in (payload.get("non_secret_config") or {}).items() if k in allowed_non_secret}
+    secret = {k: v for k, v in (payload.get("secret_config") or {}).items() if k in allowed_secret}
+    return non_secret, secret
 
 
 def build_auth_success_payload(tg_user_id: str, username: str | None, first_name: str | None,
@@ -733,7 +759,14 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
             grouped[connector]["current_sync_retry_count"] = row["retry_count"] or 0
             grouped[connector]["next_retry_at"] = row["next_retry_at"]
 
-    return list(grouped.values())
+    connectors = list(grouped.values())
+    for connector in connectors:
+        config_row = await get_connector_config(telegram_user_id, connector["connector_type"])
+        connector["config_status"] = (config_row or {}).get("status", "not_configured")
+        connector["has_config"] = bool(config_row)
+        connector["configured_secret_fields"] = (config_row or {}).get("configured_secret_fields", [])
+        connector["config_validation_error"] = (config_row or {}).get("validation_error")
+    return connectors
 
 
 async def db_link_account(telegram_user_id: str, account_id: str, account_type: str = None,
@@ -1500,6 +1533,16 @@ class ConnectorActionRequest(BaseModel):
     account_size: int | None = None
 
 
+class ConnectorConfigUpsertRequest(BaseModel):
+    non_secret_config: dict[str, Any] = Field(default_factory=dict)
+    secret_config: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConnectorConfigPatchRequest(BaseModel):
+    non_secret_config: dict[str, Any] = Field(default_factory=dict)
+    secret_config: dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/connectors/{connector_type}")
 async def connector_status_detail(
     connector_type: str,
@@ -1530,6 +1573,103 @@ async def connector_status_detail(
             "next_retry_at": runs[0]["next_retry_at"] if runs else None,
         }
     return {"connector": connector, "sync_runs": runs}
+
+
+@app.get("/connectors/{connector_type}/config")
+async def connector_config_detail(
+    connector_type: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    spec = connector_config_spec(normalized)
+    config = await get_connector_config(resolved_uid, normalized)
+    if not config:
+        return {
+            "connector_type": normalized,
+            "status": "not_configured",
+            "non_secret_config": {},
+            "has_secret_config": False,
+            "configured_secret_fields": [],
+            "supports_external_sync": bool(spec.get("supports_external_sync")),
+        }
+    return {
+        "connector_type": normalized,
+        "status": config.get("status"),
+        "non_secret_config": config.get("non_secret_config") or {},
+        "has_secret_config": bool(config.get("has_secret_config")),
+        "configured_secret_fields": config.get("configured_secret_fields") or [],
+        "validation_error": config.get("validation_error"),
+        "configured_at": config.get("configured_at"),
+        "rotated_at": config.get("rotated_at"),
+        "supports_external_sync": bool(spec.get("supports_external_sync")),
+    }
+
+
+@app.put("/connectors/{connector_type}/config")
+async def connector_config_set(
+    connector_type: str,
+    payload: ConnectorConfigUpsertRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    non_secret, secret = sanitize_connector_config_payload(normalized, payload.model_dump())
+    status = "configured"
+    validation_error = None
+    if normalized == "fundingpips_extension":
+        status, validation_error = validate_fundingpips_connector_config(non_secret, secret)
+    row = await upsert_connector_config(
+        resolved_uid,
+        normalized,
+        non_secret_config=non_secret,
+        secret_config=secret,
+        status=("invalid" if status == "invalid" else status),
+        validation_error=validation_error,
+    )
+    config = await get_connector_config(resolved_uid, normalized)
+    return {"ok": True, "connector_type": normalized, "config": config, "supports_external_sync": bool(connector_config_spec(normalized).get("supports_external_sync")), "stored_at": row.get("updated_at")}
+
+
+@app.patch("/connectors/{connector_type}/config")
+async def connector_config_update(
+    connector_type: str,
+    payload: ConnectorConfigPatchRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    existing = await get_connector_config(resolved_uid, normalized, include_secret=True) or {}
+    existing_non_secret = dict(existing.get("non_secret_config") or {})
+    existing_secret = dict(existing.get("secret_config") or {})
+    patch_non_secret, patch_secret = sanitize_connector_config_payload(normalized, payload.model_dump())
+    merged_non_secret = {**existing_non_secret, **patch_non_secret}
+    merged_secret = {**existing_secret, **patch_secret}
+    status = "configured"
+    validation_error = None
+    if normalized == "fundingpips_extension":
+        status, validation_error = validate_fundingpips_connector_config(merged_non_secret, merged_secret)
+    await upsert_connector_config(
+        resolved_uid,
+        normalized,
+        non_secret_config=merged_non_secret,
+        secret_config=merged_secret,
+        status=("invalid" if status == "invalid" else status),
+        validation_error=validation_error,
+    )
+    config = await get_connector_config(resolved_uid, normalized)
+    return {"ok": True, "connector_type": normalized, "config": config}
+
+
+@app.delete("/connectors/{connector_type}/config")
+async def connector_config_clear(
+    connector_type: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized = connector_type.strip().lower().replace("-", "_")
+    removed = await clear_connector_config(resolved_uid, normalized)
+    return {"ok": True, "connector_type": normalized, "removed": removed}
 
 
 @app.post("/connectors/{connector_type}/connect")

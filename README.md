@@ -35,6 +35,10 @@ TaliTrade now uses a connector-first ingestion layer. The FundingPips extension 
 - `POST /connectors/{connector_type}/connect` (requires bearer session)
 - `POST /connectors/{connector_type}/sync` (requires bearer session)
 - `POST /connectors/{connector_type}/disconnect` (requires bearer session)
+- `GET /connectors/{connector_type}/config` (requires bearer session)
+- `PUT /connectors/{connector_type}/config` (requires bearer session)
+- `PATCH /connectors/{connector_type}/config` (requires bearer session)
+- `DELETE /connectors/{connector_type}/config` (requires bearer session)
 - `POST /auth/link-account` (requires bearer session)
 - `POST /ingest/accounts`, `POST /ingest/trades`, `POST /ingest/csv/trades` (require bearer session)
 
@@ -72,6 +76,21 @@ These routes are no longer part of the supported auth contract. Canonical caller
   - connect/setup
   - sync
   - disconnect/deactivate
+
+### Connector credential/config management (Issue #58)
+
+- Connector config now persists in `connector_configs` with owner-scoped rows (`user_id`, `connector_type`).
+- Config payload is split into:
+  - `non_secret_config` (safe operational values that can be returned to the client)
+  - `secret_config` (write-only secrets such as API tokens, never echoed in normal API responses)
+- Config responses expose only safe state:
+  - `status` (`not_configured` / `incomplete` / `configured`)
+  - `has_secret_config`
+  - `configured_secret_fields` (field names only)
+  - optional `validation_error`
+- Initial live-sync wiring is implemented for `fundingpips_extension`:
+  - if a complete config exists, sync executes an external health probe using stored config/secrets.
+  - if config is missing, existing extension-push freshness checks continue to work.
 
 ## Canonical production assumptions
 - Telegram bot username: `TaliTradeBot`

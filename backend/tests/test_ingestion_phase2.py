@@ -482,6 +482,9 @@ def test_connector_sync_runs_route_authenticated(monkeypatch):
 
 
 def test_perform_fundingpips_sync_returns_structured_summary(monkeypatch):
+    async def fake_get_config(*_args, **_kwargs):
+        return None
+
     class FakeResult:
         def __init__(self, rows):
             self._rows = rows
@@ -524,6 +527,7 @@ def test_perform_fundingpips_sync_returns_structured_summary(monkeypatch):
             return FakeConnect()
 
     monkeypatch.setattr(ci, "engine", FakeEngine())
+    monkeypatch.setattr(ci, "get_connector_config", fake_get_config)
     result = asyncio.run(ci._perform_connector_sync({
         "id": 10,
         "user_id": "u1",
@@ -536,6 +540,9 @@ def test_perform_fundingpips_sync_returns_structured_summary(monkeypatch):
 
 
 def test_perform_fundingpips_sync_stale_data_raises_structured_error(monkeypatch):
+    async def fake_get_config(*_args, **_kwargs):
+        return None
+
     stale_snapshot = datetime.now(timezone.utc) - timedelta(hours=2)
 
     class FakeResult:
@@ -580,6 +587,7 @@ def test_perform_fundingpips_sync_stale_data_raises_structured_error(monkeypatch
             return FakeConnect()
 
     monkeypatch.setattr(ci, "engine", FakeEngine())
+    monkeypatch.setattr(ci, "get_connector_config", fake_get_config)
     with pytest.raises(ci.ConnectorSyncError) as exc:
         asyncio.run(ci._perform_connector_sync({
             "id": 10,
@@ -1175,3 +1183,129 @@ def test_connector_status_detail_uses_lifecycle_fallback(monkeypatch):
     assert connector["status"] == "degraded"
     assert connector["connector_type"] == "csv_import"
     assert connector["account_count"] == 0
+
+
+def test_connector_config_routes_mask_secrets_and_isolate_owner(monkeypatch):
+    stored = {}
+
+    async def fake_upsert(user_id, connector_type, **kwargs):
+        key = (user_id, connector_type)
+        row = {
+            "user_id": user_id,
+            "connector_type": connector_type,
+            "status": kwargs.get("status", "configured"),
+            "non_secret_config": kwargs.get("non_secret_config") or {},
+            "secret_config": kwargs.get("secret_config") or {},
+            "validation_error": kwargs.get("validation_error"),
+            "configured_at": "2026-04-17T10:00:00Z",
+            "rotated_at": "2026-04-17T10:00:00Z",
+            "created_at": "2026-04-17T10:00:00Z",
+            "updated_at": "2026-04-17T10:00:00Z",
+        }
+        stored[key] = row
+        return row
+
+    async def fake_get(user_id, connector_type, include_secret=False):
+        row = stored.get((user_id, connector_type))
+        if not row:
+            return None
+        if include_secret:
+            return row
+        return {
+            "user_id": user_id,
+            "connector_type": connector_type,
+            "status": row["status"],
+            "non_secret_config": row["non_secret_config"],
+            "has_secret_config": bool(row["secret_config"]),
+            "configured_secret_fields": list(row["secret_config"].keys()),
+            "validation_error": row["validation_error"],
+        }
+
+    async def fake_clear(user_id, connector_type):
+        return stored.pop((user_id, connector_type), None) is not None
+
+    monkeypatch.setattr(main_mod, "upsert_connector_config", fake_upsert)
+    monkeypatch.setattr(main_mod, "get_connector_config", fake_get)
+    monkeypatch.setattr(main_mod, "clear_connector_config", fake_clear)
+
+    async def _run(method, user_id, path, payload=None):
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token(user_id)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.request(method, path, json=payload, headers={"Authorization": f"Bearer {token}"})
+
+    save_resp = asyncio.run(_run("PUT", "owner-1", "/connectors/fundingpips_extension/config", {
+        "non_secret_config": {
+            "healthcheck_url": "https://sync.example.com/health",
+            "external_account_id": "acct-a",
+        },
+        "secret_config": {"api_token": "super-secret-token"},
+    }))
+    assert save_resp.status_code == 200
+    body = save_resp.json()
+    assert body["config"]["has_secret_config"] is True
+    assert "api_token" in body["config"]["configured_secret_fields"]
+    assert "secret_config" not in body["config"]
+
+    owner_can_read = asyncio.run(_run("GET", "owner-1", "/connectors/fundingpips_extension/config"))
+    assert owner_can_read.status_code == 200
+    assert owner_can_read.json()["has_secret_config"] is True
+    assert "api_token" in owner_can_read.json()["configured_secret_fields"]
+
+    other_user = asyncio.run(_run("GET", "owner-2", "/connectors/fundingpips_extension/config"))
+    assert other_user.status_code == 200
+    assert other_user.json()["status"] == "not_configured"
+    assert other_user.json()["has_secret_config"] is False
+
+    cleared = asyncio.run(_run("DELETE", "owner-1", "/connectors/fundingpips_extension/config"))
+    assert cleared.status_code == 200
+    assert cleared.json()["removed"] is True
+
+
+def test_sync_execution_uses_configured_external_probe(monkeypatch):
+    captured = {"url": None, "headers": None}
+
+    async def fake_get_config(user_id, connector_type, include_secret=False):
+        assert user_id == "sync-user"
+        assert connector_type == "fundingpips_extension"
+        return {
+            "status": "configured",
+            "non_secret_config": {
+                "healthcheck_url": "https://sync.example.com/health",
+                "external_account_id": "acct-9",
+                "timeout_seconds": 5,
+            },
+            "secret_config": {"api_token": "token-9"},
+        }
+
+    class FakeResponse:
+        status_code = 200
+        headers = {"content-type": "application/json"}
+
+        @staticmethod
+        def json():
+            return {"status": "ok", "message": "healthy"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, url, headers=None):
+            captured["url"] = url
+            captured["headers"] = headers
+            return FakeResponse()
+
+    monkeypatch.setattr(ci, "get_connector_config", fake_get_config)
+    monkeypatch.setattr(ci.httpx, "AsyncClient", FakeClient)
+
+    run = {"user_id": "sync-user", "connector_type": "fundingpips_extension"}
+    result = asyncio.run(ci._perform_fundingpips_sync(run))
+    assert result["result_category"] == "external_probe"
+    assert captured["url"] == "https://sync.example.com/health"
+    assert captured["headers"]["Authorization"] == "Bearer token-9"
