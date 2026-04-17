@@ -962,12 +962,8 @@ async function injectDemoTelegramWidget(){
   const currentHost = normalizeLoginHost(window.location.hostname);
   const canonicalHost = normalizeLoginHost(DEMO_CANONICAL_HOST);
   const loginDomain = normalizeLoginHost(DEMO_LOGIN_DOMAIN);
-  if (currentHost === `www.${canonicalHost}`) {
-    window.location.replace(`${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`);
-    return;
-  }
   if (!isDemoCanonicalHost()) {
-    wrap.innerHTML = `<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login is disabled on <b>${window.location.hostname}</b>. Use <b>${DEMO_CANONICAL_HOST}</b>.</div>`;
+    wrap.innerHTML = `<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login only works on talitrade.com</div>`;
     return;
   }
   if (loginDomain && loginDomain !== canonicalHost) {
