@@ -486,6 +486,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       </div>
 
       <div id="gate-tg-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;text-align:center;">Authentication failed. Please try again.</div>
+      <pre id="gate-tg-diag" style="display:none;margin:-2px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(77,116,144,0.12);border:1px solid rgba(77,116,144,0.35);font-size:11px;line-height:1.45;color:#8bafc7;white-space:pre-wrap;text-align:left;"></pre>
       <div id="gate-signing" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
 
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
@@ -538,6 +539,18 @@ let taliStep2InitStarted = false;
 let taliWidgetScriptInjected = false;
 let taliStep2RenderedMode = '';
 let taliTelegramConfigFetchFailed = false;
+let taliAuthDiagnostics = [];
+
+function pushGateDiagnostic(message) {
+  if (!message) return;
+  taliAuthDiagnostics.push(`[${new Date().toISOString()}] ${message}`);
+  if (taliAuthDiagnostics.length > 8) taliAuthDiagnostics.shift();
+  const diagEl = document.getElementById('gate-tg-diag');
+  if (diagEl) {
+    diagEl.textContent = taliAuthDiagnostics.join('\n');
+    diagEl.style.display = 'block';
+  }
+}
 
 function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
@@ -549,6 +562,12 @@ function clearGateTelegramError() {
   const errEl = document.getElementById('gate-tg-error');
   errEl.textContent = '';
   errEl.style.display = 'none';
+  const diagEl = document.getElementById('gate-tg-diag');
+  if (diagEl) {
+    diagEl.textContent = '';
+    diagEl.style.display = 'none';
+  }
+  taliAuthDiagnostics = [];
 }
 
 function normalizeTelegramBotUsername(value) {
@@ -608,7 +627,8 @@ function validateTelegramLoginConfig() {
 
 async function hydrateTelegramWidgetConfig() {
   try {
-    const res = await fetch(getBaseApiUrl() + '/auth/telegram/config');
+    const res = await fetch(getBaseApiUrl() + '/auth/telegram/config', { credentials: 'include' });
+    pushGateDiagnostic(`config_fetch_status=${res.status}`);
     if (!res.ok) {
       taliTelegramConfigFetchFailed = true;
       return;
@@ -624,8 +644,10 @@ async function hydrateTelegramWidgetConfig() {
     };
     TALI_LOGIN_CONFIG.oidcEnabled = !!cfg?.oidcEnabled;
     taliTelegramConfigFetchFailed = false;
+    pushGateDiagnostic(`config_loaded mode=${TALI_LOGIN_CONFIG.authMode} bot=${TALI_LOGIN_CONFIG.botUsername} login_domain=${TALI_LOGIN_CONFIG.loginDomain}`);
   } catch (_) {
     taliTelegramConfigFetchFailed = true;
+    pushGateDiagnostic('config_fetch_failed=network_or_cors');
   }
 }
 
@@ -850,6 +872,7 @@ async function maybeCompleteTelegramOidcCallback() {
     const raw = await res.text();
     let data = {};
     try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
+    pushGateDiagnostic(`session_create_status=${res.status} via=oidc`);
     if (!res.ok || !data.ok) {
       const msg = parseTelegramAuthFailure(res, data);
       setGateTelegramError(msg);
@@ -888,6 +911,7 @@ window.onTelegramAuth = async function(tgUser) {
     const raw = await res.text();
     let data = {};
     try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
+    pushGateDiagnostic(`session_create_status=${res.status} via=widget`);
     if (!res.ok || !data.ok) {
       const msg = parseTelegramAuthFailure(res, data);
       setGateTelegramError(msg);
@@ -905,13 +929,29 @@ window.onTelegramAuth = async function(tgUser) {
 };
 
 async function finishTelegramLogin(data) {
-  const user = data.user;
+  const user = normalizeTaliUserShape(data.user);
   const token = String(data.access_token || '');
   if (!token) throw new Error('missing_session_token');
+  if (!user) throw new Error('missing_or_invalid_user');
   hydrateAccountsMap(data.accounts || []);
   localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
   localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
   sessionStorage.setItem(TALI_TG_DONE_KEY, '1');
+
+  try {
+    const meRes = await fetch(getBaseApiUrl() + '/auth/me', {
+      headers: { Authorization: 'Bearer ' + token },
+      credentials: 'include',
+    });
+    pushGateDiagnostic(`/auth/me_status=${meRes.status} post_login`);
+    if (!meRes.ok) throw new Error('auth_me_failed_' + meRes.status);
+    const meData = await meRes.json();
+    const meUser = normalizeTaliUserShape(meData.user);
+    if (!meUser) throw new Error('auth_me_missing_user');
+    localStorage.setItem(TALI_USER_KEY, JSON.stringify(meUser));
+  } catch (meErr) {
+    pushGateDiagnostic(`/auth/me_failure=${meErr?.message || meErr}`);
+  }
 
   try {
     const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
@@ -953,12 +993,32 @@ async function finishTelegramLogin(data) {
   setTimeout(() => gate.style.display = 'none', 450);
 }
 
+
+function normalizeTaliUserShape(rawUser) {
+  if (!rawUser || typeof rawUser !== 'object') return null;
+  const telegramUserId = String(rawUser.telegramUserId || rawUser.telegram_user_id || '').trim();
+  if (!telegramUserId) return null;
+  return {
+    ...rawUser,
+    telegramUserId,
+    telegram_user_id: telegramUserId,
+    username: rawUser.username || rawUser.telegram_username || '',
+    telegram_username: rawUser.telegram_username || rawUser.username || '',
+    firstName: rawUser.firstName || rawUser.first_name || '',
+    first_name: rawUser.first_name || rawUser.firstName || '',
+    lastName: rawUser.lastName || rawUser.last_name || '',
+    last_name: rawUser.last_name || rawUser.lastName || '',
+    photoUrl: rawUser.photoUrl || rawUser.photo_url || '',
+    photo_url: rawUser.photo_url || rawUser.photoUrl || '',
+  };
+}
+
 function getTaliUser() {
   try {
     const raw = localStorage.getItem(TALI_USER_KEY);
     if (!raw) return null;
-    const u = JSON.parse(raw);
-    return u?.telegramUserId ? u : null;
+    const u = normalizeTaliUserShape(JSON.parse(raw));
+    return u || null;
   } catch(e) { localStorage.removeItem(TALI_USER_KEY); return null; }
 }
 
@@ -994,7 +1054,9 @@ async function syncLinkedAccountsFromBackend(telegramUserId) {
   try {
     const res = await fetch(getBaseApiUrl() + '/auth/me', {
       headers: { Authorization: 'Bearer ' + token },
+      credentials: 'include',
     });
+    pushGateDiagnostic(`/auth/me_status=${res.status} watcher`);
     if (!res.ok) return false;
     const data = await res.json();
     const linkedAccounts = data.accounts || [];
@@ -1736,6 +1798,9 @@ function hasLinkedAccounts(){
 }
 
 const bootstrapTaliUser=getTaliUser();
+if(!bootstrapTaliUser){
+  pushGateDiagnostic('gate_reason=no_local_authenticated_user');
+}
 if(bootstrapTaliUser){
   syncLinkedAccountsFromBackend(bootstrapTaliUser.telegramUserId);
   startAccountLinkWatcher(bootstrapTaliUser.telegramUserId);
