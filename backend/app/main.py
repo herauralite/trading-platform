@@ -102,10 +102,17 @@ def normalize_hostname(value: str | None, default: str = "") -> str:
     return host or default
 
 
+def normalize_telegram_login_domain(value: str | None) -> str:
+    host = normalize_hostname(value, "www.talitrade.com")
+    if host == "talitrade.com":
+        return "www.talitrade.com"
+    return host
+
+
 TELEGRAM_BOT_USERNAME_RAW  = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot")
-TELEGRAM_LOGIN_DOMAIN_RAW  = os.getenv("TELEGRAM_LOGIN_DOMAIN", "talitrade.com")
+TELEGRAM_LOGIN_DOMAIN_RAW  = os.getenv("TELEGRAM_LOGIN_DOMAIN", "www.talitrade.com")
 TELEGRAM_BOT_USERNAME      = normalize_telegram_bot_username(TELEGRAM_BOT_USERNAME_RAW)
-TELEGRAM_LOGIN_DOMAIN      = normalize_hostname(TELEGRAM_LOGIN_DOMAIN_RAW, "talitrade.com")
+TELEGRAM_LOGIN_DOMAIN      = normalize_telegram_login_domain(TELEGRAM_LOGIN_DOMAIN_RAW)
 
 CONNECTOR_CATALOG = {
     "fundingpips_extension": {
@@ -1449,7 +1456,7 @@ async def telegram_login(data: TelegramAuthData):
             content={
                 "detail": "Invalid Telegram auth data",
                 "reason": reason,
-                "hint": "Check bot username, bot token, and BotFather login domain for talitrade.com",
+                "hint": "Check bot username, bot token, and BotFather login domain for www.talitrade.com",
             },
         )
 
@@ -2208,7 +2215,7 @@ async def telegram_webhook(request: Request):
             await send_telegram(
                 f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\n"
                 f"Your Telegram account is registered. To get started:\n\n"
-                f"1️⃣ Open the platform at talitrade.com/app\n"
+                f"1️⃣ Open the platform at www.talitrade.com/app\n"
                 f"2️⃣ Log in with Telegram\n"
                 f"3️⃣ Install the Chrome extension on FundingPips\n\n"
                 f"Your trading data will automatically link to this account.\n\n"

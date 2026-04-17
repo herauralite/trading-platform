@@ -20,7 +20,7 @@ import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connecto
 
 const API = 'https://trading-platform-production-70e0.up.railway.app'
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
-const CANONICAL_HOST = 'talitrade.com'
+const CANONICAL_HOST = 'www.talitrade.com'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -157,7 +157,7 @@ function App() {
     const timer = window.setTimeout(() => {
       const rendered = Boolean(widgetWrapRef.current?.querySelector('iframe, .telegram-login, div[id^="telegram-login"]'))
       if (!rendered) {
-        setWidgetStatus('Telegram script loaded but widget did not render. Open talitrade.com to continue with Telegram sign-in, then disable blockers if needed.')
+        setWidgetStatus('Telegram script loaded but widget did not render. Open www.talitrade.com to continue with Telegram sign-in, then disable blockers if needed.')
       }
     }, 3000)
     return () => window.clearTimeout(timer)
@@ -402,7 +402,7 @@ function App() {
             ) : (
               <div ref={widgetWrapRef}>
                 {!isCanonicalHost ? (
-                  <p className="error-text">Open talitrade.com to continue with Telegram sign-in.</p>
+                  <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
                 ) : (
                   <>
                     <script

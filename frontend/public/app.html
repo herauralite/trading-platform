@@ -430,7 +430,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
      TWO-STEP GATE
      Step 1: Dev password  (set TALI_DEV_PASSWORD below)
      Step 2: Telegram link
-     Register domain with BotFather: /setdomain → talitrade.com
+     Register domain with BotFather: /setdomain → www.talitrade.com
 ═══════════════════════════════════════════════════════════════ -->
 <div id="gate" style="
   position:fixed;inset:0;z-index:99999;
@@ -472,7 +472,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
         Continue →
       </button>
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
-        Not a developer? <a href="https://talitrade.com" style="color:#2aabee;text-decoration:none;">talitrade.com</a>
+        Not a developer? <a href="https://www.talitrade.com" style="color:#2aabee;text-decoration:none;">www.talitrade.com</a>
       </div>
     </div>
 
@@ -489,7 +489,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
       <div id="gate-signing" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
 
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
-        Your Telegram ID is used only for alerts. <a href="https://talitrade.com" style="color:#2aabee;text-decoration:none;">Privacy</a>
+        Your Telegram ID is used only for alerts. <a href="https://www.talitrade.com" style="color:#2aabee;text-decoration:none;">Privacy</a>
       </div>
     </div>
 
@@ -513,8 +513,8 @@ const TALI_DEV_PASSWORD = 'tali2024dev';       // ← dev password
 let TALI_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
 let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
 let TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
-let TALI_LOGIN_DOMAIN = 'talitrade.com';
-let TALI_CANONICAL_LOGIN_DOMAIN = 'talitrade.com';
+let TALI_LOGIN_DOMAIN = 'www.talitrade.com';
+let TALI_CANONICAL_LOGIN_DOMAIN = 'www.talitrade.com';
 // ────────────────────────────────────────────────────────────────────────────
 
 const TALI_USER_KEY    = 'tali_user_v1';
@@ -574,7 +574,7 @@ function validateTelegramLoginConfig() {
   if (!currentHost || currentHost !== canonicalHost) {
     issues.push('host_not_canonical');
   }
-  if (currentHost === 'talitrade.com') {
+  if (currentHost === 'www.talitrade.com') {
     if (TALI_BOT_USERNAME.toLowerCase().includes('change') || TALI_BOT_USERNAME.toLowerCase().includes('your')) {
       issues.push('bot_username_placeholder_like');
     }
@@ -613,7 +613,7 @@ async function hydrateTelegramWidgetConfig() {
 function parseTelegramAuthFailure(res, body) {
   const reason = body?.reason || body?.detail || `http_${res.status}`;
   if (reason === 'hash_mismatch') {
-    return 'Telegram verification failed (hash mismatch). Check bot username and BotFather /setdomain talitrade.com.';
+    return 'Telegram verification failed (hash mismatch). Check bot username and BotFather /setdomain www.talitrade.com.';
   }
   if (reason === 'auth_expired') {
     return 'Telegram login expired. Please try again.';
@@ -695,7 +695,7 @@ async function showTelegramStep() {
   if (issues.length) {
     console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME, host: window.location.hostname, loginDomain: TALI_LOGIN_DOMAIN, canonicalLoginDomain: TALI_CANONICAL_LOGIN_DOMAIN });
     if (issues.includes('host_not_canonical')) {
-      setGateTelegramError('Open talitrade.com to continue with Telegram sign-in.');
+      setGateTelegramError('Open www.talitrade.com to continue with Telegram sign-in.');
       return;
     }
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));
@@ -730,12 +730,12 @@ async function showTelegramStep() {
     setTimeout(() => {
       const widgetRendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
       if (!widgetRendered && !taliTelegramAuthStarted) {
-        setGateTelegramError('Telegram script loaded but widget did not render. Disable blockers and verify you are on talitrade.com.');
+        setGateTelegramError('Telegram script loaded but widget did not render. Disable blockers and verify you are on www.talitrade.com.');
       }
     }, 3000);
     taliWidgetFailureTimer = setTimeout(() => {
       if (!taliTelegramAuthStarted) {
-        setGateTelegramError('Telegram widget loaded but login did not complete. Confirm BotFather /setdomain = talitrade.com and bot username is correct.');
+        setGateTelegramError('Telegram widget loaded but login did not complete. Confirm BotFather /setdomain = www.talitrade.com and bot username is correct.');
         console.warn('TaliTrade: Telegram widget did not trigger auth callback', { bot: TALI_BOT_USERNAME, host: window.location.hostname });
       }
     }, 20000);
@@ -800,7 +800,7 @@ window.onTelegramAuth = async function(tgUser) {
     //     content.js (which runs on fundingpips.com, a different origin) can
     //     read it for account linking. Requires:
     //       - background.js service worker in the extension
-    //       - manifest.json: "externally_connectable": { "matches": ["https://talitrade.com/*"] }
+    //       - manifest.json: "externally_connectable": { "matches": ["https://www.talitrade.com/*"] }
     //       - TALI_EXTENSION_ID set below to your extension's Chrome ID
     try {
       const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
