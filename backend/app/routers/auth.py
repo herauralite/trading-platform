@@ -28,7 +28,7 @@ class TelegramAuthRequest(BaseModel):
 
 def verify_telegram_hash(data: TelegramAuthRequest) -> bool:
     if not BOT_TOKEN:
-        return True  # Skip verification in dev if no token set
+        return False
     secret_key = hashlib.sha256(BOT_TOKEN.encode()).digest()
     is_valid = hmac.compare_digest(
         hmac.new(secret_key, data.query_string.encode(), hashlib.sha256).hexdigest(),
@@ -38,6 +38,8 @@ def verify_telegram_hash(data: TelegramAuthRequest) -> bool:
 
 
 def create_token(user_id: str) -> str:
+    if not SECRET_KEY:
+        raise HTTPException(status_code=500, detail="Server auth is not configured")
     expire = datetime.utcnow() + timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "60")))
     return jwt.encode({"sub": user_id, "exp": expire}, SECRET_KEY, algorithm=ALGORITHM)
 
