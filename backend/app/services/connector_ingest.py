@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime, timezone, timedelta
 from typing import Any
 import hashlib
+import httpx
 import json
 import os
 import socket
@@ -22,6 +23,7 @@ SYNC_RUN_LEASE_SECONDS = 300
 SYNC_WORKER_IDLE_POLL_SECONDS = 1.0
 SYNC_WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 FUNDINGPIPS_SYNC_FRESHNESS_SLA_MINUTES = 15
+DEFAULT_EXTERNAL_HEALTHCHECK_TIMEOUT_SECONDS = 8.0
 
 
 class ConnectorSyncError(RuntimeError):
@@ -144,6 +146,29 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_user_connector_idx ON connector_sync_runs(user_id, connector_type, created_at DESC)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_pending_idx ON connector_sync_runs(status, next_retry_at, created_at)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_lease_idx ON connector_sync_runs(status, lease_expires_at)"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS connector_configs (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                connector_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'incomplete',
+                non_secret_config JSONB DEFAULT '{}'::jsonb,
+                secret_config JSONB DEFAULT '{}'::jsonb,
+                validation_error TEXT,
+                configured_at TIMESTAMPTZ,
+                rotated_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (user_id, connector_type)
+            )
+        """))
+        await conn.execute(text("ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'incomplete'"))
+        await conn.execute(text("ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS non_secret_config JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS secret_config JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS validation_error TEXT"))
+        await conn.execute(text("ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS configured_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE connector_configs ADD COLUMN IF NOT EXISTS rotated_at TIMESTAMPTZ"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_configs_user_idx ON connector_configs(user_id)"))
 
         # 1) Create core tables first (fresh DB safe).
         await conn.execute(text("""
@@ -494,6 +519,19 @@ async def get_latest_connector_sync_run(user_id: str, connector_type: str) -> di
 
 
 async def _perform_fundingpips_sync(run: dict[str, Any]) -> dict[str, Any]:
+    config_row = await get_connector_config(run["user_id"], run["connector_type"], include_secret=True)
+    if config_row and (config_row.get("status") == "configured"):
+        return await _perform_fundingpips_external_probe(run, config_row)
+    if config_row and (config_row.get("status") in {"invalid", "incomplete"}):
+        raise ConnectorSyncError(
+            "FundingPips connector configuration is incomplete",
+            code="connector_config_incomplete",
+            category="configuration",
+            transient=False,
+            status_detail=config_row.get("validation_error") or "Connector configuration is incomplete.",
+            source_summary={"connector_mode": "external_probe"},
+        )
+
     async with engine.connect() as conn:
         account_rows = (await conn.execute(text("""
             SELECT
@@ -891,6 +929,219 @@ async def get_connector_lifecycle(user_id: str, connector_type: str) -> dict[str
             "connector_type": _normalize_connector(connector_type),
         })).mappings().first()
     return dict(row) if row else None
+
+
+def _sanitize_connector_config(
+    row: dict[str, Any] | None,
+    *,
+    non_secret_fields: list[str] | None = None,
+    secret_fields: list[str] | None = None,
+) -> dict[str, Any] | None:
+    if not row:
+        return None
+    non_secret = dict(row.get("non_secret_config") or {})
+    if non_secret_fields:
+        non_secret = {k: non_secret.get(k) for k in non_secret_fields if k in non_secret}
+    stored_secret = dict(row.get("secret_config") or {})
+    allowed_secret_fields = secret_fields or list(stored_secret.keys())
+    stored_secret_keys = [field for field in allowed_secret_fields if stored_secret.get(field)]
+    return {
+        "user_id": row["user_id"],
+        "connector_type": row["connector_type"],
+        "status": row.get("status") or "incomplete",
+        "non_secret_config": non_secret,
+        "has_secret_config": bool(stored_secret_keys),
+        "configured_secret_fields": stored_secret_keys,
+        "validation_error": row.get("validation_error"),
+        "configured_at": row.get("configured_at"),
+        "rotated_at": row.get("rotated_at"),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+async def get_connector_config(
+    user_id: str,
+    connector_type: str,
+    *,
+    include_secret: bool = False,
+) -> dict[str, Any] | None:
+    async with engine.connect() as conn:
+        row = (await conn.execute(text("""
+            SELECT *
+            FROM connector_configs
+            WHERE user_id = :user_id
+              AND connector_type = :connector_type
+            LIMIT 1
+        """), {
+            "user_id": _normalize_user_id(user_id),
+            "connector_type": _normalize_connector(connector_type),
+        })).mappings().first()
+    if not row:
+        return None
+    data = dict(row)
+    if include_secret:
+        return data
+    return _sanitize_connector_config(data)
+
+
+async def upsert_connector_config(
+    user_id: str,
+    connector_type: str,
+    *,
+    non_secret_config: dict[str, Any] | None = None,
+    secret_config: dict[str, Any] | None = None,
+    status: str | None = None,
+    validation_error: str | None = None,
+) -> dict[str, Any]:
+    normalized_user = _normalize_user_id(user_id)
+    if not normalized_user:
+        raise ValueError("user_id is required for connector config")
+    normalized_connector = _normalize_connector(connector_type)
+    now = datetime.now(timezone.utc)
+    async with engine.begin() as conn:
+        row = (await conn.execute(text("""
+            INSERT INTO connector_configs (
+                user_id,
+                connector_type,
+                status,
+                non_secret_config,
+                secret_config,
+                validation_error,
+                configured_at,
+                rotated_at,
+                created_at,
+                updated_at
+            ) VALUES (
+                :user_id,
+                :connector_type,
+                :status,
+                CAST(:non_secret_config AS jsonb),
+                CAST(:secret_config AS jsonb),
+                :validation_error,
+                :configured_at,
+                :rotated_at,
+                NOW(),
+                NOW()
+            )
+            ON CONFLICT (user_id, connector_type)
+            DO UPDATE SET
+                status = COALESCE(EXCLUDED.status, connector_configs.status),
+                non_secret_config = connector_configs.non_secret_config || EXCLUDED.non_secret_config,
+                secret_config = connector_configs.secret_config || EXCLUDED.secret_config,
+                validation_error = EXCLUDED.validation_error,
+                configured_at = COALESCE(EXCLUDED.configured_at, connector_configs.configured_at),
+                rotated_at = COALESCE(EXCLUDED.rotated_at, connector_configs.rotated_at),
+                updated_at = NOW()
+            RETURNING *
+        """), {
+            "user_id": normalized_user,
+            "connector_type": normalized_connector,
+            "status": (status or "incomplete"),
+            "non_secret_config": json.dumps(non_secret_config or {}),
+            "secret_config": json.dumps(secret_config or {}),
+            "validation_error": validation_error,
+            "configured_at": now if non_secret_config or secret_config else None,
+            "rotated_at": now if secret_config else None,
+        })).mappings().first()
+    return dict(row)
+
+
+async def clear_connector_config(
+    user_id: str,
+    connector_type: str,
+) -> bool:
+    async with engine.begin() as conn:
+        result = await conn.execute(text("""
+            DELETE FROM connector_configs
+            WHERE user_id = :user_id
+              AND connector_type = :connector_type
+        """), {
+            "user_id": _normalize_user_id(user_id),
+            "connector_type": _normalize_connector(connector_type),
+        })
+    return bool(result.rowcount)
+
+
+def validate_fundingpips_connector_config(non_secret_config: dict[str, Any], secret_config: dict[str, Any]) -> tuple[str, str | None]:
+    healthcheck_url = str(non_secret_config.get("healthcheck_url") or "").strip()
+    account_id = str(non_secret_config.get("external_account_id") or "").strip()
+    api_token = str(secret_config.get("api_token") or "").strip()
+    if not healthcheck_url:
+        return ("incomplete", "healthcheck_url is required for FundingPips external sync")
+    if not account_id:
+        return ("incomplete", "external_account_id is required for FundingPips external sync")
+    if not api_token:
+        return ("incomplete", "api_token is required for FundingPips external sync")
+    return ("configured", None)
+
+
+async def _perform_fundingpips_external_probe(run: dict[str, Any], config_row: dict[str, Any]) -> dict[str, Any]:
+    non_secret = config_row.get("non_secret_config") or {}
+    secret = config_row.get("secret_config") or {}
+    probe_url = str(non_secret.get("healthcheck_url") or "").strip()
+    account_id = str(non_secret.get("external_account_id") or "").strip()
+    api_token = str(secret.get("api_token") or "").strip()
+    timeout_seconds = float(non_secret.get("timeout_seconds") or DEFAULT_EXTERNAL_HEALTHCHECK_TIMEOUT_SECONDS)
+    request_started_at = datetime.now(timezone.utc)
+    headers = {"Authorization": f"Bearer {api_token}", "Accept": "application/json"}
+    if account_id:
+        headers["X-Connector-Account"] = account_id
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.get(probe_url, headers=headers)
+        if response.status_code >= 400:
+            raise ConnectorSyncError(
+                f"FundingPips external probe returned HTTP {response.status_code}",
+                code="external_probe_http_error",
+                category="upstream",
+                transient=response.status_code >= 500,
+                status_detail="External FundingPips probe endpoint rejected the request.",
+                source_summary={
+                    "connector_mode": "external_probe",
+                    "probe_url": probe_url,
+                    "response_status_code": response.status_code,
+                },
+                diagnostics={"response_preview": response.text[:200]},
+            )
+        payload = response.json() if "application/json" in (response.headers.get("content-type") or "") else {}
+    except httpx.TimeoutException as exc:
+        raise ConnectorSyncError(
+            "FundingPips external probe timed out",
+            code="external_probe_timeout",
+            category="network",
+            transient=True,
+            status_detail="FundingPips external endpoint timeout during sync.",
+            source_summary={"connector_mode": "external_probe", "probe_url": probe_url},
+            diagnostics={"exception_type": exc.__class__.__name__, "timeout_seconds": timeout_seconds},
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise ConnectorSyncError(
+            f"FundingPips external probe transport error: {exc}",
+            code="external_probe_transport_error",
+            category="network",
+            transient=True,
+            status_detail="FundingPips external endpoint request failed.",
+            source_summary={"connector_mode": "external_probe", "probe_url": probe_url},
+            diagnostics={"exception_type": exc.__class__.__name__},
+        ) from exc
+
+    return {
+        "result_category": "external_probe",
+        "status_detail": "FundingPips external probe completed successfully.",
+        "source_summary": {
+            "connector_mode": "external_probe",
+            "probe_url": probe_url,
+            "probed_account_id": account_id,
+            "probed_at": request_started_at.isoformat(),
+        },
+        "diagnostics": {
+            "response_status": response.status_code,
+            "remote_status": payload.get("status") if isinstance(payload, dict) else None,
+            "remote_message": payload.get("message") if isinstance(payload, dict) else None,
+        },
+    }
 
 
 async def ingest_account_snapshot(payload: dict[str, Any]) -> bool:

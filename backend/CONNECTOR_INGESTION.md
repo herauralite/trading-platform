@@ -29,6 +29,10 @@ This backend now supports a connector-first ingestion pipeline.
 - `POST /connectors/{connector_type}/sync` (queue async sync run)
 - `GET /connectors/{connector_type}/sync-runs?limit=10` (recent run history)
 - `POST /connectors/{connector_type}/disconnect` (deactivate connector accounts + mark disconnected)
+- `GET /connectors/{connector_type}/config` (safe config view; no secrets)
+- `PUT /connectors/{connector_type}/config` (set config/credentials)
+- `PATCH /connectors/{connector_type}/config` (partial update / token rotation)
+- `DELETE /connectors/{connector_type}/config` (clear stored config)
 
 `/connectors/{connector_type}/sync` only accepts connectors where catalog metadata marks `supports_live_sync=true`. Unsupported types (for example `manual` and `csv_import`) are rejected with a clear 4xx and no run enqueue.
 
@@ -41,6 +45,25 @@ Lifecycle state is persisted in `connector_lifecycle` with:
 - `metadata` for action/event provenance
 
 Account membership remains represented by `trading_accounts` rows grouped by `connector_type`.
+
+## Connector config security boundaries (Issue #58)
+
+Connector config is persisted in `connector_configs` with owner isolation by `(user_id, connector_type)`.
+
+- `non_secret_config` stores safe operational fields.
+- `secret_config` stores sensitive fields (e.g., API tokens).
+- Normal product responses never return `secret_config` values.
+- API responses only expose:
+  - whether secret config exists (`has_secret_config`)
+  - which secret field names are configured (`configured_secret_fields`)
+  - config readiness (`status`) and optional validation details.
+
+Current connector-specific config support:
+
+- `fundingpips_extension`
+  - non-secret: `healthcheck_url`, `external_account_id`, `timeout_seconds`
+  - secret: `api_token`
+  - readiness is validated before status is marked `configured`.
 
 ## Sync execution model (Issues #54 + #56)
 
@@ -105,6 +128,11 @@ What exists now:
 Currently supported live-sync connector behavior:
 
 - **`fundingpips_extension`**
+  - If connector config is `configured`, sync runs a true external probe:
+    - `GET healthcheck_url` with bearer `api_token`
+    - includes `X-Connector-Account` header from configured `external_account_id`
+    - stores structured probe diagnostics in `result_detail`.
+  - If connector config exists but is incomplete/invalid, sync fails as non-transient configuration error.
   - Sync execution now runs a connector-specific health check over linked active FundingPips accounts.
   - It validates data freshness from `account_snapshots` against a sync freshness SLA (15 minutes), and summarizes recent activity from:
     - open `positions`
