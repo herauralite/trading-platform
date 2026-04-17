@@ -629,17 +629,6 @@ async function hydrateTelegramWidgetConfig() {
   }
 }
 
-function maybeRedirectToCanonicalTelegramHost() {
-  const currentHost = normalizeLoginHost(window.location.hostname);
-  const canonicalHost = normalizeLoginHost(TALI_LOGIN_CONFIG.canonicalLoginDomain || TALI_LOGIN_CONFIG.loginDomain);
-  if (!currentHost || !canonicalHost || currentHost === canonicalHost) return false;
-  if (currentHost === `www.${canonicalHost}`) {
-    const next = `${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`;
-    window.location.replace(next);
-    return true;
-  }
-  return false;
-}
 
 function parseTelegramAuthFailure(res, body) {
   const reason = body?.reason || body?.detail || `http_${res.status}`;
@@ -745,7 +734,6 @@ function renderTelegramLegacyWidget() {
 
 async function showTelegramStep() {
   await hydrateTelegramWidgetConfig();
-  if (maybeRedirectToCanonicalTelegramHost()) return;
   const step2 = document.getElementById('gate-step2');
   step2.style.display = 'block';
   step2.classList.add('visible');
@@ -762,7 +750,7 @@ async function showTelegramStep() {
   const issues = validateTelegramLoginConfig();
   if (issues.length) {
     if (issues.includes('host_not_canonical')) {
-      setGateTelegramError(`Telegram login is disabled on this host (${window.location.hostname}). Use talitrade.com.`);
+      setGateTelegramError('Telegram login only works on talitrade.com');
       return;
     }
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));

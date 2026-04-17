@@ -402,7 +402,7 @@ function App() {
             ) : (
               <div ref={widgetWrapRef}>
                 {!isCanonicalHost ? (
-                  <p className="error-text">Telegram login is disabled on {window.location.hostname}. Use {canonicalHost || CANONICAL_HOST}.</p>
+                  <p className="error-text">Telegram login only works on talitrade.com</p>
                 ) : (
                   <>
                     <script
