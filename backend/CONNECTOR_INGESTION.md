@@ -42,7 +42,7 @@ Lifecycle state is persisted in `connector_lifecycle` with:
 
 Account membership remains represented by `trading_accounts` rows grouped by `connector_type`.
 
-## Sync execution model (Issue #54)
+## Sync execution model (Issues #54 + #56)
 
 Sync execution is persisted in `connector_sync_runs` and executed by a durable database-claim worker loop.
 
@@ -59,9 +59,9 @@ Durable claim/lease behavior:
 - Stale `running` runs whose lease expired are reclaimable after restart/process loss.
 
 Retry behavior:
-- Failures set run state to `retrying` and persist `next_retry_at` + incremented `retry_count`.
+- Transient failures set run state to `retrying` and persist `next_retry_at` + incremented `retry_count`.
 - No in-memory `sleep` controls run timing; workers poll DB for due work.
-- If retries are exhausted, run is marked `failed` and lifecycle moves to `sync_error`.
+- If retries are exhausted (or failure is explicitly non-transient), run is marked `failed` and lifecycle moves to `sync_error`.
 
 Lifecycle integration:
 - Queue/run/retry transitions push lifecycle into `sync_queued`, `sync_running`, `sync_retrying`.
@@ -100,6 +100,44 @@ What exists now:
 - Persistent sync run history and asynchronous manual sync orchestration.
 - Retry/backoff and per-run error visibility in connector surfaces.
 
+### Connector-specific live sync behavior
+
+Currently supported live-sync connector behavior:
+
+- **`fundingpips_extension`**
+  - Sync execution now runs a connector-specific health check over linked active FundingPips accounts.
+  - It validates data freshness from `account_snapshots` against a sync freshness SLA (15 minutes), and summarizes recent activity from:
+    - open `positions`
+    - last 24h `trades`
+    - last 24h `connector_events`
+  - If at least one account is fresh, the run succeeds and records structured `result_detail` with:
+    - `result_category`
+    - `status_detail`
+    - `counts` (accounts fresh/stale, open positions, trades/events in 24h)
+    - `source_summary` (connector mode, freshness SLA, stale account IDs)
+    - optional warning entries for stale sub-accounts.
+  - If all accounts are stale, sync fails with structured transient diagnostics (`error_code=stale_source_data`, `error_category=source_staleness`) and is retryable.
+  - If no active accounts are linked, sync fails as non-transient (`error_code=no_active_accounts`, `error_category=configuration`) and does not retry.
+
+### Structured diagnostics in sync runs
+
+`connector_sync_runs.result_detail` now stores normalized diagnostic fields that are safe for UI rendering:
+
+- Success-oriented fields:
+  - `result_category`
+  - `status_detail`
+  - `counts`
+  - `source_summary`
+- Failure-oriented fields:
+  - `result_category=error`
+  - `error_code`
+  - `error_category`
+  - `is_transient`
+  - `status_detail`
+  - optional `diagnostics` payloads for debugging.
+
+This provides actionable context beyond a generic pass/fail string while preserving existing durable orchestration semantics.
+
 Restart behavior:
 - If app stops mid-run, the run remains `running` with a lease timestamp.
 - On restart (or on another process), expired leases are reclaimed and re-executed safely.
@@ -112,6 +150,8 @@ Restart behavior:
 - Durable connector sync claim/lease logic remains in place, but global multi-process web execution is intentionally blocked until non-sync schedulers are split or leader-gated.
 
 Future work (not in this issue scope):
+- Add true remote pull APIs for additional connectors beyond extension-driven ingestion.
+- Expand connector-specific diagnostics to include external API latency/rate-limit telemetry.
 - External worker deployment topology/metrics dashboards.
 - Lease heartbeats for very long-running connector sync implementations.
 - Cancellation controls, dead-letter handling, and richer incident analytics.
