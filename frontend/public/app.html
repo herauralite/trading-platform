@@ -695,7 +695,7 @@ async function showTelegramStep() {
   if (issues.length) {
     console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME, host: window.location.hostname, loginDomain: TALI_LOGIN_DOMAIN, canonicalLoginDomain: TALI_CANONICAL_LOGIN_DOMAIN });
     if (issues.includes('host_not_canonical')) {
-      setGateTelegramError('Telegram login only works on talitrade.com');
+      setGateTelegramError('Open talitrade.com to continue with Telegram sign-in.');
       return;
     }
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));

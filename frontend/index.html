@@ -245,6 +245,10 @@ footer{
 #accessModal{display:none;position:fixed;inset:0;z-index:1500;align-items:center;justify-content:center;padding:20px;}
 #accessModal.open{display:flex;}
 #accessModal.open #modalCard{animation:modalIn .28s cubic-bezier(.22,1,.36,1) forwards;}
+
+#homepageAuthGate{display:none;position:fixed;inset:0;z-index:1650;align-items:center;justify-content:center;padding:20px;}
+#homepageAuthGate.open{display:flex;}
+#homepageAuthGate.open #homepageAuthCard{animation:modalIn .24s cubic-bezier(.22,1,.36,1) forwards;}
 @keyframes modalIn{from{opacity:0;transform:scale(.96) translateY(14px)}to{opacity:1;transform:scale(1) translateY(0)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes successPulse{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:.8;transform:scale(1.08)}}
@@ -316,12 +320,12 @@ footer{
 <div class="nav-inner">
   <a class="logo" href="/">Tali<span>Trade</span></a>
   <div class="nav-links">
-    <a href="#features">Platform</a>
+    <a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Platform</a>
     <a href="#how-it-works">How It Works</a>
     <a href="#preview">Demo</a>
     <a href="#pricing">Pricing</a>
   </div>
-  <a class="nav-cta" href="#" onclick="openModal(event)">Get Early Access</a>
+  <a class="nav-cta" href="#" onclick="requireHomepageAuth(event, 'cta')">Get Early Access</a>
 </div>
 </nav>
 
@@ -337,7 +341,7 @@ footer{
   <h1>The platform built for <span class="accent">prop firm</span> traders.</h1>
   <p>Your trades tracked. Your risk monitored. Your payout calculated. TaliTrade is the operating system the prop trading world has been missing.</p>
   <div class="hero-buttons">
-    <a class="btn-primary" href="#" onclick="openModal(event)">
+    <a class="btn-primary" href="#" onclick="requireHomepageAuth(event, 'cta')">
       Join the Beta
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </a>
@@ -598,7 +602,9 @@ footer{
             <h3 id="outcomeHeadline" style="font-size:26px;line-height:1.02;font-weight:800;letter-spacing:-.05em;color:#f8fbff;margin-top:16px;">Nice trade.</h3>
             <p id="outcomeCopy" style="font-size:14px;line-height:1.6;color:rgba(232,240,255,0.72);margin-top:10px;margin-bottom:22px;">Sign in with Telegram to save your score to the leaderboard.</p>
             <!-- Telegram Login Widget renders here -->
-            <div id="tgDemoWidgetWrap" style="display:flex;justify-content:center;margin-bottom:14px;min-height:44px;"></div>
+            <div id="tgDemoWidgetWrap" style="display:flex;justify-content:center;margin-bottom:14px;min-height:44px;">
+              <button id="demoSaveAuthBtn" onclick="beginDemoSaveAuth(event)" style="width:100%;padding:14px 16px;border:none;border-radius:12px;background:linear-gradient(135deg,#60c8ff,#2daeff);color:#021019;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:.02em;box-shadow:0 16px 40px rgba(45,174,255,0.24);font-family:'Inter',sans-serif;">Sign in with Telegram to save score</button>
+            </div>
             <button id="outcomeContinueBtn" style="margin-top:4px;width:100%;padding:13px;border:1px solid rgba(255,255,255,0.08);border-radius:12px;background:transparent;color:rgba(232,240,255,0.45);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;">Skip → just show me TaliTrade</button>
           </div>
 
@@ -671,7 +677,7 @@ footer{
         <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Payout eligibility tracker</li>
         <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(100,116,139,0.5)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span style="color:var(--muted);">Multi-account</span></li>
       </ul>
-      <button class="pricing-cta ghost" onclick="openModal(event)">Join beta for free →</button>
+      <button class="pricing-cta ghost" onclick="requireHomepageAuth(event, 'cta')">Join beta for free →</button>
     </div>
 
     <!-- PRO (featured) -->
@@ -693,7 +699,7 @@ footer{
         <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Leaderboard access</li>
         <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Priority support</li>
       </ul>
-      <button class="pricing-cta primary" onclick="openModal(event)">Join beta for free →</button>
+      <button class="pricing-cta primary" onclick="requireHomepageAuth(event, 'cta')">Join beta for free →</button>
     </div>
 
     <!-- BETA -->
@@ -714,7 +720,7 @@ footer{
         <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Shape the roadmap</li>
         <li style="color:var(--muted);font-size:13px;"> <span id="pricingWaitlistCount" style="color:#86efac;font-weight:700;">247</span> Traders already in</li>
       </ul>
-      <button class="pricing-cta" style="background:linear-gradient(135deg,#4ade80,#22c55e);color:#031a0a;font-weight:800;" onclick="openModal(event)">Claim Your Spot →</button>
+      <button class="pricing-cta" style="background:linear-gradient(135deg,#4ade80,#22c55e);color:#031a0a;font-weight:800;" onclick="requireHomepageAuth(event, 'cta')">Claim Your Spot →</button>
     </div>
 
   </div>
@@ -736,7 +742,7 @@ footer{
 
   <h2>The next generation <br>trading platform.</h2>
   <p>We're building the software prop traders should have had from the start.</p>
-  <a class="btn-primary" style="display:inline-flex;" href="#" onclick="openModal(event)">
+  <a class="btn-primary" style="display:inline-flex;" href="#" onclick="requireHomepageAuth(event, 'cta')">
     Request Early Access
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
   </a>
@@ -831,6 +837,21 @@ footer{
   </div>
 </div>
 
+
+
+<div id="homepageAuthGate" style="display:none;position:fixed;inset:0;z-index:1650;align-items:center;justify-content:center;padding:20px;">
+  <div style="position:absolute;inset:0;background:rgba(2,6,14,0.86);backdrop-filter:blur(12px);" onclick="closeHomepageAuthGate()"></div>
+  <div id="homepageAuthCard" style="position:relative;z-index:1;max-width:430px;width:100%;border-radius:20px;background:linear-gradient(180deg,rgba(10,17,29,0.98),rgba(6,11,21,0.98));border:1px solid rgba(255,255,255,0.1);padding:26px;box-shadow:0 26px 70px rgba(0,0,0,0.44);">
+    <button onclick="closeHomepageAuthGate()" style="position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:rgba(232,240,255,0.6);cursor:pointer;">✕</button>
+    <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border-radius:999px;background:rgba(45,174,255,0.12);border:1px solid rgba(45,174,255,0.26);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8bd8ff;">Telegram Sign-in Required</div>
+    <h3 id="homepageAuthTitle" style="margin-top:14px;font-size:25px;line-height:1.1;letter-spacing:-.04em;color:#f8fbff;">Continue to platform</h3>
+    <p id="homepageAuthCopy" style="margin-top:10px;font-size:14px;line-height:1.6;color:rgba(232,240,255,0.74);">Sign in with Telegram to continue.</p>
+    <div id="homepageAuthError" style="display:none;margin-top:12px;padding:11px 12px;border-radius:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);font-size:12px;line-height:1.5;color:#fca5a5;"></div>
+    <div id="homepageAuthWidgetWrap" style="margin-top:16px;display:flex;justify-content:center;min-height:48px;align-items:center;"></div>
+    <div style="margin-top:12px;font-size:12px;color:rgba(148,163,184,0.85);text-align:center;">Once hosting sends traffic to <b>talitrade.com</b>, sign-in and app entry will work consistently.</div>
+  </div>
+</div>
+
 <!-- FOOTER -->
 <footer>
 <div class="container footer-inner">
@@ -838,7 +859,7 @@ footer{
   <div class="footer-links">
     <a href="https://t.me/talitrade" target="_blank">Telegram</a>
     <a href="/cdn-cgi/l/email-protection#aedddbdedec1dcdaeedacfc2c7dadccfcacb80cdc1c3">Support</a>
-    <a href="/app">Dashboard</a>
+    <a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Dashboard</a>
   </div>
 </div>
 </footer>
@@ -925,20 +946,68 @@ function renderLeaderboard(rows){
   }).join('');
 }
 
-// Telegram Login Widget callback — fires after user authenticates
-window.onTelegramDemoAuth = function(user){
-  // user = { id, first_name, last_name, username, photo_url, auth_date, hash }
-  const pnl = window._demoPnlToSave || 0;
-  const username = user.username || user.first_name || ('user' + user.id);
+// Global homepage auth gate (shared by platform entry + demo score save)
+let homepageAuthIntent = 'cta';
+let homepageAuthPendingPnl = null;
+let homepageAuthWidgetLoaded = false;
 
-  // Optimistically show saved state immediately
+function setHomepageAuthError(message) {
+  const err = document.getElementById('homepageAuthError');
+  if (!err) return;
+  err.textContent = message || '';
+  err.style.display = message ? 'block' : 'none';
+}
+
+function getHomepageAuthCopy(intent) {
+  if (intent === 'demo_save') return 'Sign in with Telegram to save your demo result to the leaderboard.';
+  if (intent === 'platform_entry') return 'Sign in with Telegram to open TaliTrade Platform.';
+  return 'Sign in with Telegram to continue.';
+}
+
+function openHomepageAuthGate(intent = 'cta', options = {}) {
+  homepageAuthIntent = intent;
+  homepageAuthPendingPnl = typeof options.pnl === 'number' ? options.pnl : window._demoPnlToSave || 0;
+  const modal = document.getElementById('homepageAuthGate');
+  const title = document.getElementById('homepageAuthTitle');
+  const copy = document.getElementById('homepageAuthCopy');
+  if (title) title.textContent = intent === 'demo_save' ? 'Save your demo score' : 'Continue with Telegram';
+  if (copy) copy.textContent = getHomepageAuthCopy(intent);
+  setHomepageAuthError('');
+  if (modal) {
+    modal.style.display = 'flex';
+    modal.classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  ensureHomepageAuthWidget();
+}
+
+function closeHomepageAuthGate() {
+  const modal = document.getElementById('homepageAuthGate');
+  if (!modal) return;
+  modal.style.display = 'none';
+  modal.classList.remove('open');
+  document.body.style.overflow = '';
+}
+
+function requireHomepageAuth(e, intent = 'platform_entry') {
+  if (e) e.preventDefault();
+  openHomepageAuthGate(intent);
+  return false;
+}
+
+function beginDemoSaveAuth(e) {
+  if (e) e.preventDefault();
+  openHomepageAuthGate('demo_save', { pnl: window._demoPnlToSave || 0 });
+}
+
+function saveDemoScore(user, pnl) {
+  const username = user.username || user.first_name || ('user' + user.id);
   document.getElementById('savedUsername').textContent = '@' + username;
   document.getElementById('savedScore').textContent = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2);
   document.getElementById('savedScore').style.color = pnl >= 0 ? '#22c55e' : '#ef4444';
   document.getElementById('outcomeState1').style.display = 'none';
   document.getElementById('outcomeState2').style.display = 'block';
 
-  // POST to backend
   fetch(RAILWAY_URL + '/demo/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -950,58 +1019,70 @@ window.onTelegramDemoAuth = function(user){
     })
   })
   .then(r => r.json())
-  .then(() => fetchDemoLeaderboard()) // refresh leaderboard with new score
-  .catch(() => {}); // silently fail — UX already updated
+  .then(() => fetchDemoLeaderboard())
+  .catch(() => {});
+}
+
+window.onHomepageTelegramAuth = function(user){
+  const pnl = homepageAuthPendingPnl || window._demoPnlToSave || 0;
+  closeHomepageAuthGate();
+  if (homepageAuthIntent === 'demo_save') {
+    saveDemoScore(user, pnl);
+    return;
+  }
+  window.location.href = '/app';
 };
 
-// Inject Telegram Login Widget into the outcome overlay
-async function injectDemoTelegramWidget(){
-  const wrap = document.getElementById('tgDemoWidgetWrap');
-  if(!wrap || wrap.dataset.injected) return;
+async function ensureHomepageAuthWidget(){
+  const wrap = document.getElementById('homepageAuthWidgetWrap');
+  if(!wrap) return;
+  if (homepageAuthWidgetLoaded) return;
+  wrap.innerHTML = '<div style="font-size:12px;color:rgba(148,163,184,0.86);">Loading Telegram sign-in…</div>';
   await hydrateDemoTelegramConfig();
   const currentHost = normalizeLoginHost(window.location.hostname);
   const canonicalHost = normalizeLoginHost(DEMO_CANONICAL_HOST);
   const loginDomain = normalizeLoginHost(DEMO_LOGIN_DOMAIN);
   if (!isDemoCanonicalHost()) {
-    wrap.innerHTML = `<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login only works on talitrade.com</div>`;
+    setHomepageAuthError('Open talitrade.com to continue with Telegram sign-in.');
+    wrap.innerHTML = '';
     return;
   }
   if (loginDomain && loginDomain !== canonicalHost) {
-    wrap.innerHTML = `<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login misconfigured: login domain is <b>${loginDomain}</b>, expected <b>${canonicalHost}</b>.</div>`;
+    setHomepageAuthError(`Telegram login misconfigured: login domain is ${loginDomain}, expected ${canonicalHost}.`);
+    wrap.innerHTML = '';
     return;
   }
-  wrap.dataset.injected = '1';
   if (demoTelegramConfigFailed) {
-    wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Could not load Telegram login config. Please retry.</div>';
+    setHomepageAuthError('Could not load Telegram login config. Please retry.');
+    wrap.innerHTML = '';
     return;
   }
   if(!DEMO_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(DEMO_BOT_USERNAME)){
-    wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram login temporarily unavailable (bot username misconfigured).</div>';
-    console.error('TaliTrade: demo telegram widget blocked by invalid bot username', { bot: DEMO_BOT_USERNAME, source: DEMO_BOT_USERNAME_SOURCE, host: window.location.hostname });
+    setHomepageAuthError('Telegram login is temporarily unavailable. Please retry in a moment.');
+    wrap.innerHTML = '';
     return;
   }
-  console.info(`TaliTrade: demo telegram widget init bot=${DEMO_BOT_USERNAME} source=${DEMO_BOT_USERNAME_SOURCE} host=${window.location.hostname}`);
   wrap.innerHTML = '';
   const s = document.createElement('script');
   s.src = 'https://telegram.org/js/telegram-widget.js?22';
   s.setAttribute('data-telegram-login', DEMO_BOT_USERNAME);
   s.setAttribute('data-size', 'large');
-  s.setAttribute('data-onauth', 'onTelegramDemoAuth(user)');
+  s.setAttribute('data-onauth', 'onHomepageTelegramAuth(user)');
   s.setAttribute('data-request-access', 'write');
   s.async = true;
   s.onload = function(){
     setTimeout(function(){
       const rendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
       if (!rendered) {
-        wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Telegram script loaded but widget did not render. Confirm host is talitrade.com and disable blockers.</div>';
+        setHomepageAuthError('Telegram script loaded but widget did not render. Confirm you are on talitrade.com and disable blockers.');
       }
     }, 3000);
   };
   s.onerror = function(){
-    wrap.innerHTML = '<div style="font-size:12px;color:#ef4444;text-align:center;">Could not load Telegram login. Please disable blockers and retry.</div>';
-    console.error('TaliTrade: failed to load demo telegram widget script');
+    setHomepageAuthError('Could not load Telegram sign-in. Please disable blockers and retry.');
   };
   wrap.appendChild(s);
+  homepageAuthWidgetLoaded = true;
 }
 
 // Fetch leaderboard on page load
@@ -1498,8 +1579,7 @@ function launchConfetti(){
     outcomeCopy.textContent=won
       ? 'Sign in with Telegram to save your score to the leaderboard.'
       : 'Sign in with Telegram and try again. Your best score gets saved.';
-    // Inject Telegram widget lazily (only when overlay opens)
-    injectDemoTelegramWidget();
+    // Reuse the global auth gate for demo score save flow.
   }
 
   function resetTrade(){
@@ -1544,7 +1624,7 @@ function launchConfetti(){
   buyBtn.addEventListener('click', ()=>openTrade('buy'));
   sellBtn.addEventListener('click', ()=>openTrade('sell'));
   closeTradeBtn.addEventListener('click', closeTrade);
-  outcomeContinueBtn.addEventListener('click', ()=>{outcome.style.display='none'; resetTrade(); if(typeof openModal==='function') openModal();});
+  outcomeContinueBtn.addEventListener('click', ()=>{outcome.style.display='none'; resetTrade(); openHomepageAuthGate('platform_entry');});
   outcome.addEventListener('click', e=>{if(e.target===outcome){outcome.style.display='none'; resetTrade();}});
 
   window.addEventListener('resize', draw);
