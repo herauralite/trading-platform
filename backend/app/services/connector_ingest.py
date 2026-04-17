@@ -3,6 +3,9 @@ from datetime import datetime, timezone, timedelta
 from typing import Any
 import hashlib
 import json
+import os
+import socket
+import uuid
 
 from sqlalchemy import text
 
@@ -15,8 +18,9 @@ ALLOWED_CONNECTOR_STATUSES = {"connected", "degraded", "disconnected", "sync_err
 ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying"})
 SYNC_RUN_FINAL_STATUSES = {"succeeded", "failed"}
 SYNC_RUN_RETRY_DELAYS_SECONDS = [2, 5]
-
-_SYNC_CONNECTOR_LOCKS: dict[str, asyncio.Lock] = {}
+SYNC_RUN_LEASE_SECONDS = 300
+SYNC_WORKER_IDLE_POLL_SECONDS = 1.0
+SYNC_WORKER_ID = f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
 
 
 def _normalize_connector(value: str | None) -> str:
@@ -95,13 +99,18 @@ async def ensure_connector_tables() -> None:
                 retry_count INTEGER NOT NULL DEFAULT 0,
                 max_retries INTEGER NOT NULL DEFAULT 2,
                 next_retry_at TIMESTAMPTZ,
+                lease_owner TEXT,
+                lease_expires_at TIMESTAMPTZ,
                 error_detail TEXT,
                 result_detail JSONB DEFAULT '{}'::jsonb,
                 metadata JSONB DEFAULT '{}'::jsonb
             )
         """))
+        await conn.execute(text("ALTER TABLE connector_sync_runs ADD COLUMN IF NOT EXISTS lease_owner TEXT"))
+        await conn.execute(text("ALTER TABLE connector_sync_runs ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_user_connector_idx ON connector_sync_runs(user_id, connector_type, created_at DESC)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_pending_idx ON connector_sync_runs(status, next_retry_at, created_at)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS connector_sync_runs_lease_idx ON connector_sync_runs(status, lease_expires_at)"))
 
         # 1) Create core tables first (fresh DB safe).
         await conn.execute(text("""
@@ -326,17 +335,13 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
     return dict(row)
 
 
-def _get_sync_lock(user_id: str, connector_type: str) -> asyncio.Lock:
-    key = f"{_normalize_user_id(user_id)}::{_normalize_connector(connector_type)}"
-    if key not in _SYNC_CONNECTOR_LOCKS:
-        _SYNC_CONNECTOR_LOCKS[key] = asyncio.Lock()
-    return _SYNC_CONNECTOR_LOCKS[key]
-
-
 async def _set_sync_run_status(
     run_id: int,
     *,
     status: str,
+    expected_status: str | None = None,
+    lease_owner: str | None = None,
+    clear_lease: bool = False,
     started_at: datetime | None = None,
     finished_at: datetime | None = None,
     retry_count: int | None = None,
@@ -348,6 +353,9 @@ async def _set_sync_run_status(
     params = {
         "id": run_id,
         "status": status,
+        "expected_status": expected_status,
+        "lease_owner": lease_owner,
+        "clear_lease": clear_lease,
         "started_at": started_at,
         "finished_at": finished_at,
         "retry_count": retry_count,
@@ -365,6 +373,15 @@ async def _set_sync_run_status(
                 finished_at = COALESCE(:finished_at, finished_at),
                 retry_count = COALESCE(:retry_count, retry_count),
                 next_retry_at = :next_retry_at,
+                lease_owner = CASE
+                    WHEN :clear_lease THEN NULL
+                    WHEN :lease_owner IS NULL THEN lease_owner
+                    ELSE :lease_owner
+                END,
+                lease_expires_at = CASE
+                    WHEN :clear_lease THEN NULL
+                    ELSE lease_expires_at
+                END,
                 error_detail = :error_detail,
                 result_detail = CASE
                     WHEN :result_detail::jsonb = '{}'::jsonb THEN result_detail
@@ -372,6 +389,8 @@ async def _set_sync_run_status(
                 END,
                 metadata = metadata || :metadata::jsonb
             WHERE id = :id
+              AND (:expected_status IS NULL OR status = :expected_status)
+              AND (:lease_owner IS NULL OR lease_owner = :lease_owner)
             RETURNING *
         """), params)).mappings().first()
     if not row:
@@ -459,7 +478,47 @@ async def _perform_connector_sync(run: dict[str, Any]) -> dict[str, Any]:
     return {"synced_accounts": count}
 
 
-async def execute_connector_sync_run(run_id: int) -> dict[str, Any]:
+async def claim_next_connector_sync_run(
+    *,
+    worker_id: str = SYNC_WORKER_ID,
+    lease_seconds: int = SYNC_RUN_LEASE_SECONDS,
+) -> dict[str, Any] | None:
+    async with engine.begin() as conn:
+        claimed = (await conn.execute(text("""
+            WITH candidate AS (
+                SELECT id, status
+                FROM connector_sync_runs
+                WHERE
+                    status = 'queued'
+                    OR (status = 'retrying' AND (next_retry_at IS NULL OR next_retry_at <= NOW()))
+                    OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= NOW())
+                ORDER BY
+                    CASE WHEN status = 'running' THEN 0 WHEN status = 'retrying' THEN 1 ELSE 2 END,
+                    COALESCE(next_retry_at, created_at),
+                    created_at
+                LIMIT 1
+                FOR UPDATE SKIP LOCKED
+            )
+            UPDATE connector_sync_runs r
+            SET
+                status = 'running',
+                started_at = COALESCE(r.started_at, NOW()),
+                next_retry_at = NULL,
+                lease_owner = :worker_id,
+                lease_expires_at = NOW() + (:lease_seconds || ' seconds')::interval,
+                metadata = r.metadata || jsonb_build_object(
+                    'claimed_by', :worker_id,
+                    'claimed_at', NOW(),
+                    'claim_from_status', candidate.status
+                )
+            FROM candidate
+            WHERE r.id = candidate.id
+            RETURNING r.*
+        """), {"worker_id": worker_id, "lease_seconds": max(30, lease_seconds)})).mappings().first()
+    return dict(claimed) if claimed else None
+
+
+async def execute_connector_sync_run(run_id: int, *, worker_id: str = SYNC_WORKER_ID) -> dict[str, Any]:
     async with engine.connect() as conn:
         run_row = (await conn.execute(text("""
             SELECT *
@@ -471,93 +530,126 @@ async def execute_connector_sync_run(run_id: int) -> dict[str, Any]:
         raise ValueError(f"sync run not found: {run_id}")
 
     run = dict(run_row)
-    lock = _get_sync_lock(run["user_id"], run["connector_type"])
-    async with lock:
-        max_retries = int(run.get("max_retries") or 0)
-        attempts = max_retries + 1
-        for attempt in range(attempts):
-            now = datetime.now(timezone.utc)
-            await _set_sync_run_status(
+    if run.get("status") != "running":
+        raise RuntimeError(f"sync run {run_id} must be claimed before execution")
+
+    attempt = int(run.get("retry_count") or 0)
+    max_retries = int(run.get("max_retries") or 0)
+    now = datetime.now(timezone.utc)
+    await _set_sync_run_status(
+        run_id,
+        status="running",
+        expected_status="running",
+        lease_owner=worker_id,
+        started_at=now,
+        retry_count=attempt,
+        next_retry_at=None,
+        error_detail=None,
+    )
+    await upsert_connector_lifecycle(
+        user_id=run["user_id"],
+        connector_type=run["connector_type"],
+        status="sync_running",
+        is_connected=True,
+        last_activity_at=now,
+        metadata={"sync_run_id": run_id, "sync_state": "running", "attempt": attempt + 1},
+    )
+
+    try:
+        result_detail = await _perform_connector_sync(run)
+        finished = datetime.now(timezone.utc)
+        row = await _set_sync_run_status(
+            run_id,
+            status="succeeded",
+            expected_status="running",
+            lease_owner=worker_id,
+            clear_lease=True,
+            finished_at=finished,
+            retry_count=attempt,
+            result_detail=result_detail,
+        )
+        await upsert_connector_lifecycle(
+            user_id=run["user_id"],
+            connector_type=run["connector_type"],
+            status="connected",
+            is_connected=True,
+            last_sync_at=finished,
+            last_activity_at=finished,
+            error=None,
+            metadata={"sync_run_id": run_id, "sync_state": "succeeded"},
+        )
+        return row
+    except Exception as exc:
+        err = str(exc)
+        if attempt < max_retries:
+            delay = SYNC_RUN_RETRY_DELAYS_SECONDS[min(attempt, len(SYNC_RUN_RETRY_DELAYS_SECONDS) - 1)]
+            retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
+            row = await _set_sync_run_status(
                 run_id,
-                status="running",
-                started_at=now,
-                retry_count=attempt,
-                next_retry_at=None,
-                error_detail=None,
+                status="retrying",
+                expected_status="running",
+                lease_owner=worker_id,
+                clear_lease=True,
+                retry_count=attempt + 1,
+                next_retry_at=retry_at,
+                error_detail=err,
+                metadata={"last_retry_delay_seconds": delay},
             )
             await upsert_connector_lifecycle(
                 user_id=run["user_id"],
                 connector_type=run["connector_type"],
-                status="sync_running",
+                status="sync_retrying",
                 is_connected=True,
-                last_activity_at=now,
-                metadata={"sync_run_id": run_id, "sync_state": "running", "attempt": attempt + 1},
+                last_activity_at=datetime.now(timezone.utc),
+                error=err,
+                metadata={"sync_run_id": run_id, "sync_state": "retrying", "next_retry_at": retry_at.isoformat()},
             )
-            try:
-                result_detail = await _perform_connector_sync(run)
-                finished = datetime.now(timezone.utc)
-                row = await _set_sync_run_status(
-                    run_id,
-                    status="succeeded",
-                    finished_at=finished,
-                    retry_count=attempt,
-                    result_detail=result_detail,
-                )
-                await upsert_connector_lifecycle(
-                    user_id=run["user_id"],
-                    connector_type=run["connector_type"],
-                    status="connected",
-                    is_connected=True,
-                    last_sync_at=finished,
-                    last_activity_at=finished,
-                    error=None,
-                    metadata={"sync_run_id": run_id, "sync_state": "succeeded"},
-                )
-                return row
-            except Exception as exc:
-                err = str(exc)
-                if attempt < max_retries:
-                    delay = SYNC_RUN_RETRY_DELAYS_SECONDS[min(attempt, len(SYNC_RUN_RETRY_DELAYS_SECONDS) - 1)]
-                    retry_at = datetime.now(timezone.utc) + timedelta(seconds=delay)
-                    await _set_sync_run_status(
-                        run_id,
-                        status="retrying",
-                        retry_count=attempt + 1,
-                        next_retry_at=retry_at,
-                        error_detail=err,
-                        metadata={"last_retry_delay_seconds": delay},
-                    )
-                    await upsert_connector_lifecycle(
-                        user_id=run["user_id"],
-                        connector_type=run["connector_type"],
-                        status="sync_retrying",
-                        is_connected=True,
-                        last_activity_at=datetime.now(timezone.utc),
-                        error=err,
-                        metadata={"sync_run_id": run_id, "sync_state": "retrying", "next_retry_at": retry_at.isoformat()},
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-                finished = datetime.now(timezone.utc)
-                row = await _set_sync_run_status(
-                    run_id,
-                    status="failed",
-                    finished_at=finished,
-                    retry_count=attempt,
-                    next_retry_at=None,
-                    error_detail=err,
-                )
-                await upsert_connector_lifecycle(
-                    user_id=run["user_id"],
-                    connector_type=run["connector_type"],
-                    status="sync_error",
-                    is_connected=True,
-                    last_activity_at=finished,
-                    error=err,
-                    metadata={"sync_run_id": run_id, "sync_state": "failed"},
-                )
-                return row
-    raise RuntimeError("Failed to execute sync run")
+            return row
+        finished = datetime.now(timezone.utc)
+        row = await _set_sync_run_status(
+            run_id,
+            status="failed",
+            expected_status="running",
+            lease_owner=worker_id,
+            clear_lease=True,
+            finished_at=finished,
+            retry_count=attempt,
+            next_retry_at=None,
+            error_detail=err,
+        )
+        await upsert_connector_lifecycle(
+            user_id=run["user_id"],
+            connector_type=run["connector_type"],
+            status="sync_error",
+            is_connected=True,
+            last_activity_at=finished,
+            error=err,
+            metadata={"sync_run_id": run_id, "sync_state": "failed"},
+        )
+        return row
+
+
+async def run_connector_sync_once(*, worker_id: str = SYNC_WORKER_ID) -> dict[str, Any] | None:
+    claimed = await claim_next_connector_sync_run(worker_id=worker_id)
+    if not claimed:
+        return None
+    return await execute_connector_sync_run(int(claimed["id"]), worker_id=worker_id)
+
+
+async def connector_sync_worker_loop(
+    stop_event: asyncio.Event,
+    *,
+    worker_id: str = SYNC_WORKER_ID,
+    idle_poll_seconds: float = SYNC_WORKER_IDLE_POLL_SECONDS,
+) -> None:
+    while not stop_event.is_set():
+        handled = await run_connector_sync_once(worker_id=worker_id)
+        if handled:
+            continue
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=max(0.1, idle_poll_seconds))
+        except asyncio.TimeoutError:
+            continue
 
 
 async def enqueue_connector_sync_run(
@@ -567,9 +659,7 @@ async def enqueue_connector_sync_run(
     trigger: str = "manual",
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    run = await create_connector_sync_run(user_id, connector_type, trigger=trigger, metadata=metadata)
-    asyncio.create_task(execute_connector_sync_run(int(run["id"])))
-    return run
+    return await create_connector_sync_run(user_id, connector_type, trigger=trigger, metadata=metadata)
 
 
 async def upsert_connector_lifecycle(

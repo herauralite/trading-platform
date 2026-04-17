@@ -483,7 +483,6 @@ def test_connector_sync_runs_route_authenticated(monkeypatch):
 def test_execute_connector_sync_run_retries_then_fails(monkeypatch):
     updates = []
     lifecycle_updates = []
-    sleeps = []
 
     class FakeResult:
         def mappings(self):
@@ -494,8 +493,10 @@ def test_execute_connector_sync_run_retries_then_fails(monkeypatch):
                 "id": 42,
                 "user_id": "u1",
                 "connector_type": "csv_import",
-                "status": "queued",
+                "status": "running",
                 "max_retries": 1,
+                "retry_count": 0,
+                "lease_owner": "worker-1",
             }
 
     class FakeConn:
@@ -524,21 +525,103 @@ def test_execute_connector_sync_run_retries_then_fails(monkeypatch):
     async def fake_perform(_run):
         raise RuntimeError("boom")
 
-    async def fake_sleep(delay):
-        sleeps.append(delay)
-
     monkeypatch.setattr(ci, "engine", FakeEngine())
     monkeypatch.setattr(ci, "_set_sync_run_status", fake_set_status)
     monkeypatch.setattr(ci, "upsert_connector_lifecycle", fake_lifecycle)
     monkeypatch.setattr(ci, "_perform_connector_sync", fake_perform)
-    monkeypatch.setattr(ci.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr(ci, "SYNC_RUN_RETRY_DELAYS_SECONDS", [0])
 
-    result = asyncio.run(ci.execute_connector_sync_run(42))
-    assert result["status"] == "failed"
-    assert [u[1]["status"] for u in updates] == ["running", "retrying", "running", "failed"]
-    assert sleeps == [0]
-    assert lifecycle_updates[-1]["status"] == "sync_error"
+    result = asyncio.run(ci.execute_connector_sync_run(42, worker_id="worker-1"))
+    assert result["status"] == "retrying"
+    assert [u[1]["status"] for u in updates] == ["running", "retrying"]
+    assert updates[1][1]["retry_count"] == 1
+    assert updates[1][1]["next_retry_at"] is not None
+    assert lifecycle_updates[-1]["status"] == "sync_retrying"
+
+
+def test_run_connector_sync_once_claims_and_executes(monkeypatch):
+    calls = {"claim": 0, "execute": 0}
+
+    async def fake_claim(worker_id=ci.SYNC_WORKER_ID, lease_seconds=ci.SYNC_RUN_LEASE_SECONDS):
+        calls["claim"] += 1
+        assert worker_id == "w-1"
+        return {"id": 90, "status": "running"}
+
+    async def fake_execute(run_id, worker_id=ci.SYNC_WORKER_ID):
+        calls["execute"] += 1
+        assert run_id == 90
+        assert worker_id == "w-1"
+        return {"id": run_id, "status": "succeeded"}
+
+    monkeypatch.setattr(ci, "claim_next_connector_sync_run", fake_claim)
+    monkeypatch.setattr(ci, "execute_connector_sync_run", fake_execute)
+
+    result = asyncio.run(ci.run_connector_sync_once(worker_id="w-1"))
+    assert result["status"] == "succeeded"
+    assert calls == {"claim": 1, "execute": 1}
+
+
+def test_run_connector_sync_once_noop_without_claim(monkeypatch):
+    async def fake_claim(worker_id=ci.SYNC_WORKER_ID, lease_seconds=ci.SYNC_RUN_LEASE_SECONDS):
+        return None
+
+    monkeypatch.setattr(ci, "claim_next_connector_sync_run", fake_claim)
+    result = asyncio.run(ci.run_connector_sync_once(worker_id="w-1"))
+    assert result is None
+
+
+def test_connector_sync_worker_loop_polls_until_stop(monkeypatch):
+    call_count = {"runs": 0}
+    stop = asyncio.Event()
+
+    async def fake_run_once(worker_id=ci.SYNC_WORKER_ID):
+        call_count["runs"] += 1
+        if call_count["runs"] == 1:
+            return {"id": 1, "status": "succeeded"}
+        stop.set()
+        return None
+
+    monkeypatch.setattr(ci, "run_connector_sync_once", fake_run_once)
+    asyncio.run(ci.connector_sync_worker_loop(stop, worker_id="w-2", idle_poll_seconds=0.01))
+    assert call_count["runs"] >= 2
+
+
+def test_claim_sql_covers_queued_retrying_and_stale_running(monkeypatch):
+    executed_sql = {"text": None, "params": None}
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {"id": 7, "status": "running"}
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            executed_sql["text"] = str(stmt)
+            executed_sql["params"] = params
+            return FakeResult()
+
+    class FakeBegin:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(ci, "engine", FakeEngine())
+    claimed = asyncio.run(ci.claim_next_connector_sync_run(worker_id="w-claim", lease_seconds=60))
+    assert claimed["id"] == 7
+    sql = executed_sql["text"]
+    assert "status = 'queued'" in sql
+    assert "status = 'retrying'" in sql
+    assert "status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= NOW()" in sql
+    assert "FOR UPDATE SKIP LOCKED" in sql
+    assert executed_sql["params"]["worker_id"] == "w-claim"
 
 
 def test_auth_me_requires_authenticated_session(monkeypatch):
@@ -650,6 +733,13 @@ def test_session_token_fails_closed_without_secret(monkeypatch):
     with pytest.raises(Exception) as decode_exc:
         auth_session_mod.decode_session_token("abc.def")
     assert "SECRET_KEY" in str(decode_exc.value)
+
+
+def test_runtime_guard_rejects_multi_process_web(monkeypatch):
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    with pytest.raises(RuntimeError) as excinfo:
+        main_mod.enforce_single_process_runtime()
+    assert "WEB_CONCURRENCY=1" in str(excinfo.value)
 
 
 def test_retired_bridge_route_returns_gone():
