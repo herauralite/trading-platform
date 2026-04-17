@@ -540,13 +540,12 @@ function normalizeTelegramBotUsername(value) {
   return raw.replace(/^@+/, '');
 }
 
-function normalizeLoginHost(value, stripWww = false) {
+function normalizeLoginHost(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
-  const withoutScheme = raw.replace(/^https?:\/\//, '');
-  const hostPart = withoutScheme.split('/')[0].split(':')[0];
+  const withoutScheme = raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '');
+  const hostPart = withoutScheme.split('/')[0].split('?')[0].split('#')[0].split(':')[0].replace(/\.+$/, '');
   if (!hostPart) return '';
-  if (stripWww && hostPart.startsWith('www.')) return hostPart.slice(4);
   return hostPart;
 }
 
@@ -562,9 +561,9 @@ function validateTelegramLoginConfig() {
     issues.push('bot_username_not_canonical');
   }
 
-  const currentHost = normalizeLoginHost(window.location.host, true);
-  const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN, true);
-  const loginHost = normalizeLoginHost(TALI_LOGIN_DOMAIN, true);
+  const currentHost = normalizeLoginHost(window.location.hostname);
+  const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN);
+  const loginHost = normalizeLoginHost(TALI_LOGIN_DOMAIN);
   if (!canonicalHost) {
     issues.push('canonical_login_domain_missing');
   }
@@ -595,12 +594,24 @@ async function hydrateTelegramWidgetConfig() {
       TALI_CANONICAL_BOT_USERNAME = botFromApi;
       TALI_BOT_USERNAME_SOURCE = 'backend_config_canonical';
     }
-    const loginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain, true);
+    const loginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain);
     if (loginDomainFromApi) {
       TALI_LOGIN_DOMAIN = loginDomainFromApi;
       TALI_CANONICAL_LOGIN_DOMAIN = loginDomainFromApi;
     }
   } catch (_) {}
+}
+
+function maybeRedirectToCanonicalTelegramHost() {
+  const currentHost = normalizeLoginHost(window.location.hostname);
+  const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN || TALI_LOGIN_DOMAIN);
+  if (!currentHost || !canonicalHost || currentHost === canonicalHost) return false;
+  if (currentHost === `www.${canonicalHost}`) {
+    const next = `${window.location.protocol}//${canonicalHost}${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.location.replace(next);
+    return true;
+  }
+  return false;
 }
 
 function parseTelegramAuthFailure(res, body) {
@@ -666,6 +677,7 @@ window.gateSubmit = function() {
 // ── Step 2: show Telegram widget ─────────────────────────────────────────────
 async function showTelegramStep() {
   await hydrateTelegramWidgetConfig();
+  if (maybeRedirectToCanonicalTelegramHost()) return;
 
   const step2 = document.getElementById('gate-step2');
   step2.style.display = 'block';
@@ -680,7 +692,8 @@ async function showTelegramStep() {
   TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername(TALI_CANONICAL_BOT_USERNAME) || TALI_BOT_USERNAME;
 
   const issues = validateTelegramLoginConfig();
-  console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN}`);
+  const oidcAuthorizeHost = normalizeLoginHost((window.TALI_LOGIN_CONFIG && window.TALI_LOGIN_CONFIG.oidcAuthorizeHost) || '');
+  console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN} authMode=legacy_widget callbackAuthHost=${oidcAuthorizeHost || window.location.hostname}`);
   if (issues.length) {
     console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME, host: window.location.hostname, loginDomain: TALI_LOGIN_DOMAIN, canonicalLoginDomain: TALI_CANONICAL_LOGIN_DOMAIN });
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));

@@ -7,6 +7,7 @@ import hmac
 import json
 from contextlib import asynccontextmanager
 from typing import Any
+from urllib.parse import urlparse
 
 import jwt
 from jwt import PyJWKClient
@@ -85,8 +86,26 @@ TELEGRAM_OIDC_ISSUER       = os.getenv("TELEGRAM_LOGIN_ISSUER", "").strip()
 TELEGRAM_OIDC_JWKS_URL     = os.getenv("TELEGRAM_LOGIN_JWKS_URL", "").strip()
 TELEGRAM_OIDC_AUTHORIZE_URL= os.getenv("TELEGRAM_LOGIN_AUTHORIZE_URL", "").strip()
 TELEGRAM_OIDC_AUDIENCE     = os.getenv("TELEGRAM_LOGIN_AUDIENCE", "").strip()
-TELEGRAM_BOT_USERNAME      = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot").strip().lstrip("@") or "TaliTradeBot"
-TELEGRAM_LOGIN_DOMAIN      = os.getenv("TELEGRAM_LOGIN_DOMAIN", "talitrade.com").strip().lower() or "talitrade.com"
+
+
+def normalize_telegram_bot_username(value: str | None) -> str:
+    candidate = str(value or "").strip().lstrip("@")
+    return candidate or "TaliTradeBot"
+
+
+def normalize_hostname(value: str | None, default: str = "") -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return default
+    parsed = urlparse(raw if "://" in raw else f"//{raw}")
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    return host or default
+
+
+TELEGRAM_BOT_USERNAME_RAW  = os.getenv("TELEGRAM_BOT_USERNAME", "TaliTradeBot")
+TELEGRAM_LOGIN_DOMAIN_RAW  = os.getenv("TELEGRAM_LOGIN_DOMAIN", "talitrade.com")
+TELEGRAM_BOT_USERNAME      = normalize_telegram_bot_username(TELEGRAM_BOT_USERNAME_RAW)
+TELEGRAM_LOGIN_DOMAIN      = normalize_hostname(TELEGRAM_LOGIN_DOMAIN_RAW, "talitrade.com")
 
 CONNECTOR_CATALOG = {
     "fundingpips_extension": {
@@ -123,6 +142,10 @@ def telegram_oidc_enabled() -> bool:
 
 def telegram_auth_mode() -> str:
     return "oidc" if telegram_oidc_enabled() else "legacy_widget"
+
+
+def resolved_oidc_authorize_host() -> str:
+    return normalize_hostname(TELEGRAM_OIDC_AUTHORIZE_URL, "")
 
 
 def connector_supports_live_sync(connector_type: str) -> bool:
@@ -1247,6 +1270,20 @@ from app.routers import ingest
 app.include_router(ingest.router)
 from app.core.database import engine
 
+logger.info(
+    "Telegram auth config resolved: bot_username=%s login_domain=%s auth_mode=%s oidc_authorize_host=%s",
+    TELEGRAM_BOT_USERNAME,
+    TELEGRAM_LOGIN_DOMAIN,
+    telegram_auth_mode(),
+    resolved_oidc_authorize_host() or "none",
+)
+if ".co" in TELEGRAM_LOGIN_DOMAIN and ".com" not in TELEGRAM_LOGIN_DOMAIN:
+    logger.warning(
+        "Telegram login domain may be incorrect (possible .co/.com mismatch): raw=%s normalized=%s",
+        TELEGRAM_LOGIN_DOMAIN_RAW,
+        TELEGRAM_LOGIN_DOMAIN,
+    )
+
 
 @app.get("/health")
 async def health(): return {"status": "ok"}
@@ -1342,9 +1379,21 @@ async def demo_leaderboard(limit: int = 10):
 
 
 @app.get("/auth/telegram/config")
-async def telegram_auth_config():
+async def telegram_auth_config(request: Request):
     """Expose canonical Telegram auth config used by the frontend."""
     mode = telegram_auth_mode()
+    request_origin = request.headers.get("origin", "")
+    request_host = request.headers.get("host", "")
+    frontend_host = normalize_hostname(request_origin or request_host, "")
+    authorize_host = resolved_oidc_authorize_host()
+    logger.info(
+        "Telegram config request: bot_username=%s login_domain=%s auth_mode=%s frontend_host=%s oidc_authorize_host=%s",
+        TELEGRAM_BOT_USERNAME,
+        TELEGRAM_LOGIN_DOMAIN,
+        mode,
+        frontend_host or "unknown",
+        authorize_host or "none",
+    )
     return {
         "authMode": mode,
         "botUsername": TELEGRAM_BOT_USERNAME,
@@ -1357,6 +1406,7 @@ async def telegram_auth_config():
         "oidcEnabled": mode == "oidc",
         "oidcClientId": TELEGRAM_OIDC_CLIENT_ID,
         "oidcAuthorizeUrl": TELEGRAM_OIDC_AUTHORIZE_URL,
+        "oidcAuthorizeHost": authorize_host,
         "oidcIssuer": TELEGRAM_OIDC_ISSUER,
         "oidcScopes": ["openid", "profile"],
     }
