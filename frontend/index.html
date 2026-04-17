@@ -868,8 +868,25 @@ footer{
 <!-- ── SCRIPTS ──────────────────────────────────────────────────────────────── -->
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-const RAILWAY_URL = 'https://trading-platform-production-70e0.up.railway.app';
+const DEFAULT_API_BASE = 'https://trading-platform-production-70e0.up.railway.app';
 const TALI_CONFIG = window.__TALI_CONFIG__ || {};
+const AUTH_DIAGNOSTICS = [];
+
+function getBaseApiUrl() {
+  const configured = String(TALI_CONFIG.apiBase || TALI_CONFIG.api_base || '').trim();
+  return configured || DEFAULT_API_BASE;
+}
+
+function pushHomepageAuthDiag(message) {
+  if (!message) return;
+  AUTH_DIAGNOSTICS.push(`[${new Date().toISOString()}] ${message}`);
+  if (AUTH_DIAGNOSTICS.length > 6) AUTH_DIAGNOSTICS.shift();
+  const err = document.getElementById('homepageAuthError');
+  if (!err) return;
+  const existing = err.textContent ? `${err.textContent}\n\n` : '';
+  err.textContent = `${existing}Diagnostics:\n${AUTH_DIAGNOSTICS.join('\n')}`;
+  err.style.whiteSpace = 'pre-line';
+}
 const DEMO_CANONICAL_HOST = 'www.talitrade.com';
 let DEMO_LOGIN_DOMAIN = DEMO_CANONICAL_HOST;
 let DEMO_BOT_USERNAME = 'TaliTradeBot';
@@ -890,7 +907,8 @@ function isDemoCanonicalHost() {
 
 async function hydrateDemoTelegramConfig() {
   try {
-    const res = await fetch(RAILWAY_URL + '/auth/telegram/config');
+    const res = await fetch(getBaseApiUrl() + '/auth/telegram/config', { credentials: 'include' });
+    pushHomepageAuthDiag(`config_fetch_status=${res.status}`);
     if (!res.ok) {
       demoTelegramConfigFailed = true;
       return;
@@ -902,15 +920,17 @@ async function hydrateDemoTelegramConfig() {
       DEMO_BOT_USERNAME_SOURCE = 'backend_config';
     }
     DEMO_LOGIN_DOMAIN = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || DEMO_CANONICAL_HOST) || DEMO_CANONICAL_HOST;
+    pushHomepageAuthDiag(`config_loaded bot=${DEMO_BOT_USERNAME} login_domain=${DEMO_LOGIN_DOMAIN}`);
     demoTelegramConfigFailed = false;
   } catch (_) {
+    pushHomepageAuthDiag('config_fetch_failed=network_or_cors');
     demoTelegramConfigFailed = true;
   }
 }
 
 // ── Demo leaderboard ──────────────────────────────────────────────────────────
 function fetchDemoLeaderboard(){
-  fetch(RAILWAY_URL + '/demo/leaderboard')
+  fetch(getBaseApiUrl() + '/demo/leaderboard')
     .then(r => r.json())
     .then(data => renderLeaderboard(data.leaderboard || []))
     .catch(() => {
@@ -987,6 +1007,7 @@ function closeHomepageAuthGate() {
   modal.style.display = 'none';
   modal.classList.remove('open');
   document.body.style.overflow = '';
+  AUTH_DIAGNOSTICS.length = 0;
 }
 
 function requireHomepageAuth(e, intent = 'platform_entry') {
@@ -1008,7 +1029,7 @@ function saveDemoScore(user, pnl) {
   document.getElementById('outcomeState1').style.display = 'none';
   document.getElementById('outcomeState2').style.display = 'block';
 
-  fetch(RAILWAY_URL + '/demo/score', {
+  fetch(getBaseApiUrl() + '/demo/score', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({
@@ -1025,6 +1046,7 @@ function saveDemoScore(user, pnl) {
 
 window.onHomepageTelegramAuth = function(user){
   const pnl = homepageAuthPendingPnl || window._demoPnlToSave || 0;
+  pushHomepageAuthDiag(`telegram_widget_success user_id=${user?.id || 'unknown'}`);
   closeHomepageAuthGate();
   if (homepageAuthIntent === 'demo_save') {
     saveDemoScore(user, pnl);
@@ -1071,15 +1093,18 @@ async function ensureHomepageAuthWidget(){
   s.setAttribute('data-request-access', 'write');
   s.async = true;
   s.onload = function(){
+    pushHomepageAuthDiag('widget_script_loaded=true');
     setTimeout(function(){
       const rendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
       if (!rendered) {
         setHomepageAuthError('Telegram script loaded but widget did not render. Confirm you are on www.talitrade.com and disable blockers.');
+        pushHomepageAuthDiag('widget_rendered=false');
       }
     }, 3000);
   };
   s.onerror = function(){
     setHomepageAuthError('Could not load Telegram sign-in. Please disable blockers and retry.');
+    pushHomepageAuthDiag('widget_script_loaded=false');
   };
   wrap.appendChild(s);
   homepageAuthWidgetLoaded = true;
@@ -1101,7 +1126,7 @@ function setWaitlistCount(n){
 
 // Fetch real count from backend
 (function fetchCount(){
-  fetch(RAILWAY_URL + '/waitlist/count')
+  fetch(getBaseApiUrl() + '/waitlist/count')
     .then(function(r){ return r.json(); })
     .then(function(d){ if(d && d.count) setWaitlistCount(d.count); })
     .catch(function(){
@@ -1169,7 +1194,7 @@ function handleSubmit(){
   document.getElementById('submitBtn').disabled = true;
   netErr.style.display = 'none';
 
-  fetch(RAILWAY_URL + '/waitlist', {
+  fetch(getBaseApiUrl() + '/waitlist', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({telegram_username: val})

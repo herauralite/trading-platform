@@ -28,9 +28,28 @@ const normalizeHost = (value) => {
   return raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').split('/')[0].split('?')[0].split('#')[0].split(':')[0].replace(/\.+$/, '')
 }
 
+const normalizeSessionUser = (user) => {
+  if (!user || typeof user !== 'object') return null
+  const telegramUserId = String(user.telegram_user_id || user.telegramUserId || '').trim()
+  if (!telegramUserId) return null
+  return {
+    ...user,
+    telegram_user_id: telegramUserId,
+    telegramUserId,
+    telegram_username: user.telegram_username || user.username || '',
+    username: user.username || user.telegram_username || '',
+    first_name: user.first_name || user.firstName || '',
+    firstName: user.firstName || user.first_name || '',
+    last_name: user.last_name || user.lastName || '',
+    lastName: user.lastName || user.last_name || '',
+    photo_url: user.photo_url || user.photoUrl || '',
+    photoUrl: user.photoUrl || user.photo_url || '',
+  }
+}
+
 function App() {
   const [sessionToken, setSessionToken] = useState(localStorage.getItem(SESSION_STORAGE_KEY) || '')
-  const [sessionUser, setSessionUser] = useState(parseStoredUser(localStorage.getItem(USER_STORAGE_KEY)))
+  const [sessionUser, setSessionUser] = useState(normalizeSessionUser(parseStoredUser(localStorage.getItem(USER_STORAGE_KEY))))
   const [telegramConfig, setTelegramConfig] = useState(null)
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
@@ -167,7 +186,7 @@ function App() {
     setIsBootstrapping(true)
     try {
       const meRes = await axios.get(`${API}/auth/me`, { headers: buildAuthHeaders(token) })
-      const user = meRes.data?.user || null
+      const user = normalizeSessionUser(meRes.data?.user)
       if (!canHydrateSession(meRes.data)) throw new Error('No authenticated user found in session')
       commitSession(token, user)
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
@@ -181,10 +200,12 @@ function App() {
   }
 
   function commitSession(token, user) {
+    const normalizedUser = normalizeSessionUser(user)
+    if (!normalizedUser) throw new Error('Invalid user payload for session commit')
     setSessionToken(token)
-    setSessionUser(user)
+    setSessionUser(normalizedUser)
     localStorage.setItem(SESSION_STORAGE_KEY, token)
-    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user))
+    localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(normalizedUser))
   }
 
   function clearSession() {
@@ -199,7 +220,7 @@ function App() {
   async function signInWithTelegramWidget(authData) {
     try {
       const res = await axios.post(`${API}/auth/telegram`, authData)
-      const user = res.data?.user || null
+      const user = normalizeSessionUser(res.data?.user)
       const token = res.data?.access_token || ''
       if (!token || !user?.telegram_user_id) throw new Error('Telegram auth returned no session token')
       commitSession(token, user)
@@ -214,7 +235,7 @@ function App() {
     setIsBootstrapping(true)
     try {
       const res = await axios.post(`${API}/auth/telegram/oidc`, { id_token: idToken, nonce })
-      const user = res.data?.user || null
+      const user = normalizeSessionUser(res.data?.user)
       const token = res.data?.access_token || ''
       if (!token || !user?.telegram_user_id) throw new Error('Telegram OIDC returned no session token')
       commitSession(token, user)
