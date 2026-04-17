@@ -157,7 +157,7 @@ function App() {
     const timer = window.setTimeout(() => {
       const rendered = Boolean(widgetWrapRef.current?.querySelector('iframe, .telegram-login, div[id^="telegram-login"]'))
       if (!rendered) {
-        setWidgetStatus('Telegram script loaded but widget did not render. Use talitrade.com and disable blockers.')
+        setWidgetStatus('Telegram script loaded but widget did not render. Open talitrade.com to continue with Telegram sign-in, then disable blockers if needed.')
       }
     }, 3000)
     return () => window.clearTimeout(timer)
@@ -402,7 +402,7 @@ function App() {
             ) : (
               <div ref={widgetWrapRef}>
                 {!isCanonicalHost ? (
-                  <p className="error-text">Telegram login only works on talitrade.com</p>
+                  <p className="error-text">Open talitrade.com to continue with Telegram sign-in.</p>
                 ) : (
                   <>
                     <script
