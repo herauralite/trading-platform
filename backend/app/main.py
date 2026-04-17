@@ -64,6 +64,20 @@ logger = logging.getLogger(__name__)
 RAILWAY_URL     = "https://trading-platform-production-70e0.up.railway.app"
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
 
+
+def parse_allowed_origins(raw: str | None) -> list[str]:
+    default_origins = [
+        "https://www.talitrade.com",
+        "https://talitrade.com",
+        "https://mtr-platform.fundingpips.com",
+        "https://app.fundingpips.com",
+    ]
+    configured = [item.strip() for item in str(raw or "").split(",") if item.strip()]
+    return configured or default_origins
+
+
+FRONTEND_ALLOWED_ORIGINS = parse_allowed_origins(os.getenv("FRONTEND_ALLOWED_ORIGINS"))
+
 # How long live data stays valid — if the extension hasn't polled in this window
 # we treat the account as offline rather than serving stale values.
 ACCOUNT_DATA_TTL_SECONDS = 120
@@ -1259,12 +1273,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="TaliTrade", version="4.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://mtr-platform.fundingpips.com",
-        "https://app.fundingpips.com",
-        "https://talitrade.com",
-        "https://www.talitrade.com",
-    ],
+    allow_origins=FRONTEND_ALLOWED_ORIGINS,
     allow_origin_regex=r"chrome-extension://.*",
     allow_credentials=True,
     allow_methods=["*"],
