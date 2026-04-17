@@ -511,7 +511,6 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = String((window.__TALI_CONFIG__ && window.__TALI_CONFIG__.devGatePassword) || '').trim();
-const TALITRADE_HOSTS = new Set(['www.talitrade.com', 'talitrade.com']);
 const DEFAULT_API_BASE = 'https://trading-platform-production-70e0.up.railway.app';
 let TALI_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
 let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
@@ -568,8 +567,6 @@ function normalizeLoginHost(value) {
 function getBaseApiUrl() {
   const configured = String((window.__TALI_CONFIG__ && (window.__TALI_CONFIG__.apiBase || window.__TALI_CONFIG__.api_base)) || '').trim();
   if (configured) return configured.replace(/\/$/, '');
-  const currentHost = normalizeLoginHost(window.location.hostname);
-  if (TALITRADE_HOSTS.has(currentHost)) return window.location.origin.replace(/\/$/, '');
   if (typeof API !== 'undefined' && String(API || '').trim()) return String(API).trim().replace(/\/$/, '');
   return DEFAULT_API_BASE;
 }
@@ -615,8 +612,10 @@ function validateTelegramLoginConfig() {
 
 
 async function hydrateTelegramWidgetConfig() {
-  const configUrl = getBaseApiUrl() + '/auth/telegram/config';
+  const apiBase = getBaseApiUrl();
+  const configUrl = apiBase + '/auth/telegram/config';
   try {
+    pushGateDiagnostic(`resolved_api_base=${apiBase}`);
     pushGateDiagnostic(`config_url=${configUrl}`);
     const res = await fetch(configUrl, { credentials: 'include' });
     pushGateDiagnostic(`config_fetch_status=${res.status}`);
