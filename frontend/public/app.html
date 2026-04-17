@@ -527,6 +527,7 @@ let taliWidgetFailureTimer = null;
 let taliAccountSyncTimer = null;
 let taliStep2InitStarted = false;
 let taliWidgetScriptInjected = false;
+let taliTelegramConfigFetchFailed = false;
 
 function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
@@ -586,7 +587,10 @@ async function hydrateTelegramWidgetConfig() {
   try {
     const baseUrl = typeof API !== 'undefined' ? API : 'https://trading-platform-production-70e0.up.railway.app';
     const res = await fetch(baseUrl + '/auth/telegram/config');
-    if (!res.ok) return;
+    if (!res.ok) {
+      taliTelegramConfigFetchFailed = true;
+      return;
+    }
     const cfg = await res.json();
     const botFromApi = normalizeTelegramBotUsername(cfg?.canonicalBotUsername);
     if (botFromApi === 'TaliTradeBot') {
@@ -599,7 +603,10 @@ async function hydrateTelegramWidgetConfig() {
       TALI_LOGIN_DOMAIN = loginDomainFromApi;
       TALI_CANONICAL_LOGIN_DOMAIN = loginDomainFromApi;
     }
-  } catch (_) {}
+    taliTelegramConfigFetchFailed = false;
+  } catch (_) {
+    taliTelegramConfigFetchFailed = true;
+  }
 }
 
 function maybeRedirectToCanonicalTelegramHost() {
@@ -690,12 +697,19 @@ async function showTelegramStep() {
 
   TALI_BOT_USERNAME = normalizeTelegramBotUsername(TALI_BOT_USERNAME);
   TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername(TALI_CANONICAL_BOT_USERNAME) || TALI_BOT_USERNAME;
+  if (taliTelegramConfigFetchFailed) {
+    setGateTelegramError('Could not load Telegram login config (/auth/telegram/config). Using fallback config; login may fail.');
+  }
 
   const issues = validateTelegramLoginConfig();
   const oidcAuthorizeHost = normalizeLoginHost((window.TALI_LOGIN_CONFIG && window.TALI_LOGIN_CONFIG.oidcAuthorizeHost) || '');
   console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN} authMode=legacy_widget callbackAuthHost=${oidcAuthorizeHost || window.location.hostname}`);
   if (issues.length) {
     console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME, host: window.location.hostname, loginDomain: TALI_LOGIN_DOMAIN, canonicalLoginDomain: TALI_CANONICAL_LOGIN_DOMAIN });
+    if (issues.includes('host_not_canonical')) {
+      setGateTelegramError(`Telegram login is disabled on this host (${window.location.hostname}). Use talitrade.com.`);
+      return;
+    }
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));
     document.getElementById('tg-widget-loading').style.display = 'none';
     return;
@@ -725,6 +739,12 @@ async function showTelegramStep() {
     taliWidgetScriptInjected = true;
     document.getElementById('tg-widget-loading').style.display = 'none';
     if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
+    setTimeout(() => {
+      const widgetRendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
+      if (!widgetRendered && !taliTelegramAuthStarted) {
+        setGateTelegramError('Telegram script loaded but widget did not render. Disable blockers and verify you are on talitrade.com.');
+      }
+    }, 3000);
     taliWidgetFailureTimer = setTimeout(() => {
       if (!taliTelegramAuthStarted) {
         setGateTelegramError('Telegram widget loaded but login did not complete. Confirm BotFather /setdomain = talitrade.com and bot username is correct.');

@@ -537,6 +537,7 @@ let taliAccountSyncTimer = null;
 let taliStep2InitStarted = false;
 let taliWidgetScriptInjected = false;
 let taliStep2RenderedMode = '';
+let taliTelegramConfigFetchFailed = false;
 
 function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
@@ -608,7 +609,10 @@ function validateTelegramLoginConfig() {
 async function hydrateTelegramWidgetConfig() {
   try {
     const res = await fetch(getBaseApiUrl() + '/auth/telegram/config');
-    if (!res.ok) return;
+    if (!res.ok) {
+      taliTelegramConfigFetchFailed = true;
+      return;
+    }
     const cfg = await res.json();
     TALI_LOGIN_CONFIG = {
       ...TALI_LOGIN_CONFIG,
@@ -619,7 +623,10 @@ async function hydrateTelegramWidgetConfig() {
       canonicalLoginDomain: normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || TALI_LOGIN_CONFIG.canonicalLoginDomain),
     };
     TALI_LOGIN_CONFIG.oidcEnabled = !!cfg?.oidcEnabled;
-  } catch (_) {}
+    taliTelegramConfigFetchFailed = false;
+  } catch (_) {
+    taliTelegramConfigFetchFailed = true;
+  }
 }
 
 function maybeRedirectToCanonicalTelegramHost() {
@@ -716,6 +723,12 @@ function renderTelegramLegacyWidget() {
     const loading = document.getElementById('tg-widget-loading');
     if (loading) loading.style.display = 'none';
     if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
+    setTimeout(() => {
+      const widgetRendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
+      if (!widgetRendered && !taliTelegramAuthStarted) {
+        setGateTelegramError('Telegram script loaded but widget did not render. Disable blockers and verify you are on talitrade.com.');
+      }
+    }, 3000);
     taliWidgetFailureTimer = setTimeout(() => {
       if (!taliTelegramAuthStarted) {
         setGateTelegramError('Telegram widget loaded but login did not complete. Confirm BotFather domain settings and try again.');
@@ -743,8 +756,15 @@ async function showTelegramStep() {
   taliStep2InitStarted = true;
 
   clearGateTelegramError();
+  if (taliTelegramConfigFetchFailed) {
+    setGateTelegramError('Could not load Telegram login config (/auth/telegram/config). Using fallback config; login may fail.');
+  }
   const issues = validateTelegramLoginConfig();
   if (issues.length) {
+    if (issues.includes('host_not_canonical')) {
+      setGateTelegramError(`Telegram login is disabled on this host (${window.location.hostname}). Use talitrade.com.`);
+      return;
+    }
     setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));
     return;
   }
