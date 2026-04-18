@@ -60,6 +60,12 @@ from app.services.mt5_bridge import (
     register_mt5_trusted_bridge,
     upsert_mt5_bridge_account,
 )
+from app.services.provider_onboarding import (
+    PUBLIC_API_BETA_CONNECTORS,
+    create_public_api_beta_connection,
+    create_tradingview_connection,
+    ingest_tradingview_event,
+)
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -81,7 +87,7 @@ enforce_single_process_runtime()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-RAILWAY_URL     = "https://trading-platform-production-0614.up.railway.app"
+APP_BASE_URL    = os.getenv("APP_BASE_URL", "https://api.talitrade.com").rstrip("/")
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
 FRONTEND_ALLOWED_ORIGINS = settings.FRONTEND_ALLOWED_ORIGINS
 
@@ -598,6 +604,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     ta.display_label,
                     ta.account_type,
                     ta.account_size,
+                    ta.metadata,
                     ta.is_active,
                     ta.created_at,
                     GREATEST(
@@ -622,6 +629,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     pa.label AS display_label,
                     pa.account_type,
                     pa.account_size,
+                    '{}'::jsonb AS metadata,
                     pa.is_active,
                     pa.created_at,
                     pa.created_at AS last_activity_at,
@@ -676,7 +684,8 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     "last_error": None,
                     "last_error_at": None,
                     "account_count": 0,
-                    "accounts": [],
+                "accounts": [],
+                    "provider_state": None,
                 }
 
             connector_obj = grouped[connector]
@@ -688,6 +697,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "broker_name": row["broker_name"],
                 "account_type": row["account_type"],
                 "account_size": row["account_size"],
+                "metadata": row.get("metadata") or {},
                 "is_active": row["is_active"],
                 "last_activity_at": row["last_activity_at"],
                 "last_sync_at": row["last_snapshot_at"],
@@ -713,9 +723,12 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 connector_obj["last_sync_at"] = sync_at
             if not row["is_active"]:
                 connector_obj["status"] = "degraded"
+            account_state = (row.get("metadata") or {}).get("provider_state")
+            if account_state:
+                connector_obj["provider_state"] = account_state
 
         lifecycle_only = await conn.execute(text("""
-            SELECT connector_type, status, is_connected, last_sync_at, last_activity_at, last_error, last_error_at
+            SELECT connector_type, status, is_connected, last_sync_at, last_activity_at, last_error, last_error_at, metadata
             FROM connector_lifecycle
             WHERE user_id = :uid
         """), {"uid": telegram_user_id})
@@ -737,6 +750,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "last_error_at": row["last_error_at"],
                 "account_count": 0,
                 "accounts": [],
+                "provider_state": (row.get("metadata") or {}).get("provider_state"),
             }
 
         latest_runs = await conn.execute(text("""
@@ -1585,7 +1599,7 @@ async def link_account_compat_retired():
 @app.get("/connectors/catalog")
 async def connectors_catalog():
     """Expose connectors available in the current product surface."""
-    return {"connectors": [{"connector_type": key, **value} for key, value in CONNECTOR_CATALOG.items()]}
+    return {"connectors": [{"id": key, "connector_type": key, **value} for key, value in CONNECTOR_CATALOG.items()]}
 
 
 @app.get("/connectors/overview")
@@ -1677,6 +1691,17 @@ class MT5BridgeHeartbeatRequest(BaseModel):
     bridge_secret: str
     status: str | None = "online"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class TradingViewConnectionCreateRequest(BaseModel):
+    display_label: str
+    account_alias: str | None = None
+
+
+class PublicApiBetaConnectionCreateRequest(BaseModel):
+    display_label: str
+    environment: str | None = "paper"
+    account_alias: str | None = None
 
 
 @app.get("/connectors/{connector_type}")
@@ -1818,6 +1843,8 @@ async def connector_connect(
 ):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
+    provider_state = "connected"
+    lifecycle_is_connected = True
     trading_account = None
     if payload.external_account_id:
         trading_account = await upsert_trading_account({
@@ -1840,13 +1867,15 @@ async def connector_connect(
                 mt5_server=(payload.connection_metadata or {}).get("mt5_server"),
                 metadata={"source": "connect_action"},
             )
+            provider_state = str((payload.connection_metadata or {}).get("provider_state") or "bridge_required")
+            lifecycle_is_connected = provider_state == "connected"
     lifecycle = await upsert_connector_lifecycle(
         user_id=resolved_uid,
         connector_type=normalized,
-        status="connected",
-        is_connected=True,
+        status=provider_state,
+        is_connected=lifecycle_is_connected,
         last_activity_at=datetime.now(timezone.utc),
-        metadata={"action": "connect"},
+        metadata={"action": "connect", "provider_state": provider_state},
     )
     return {"ok": True, "connector": lifecycle, "trading_account": trading_account}
 
@@ -2021,6 +2050,80 @@ async def mt5_bridge_account_state(
     return {"ok": True, "state": state}
 
 
+@app.post("/providers/tradingview-webhook/connections")
+async def create_tradingview_webhook_connection(
+    payload: TradingViewConnectionCreateRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    display_label = str(payload.display_label or "").strip()
+    if not display_label:
+        raise HTTPException(status_code=400, detail="display_label is required")
+    connection = await create_tradingview_connection(
+        user_id=resolved_uid,
+        display_label=display_label,
+        account_alias=payload.account_alias,
+    )
+    return {
+        "ok": True,
+        "provider": "tradingview_webhook",
+        "connection": {
+            "id": connection["id"],
+            "display_label": connection["display_label"],
+            "activation_state": connection["activation_state"],
+            "created_at": connection["created_at"],
+            "last_event_at": connection.get("last_event_at"),
+            "webhook_token_hint": connection["webhook_token_hint"],
+            "webhook_url": f"{APP_BASE_URL}/webhooks/tradingview/{connection['webhook_token']}",
+            "webhook_secret_hint": connection["webhook_token_hint"],
+        },
+    }
+
+
+@app.post("/providers/public-api/{provider_type}/beta")
+async def create_public_api_beta_provider_connection(
+    provider_type: str,
+    payload: PublicApiBetaConnectionCreateRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    normalized_provider = normalize_connector_type(provider_type)
+    if normalized_provider not in PUBLIC_API_BETA_CONNECTORS:
+        raise HTTPException(status_code=404, detail="Unsupported beta provider")
+    display_label = str(payload.display_label or "").strip()
+    if not display_label:
+        raise HTTPException(status_code=400, detail="display_label is required")
+    connection = await create_public_api_beta_connection(
+        user_id=resolved_uid,
+        connector_type=normalized_provider,
+        display_label=display_label,
+        environment=payload.environment,
+        account_alias=payload.account_alias,
+    )
+    return {
+        "ok": True,
+        "provider": normalized_provider,
+        "connection": connection,
+        "status": "waiting_for_secure_auth_support",
+    }
+
+
+@app.post("/webhooks/tradingview/{webhook_token}")
+async def ingest_tradingview_webhook_event(
+    webhook_token: str,
+    request: Request,
+):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    try:
+        result = await ingest_tradingview_event(token=webhook_token, payload=payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return result
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     logger.exception(f"Unhandled exception: {exc}")
@@ -2073,7 +2176,7 @@ async def setup_telegram_webhook():
         async with httpx.AsyncClient() as client:
             res = await client.post(
                 f"https://api.telegram.org/bot{token}/setWebhook",
-                json={"url": f"{RAILWAY_URL}/telegram/webhook"},
+                json={"url": f"{APP_BASE_URL}/telegram/webhook"},
             )
             logger.info(f"Telegram webhook: {res.json()}")
     except Exception as e:

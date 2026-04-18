@@ -10,7 +10,7 @@
 //                    →  POST /extension/trade  (sole DB writer for analytics)
 // ─────────────────────────────────────────────────────────────────────────────
 
-const BASE_URL     = 'https://trading-platform-production-0614.up.railway.app';
+const BASE_URL     = 'https://api.talitrade.com';
 const BACKEND_URL  = BASE_URL + '/extension/data';
 const JOURNAL_URL  = BASE_URL + '/extension/trade';
 const POLL_MS      = 5000;

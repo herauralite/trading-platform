@@ -11,7 +11,7 @@ As of this checkpoint, both Telegram auth flows are confirmed working in product
 - `https://www.talitrade.com` homepage/demo Telegram sign-in flow works.
 - Demo leaderboard save/login flow works.
 - Backend config endpoint is live at:
-  - `https://trading-platform-production-0614.up.railway.app/auth/telegram/config`
+  - `https://api.talitrade.com/auth/telegram/config`
 
 ## Required frontend API-base behavior
 
@@ -19,7 +19,7 @@ Frontend auth/config requests must resolve API base in this order:
 
 1. `window.__TALI_CONFIG__.apiBase` or `window.__TALI_CONFIG__.api_base`
 2. build-time injected backend URL when present
-3. explicit production fallback: `https://trading-platform-production-0614.up.railway.app`
+3. explicit production fallback: `https://api.talitrade.com`
 
 Do **not** allow production auth surfaces to fall back to blank API base or relative `/auth/*` requests on the static Vercel host unless a real same-origin backend proxy is intentionally configured.
 

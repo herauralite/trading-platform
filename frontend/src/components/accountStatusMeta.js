@@ -28,6 +28,34 @@ export function connectionStatusMeta(status) {
       helper: 'A recent connector sync failed; impact is shown at connector rollup level.',
     }
   }
+  if (normalized === 'awaiting_alerts') {
+    return {
+      toneClass: 'status-degraded',
+      label: 'Awaiting Alerts',
+      helper: 'TradingView webhook is created and waiting for first alert event.',
+    }
+  }
+  if (normalized === 'active') {
+    return {
+      toneClass: 'status-connected',
+      label: 'Active',
+      helper: 'Provider has received real events and is active.',
+    }
+  }
+  if (normalized === 'bridge_required' || normalized === 'waiting_for_registration' || normalized === 'ready_for_account_attach') {
+    return {
+      toneClass: normalized === 'ready_for_account_attach' ? 'status-connected' : 'status-degraded',
+      label: toTitle(normalized),
+      helper: 'MT5 bridge onboarding state is shown honestly before full connectivity.',
+    }
+  }
+  if (normalized === 'beta_pending' || normalized === 'metadata_saved' || normalized === 'waiting_for_secure_auth_support') {
+    return {
+      toneClass: 'status-degraded',
+      label: toTitle(normalized),
+      helper: 'Public API connector is in beta metadata mode only.',
+    }
+  }
   return {
     toneClass: 'status-disconnected',
     label: 'Disconnected',

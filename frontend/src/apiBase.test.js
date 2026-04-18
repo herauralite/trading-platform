@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 test('formatTelegramConfigDiagnostics returns required production debug keys', async () => {
   globalThis.window = {
     TaliApiBase: {
-      FALLBACK_API_BASE: 'https://trading-platform-production-0614.up.railway.app',
+      FALLBACK_API_BASE: 'https://api.talitrade.com',
       resolveApiBase: () => 'https://api.example.com',
       buildApiUrl: (path) => `https://api.example.com${path}`,
       formatTelegramConfigDiagnostics: (values) => [

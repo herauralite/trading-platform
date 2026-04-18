@@ -1,5 +1,5 @@
 (function initTaliApiBaseResolver(globalScope) {
-  const FALLBACK_API_BASE = 'https://trading-platform-production-0614.up.railway.app'
+  const FALLBACK_API_BASE = 'https://api.talitrade.com'
 
   const normalizeBase = (value) => String(value || '').trim().replace(/\/$/, '')
 
@@ -12,7 +12,7 @@
     // Required production precedence for auth/config requests:
     // 1) runtime config (window.__TALI_CONFIG__.apiBase/api_base)
     // 2) explicit build-time API base
-    // 3) explicit Railway production fallback
+    // 3) explicit production fallback
     // Never return blank unless a same-origin API proxy is explicitly enabled.
     const runtimeConfigured = normalizeBase(
       globalScope?.__TALI_CONFIG__?.apiBase || globalScope?.__TALI_CONFIG__?.api_base || ''

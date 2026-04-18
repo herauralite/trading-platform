@@ -4,7 +4,7 @@ Use this checklist before merging any frontend auth/config changes.
 
 ## Production baseline backend
 
-- `https://trading-platform-production-0614.up.railway.app`
+- `https://api.talitrade.com`
 
 ## Required checks
 
@@ -25,7 +25,7 @@ Use this checklist before merging any frontend auth/config changes.
 6. Confirm API-base priority behavior is unchanged:
    1. `window.__TALI_CONFIG__.apiBase` / `api_base`
    2. build-time backend URL
-   3. `https://trading-platform-production-0614.up.railway.app`
+   3. `https://api.talitrade.com`
 7. Confirm no stale backend host references remain:
    - the previously retired Railway host
 
