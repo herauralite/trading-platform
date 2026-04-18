@@ -41,6 +41,10 @@ from app.services.connector_ingest import (
     upsert_trading_account,
     validate_fundingpips_connector_config,
 )
+from app.services.account_workspace import (
+    get_account_workspace,
+    list_account_workspaces,
+)
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -1612,6 +1616,40 @@ async def connectors_overview(
     resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
     return {"connectors": connectors, "count": len(connectors)}
+
+
+@app.get("/accounts/workspaces")
+async def accounts_workspaces(
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    workspaces = await list_account_workspaces(resolved_uid)
+    return {
+        "workspaces": workspaces,
+        "count": len(workspaces),
+        "status_semantics": {
+            "connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+            "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+        },
+    }
+
+
+@app.get("/accounts/workspaces/{account_key}")
+async def account_workspace_detail(
+    account_key: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    workspace = await get_account_workspace(resolved_uid, account_key)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Account workspace not found for user")
+    return {
+        "workspace": workspace,
+        "status_semantics": {
+            "connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+            "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+        },
+    }
 
 
 class ConnectorActionRequest(BaseModel):
