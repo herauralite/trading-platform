@@ -294,13 +294,14 @@ function App() {
   }, [widgetScriptLoaded, signedIn])
 
   useEffect(() => {
+    if (!signedIn) return
     if (!hasZeroConnectedAccounts) return
     if (location.pathname !== '/app' && location.pathname !== '/app/accounts') return
     if (isAddAccountOpen) return
     if (sessionStorage.getItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY) === '1') return
     sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
     openAddAccountFlow('mt5_bridge')
-  }, [hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
+  }, [signedIn, hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
@@ -588,6 +589,10 @@ function App() {
 
 
   function openAddAccountFlow(defaultProviderType = 'mt5_bridge') {
+    if (!signedIn) {
+      setStatus('Sign in with Telegram to add or connect trading accounts.')
+      return
+    }
     setSelectedProviderType(defaultProviderType)
     setAddAccountError('')
     setIsAddAccountOpen(true)
@@ -738,7 +743,7 @@ function App() {
     <div className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}>
       <header className="app-header panel">
         <div>
-          <h1>TaliTrade Premium Workspace</h1>
+          <h1>TaliTrade Premium App</h1>
           <p>Status: {status}</p>
         </div>
         <div className="row">
@@ -749,20 +754,47 @@ function App() {
         </div>
       </header>
 
+      <section className="panel app-shell-top">
+        <div className="app-shell-nav-block">
+          <nav className="app-nav" aria-label="Primary app navigation">
+            <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
+            <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
+            <button
+              type="button"
+              className="app-nav-link add-account-nav-link"
+              onClick={() => openAddAccountFlow('mt5_bridge')}
+            >
+              Add Account
+            </button>
+          </nav>
+          <p className="hint app-shell-nav-hint">
+            <strong>Accounts</strong> is where you add and manage trading accounts. <strong>Connections</strong> is for integration setup and connector operations.
+          </p>
+        </div>
+        <div className="row app-shell-actions">
+          <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add Account</button>
+          <AccountSwitcher
+            accounts={unifiedAccountWorkspaces}
+            selectedAccountKey={selectedAccountKey}
+            onSelectAccount={setSelectedAccountKey}
+          />
+        </div>
+      </section>
+
       {!signedIn ? (
-        <section className="panel">
-          <h2>Secure Telegram Sign-In</h2>
+        <section className="panel auth-shell-gate" aria-live="polite">
+          <h2>Sign in with Telegram</h2>
           {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-          <p>Sign in with Telegram to open your authenticated account workspace.</p>
+          <p>Authenticate to connect accounts, run sync actions, and unlock account workflows.</p>
           {telegramConfig?.oidcEnabled ? (
-            <button onClick={startOidcFlow}>Sign in with Telegram</button>
+            <button onClick={startOidcFlow}>Continue with Telegram</button>
           ) : (
             <div ref={widgetWrapRef}>
               {!isCanonicalHost ? (
                 <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
               ) : (
                 <>
-                  {isConfigLoading ? <p className="hint">Preparing secure Telegram sign-in…</p> : null}
+                  {isConfigLoading ? <p className="hint">Loading Telegram sign-in…</p> : null}
                   <script
                     async
                     src="https://telegram.org/js/telegram-widget.js?22"
@@ -774,7 +806,6 @@ function App() {
                     onLoad={() => setWidgetScriptLoaded(true)}
                     onError={() => setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')}
                   />
-                  <p className="hint">Telegram widget mode enabled.</p>
                 </>
               )}
               {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
@@ -789,53 +820,27 @@ function App() {
             </div>
           )}
         </section>
-      ) : (
-        <>
-          <section className="panel app-shell-top">
-            <div className="app-shell-nav-block">
-              <nav className="app-nav" aria-label="Primary app navigation">
-                <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
-                <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
-                <button
-                  type="button"
-                  className="app-nav-link add-account-nav-link"
-                  onClick={() => openAddAccountFlow('mt5_bridge')}
-                >
-                  Add Account
-                </button>
-              </nav>
-              <p className="hint app-shell-nav-hint">
-                <strong>Accounts</strong> is where you add and manage trading accounts. <strong>Connections</strong> is for integration setup and connector operations.
-              </p>
-            </div>
-            <div className="row app-shell-actions">
-              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add Account</button>
-              <AccountSwitcher
-                accounts={unifiedAccountWorkspaces}
-                selectedAccountKey={selectedAccountKey}
-                onSelectAccount={setSelectedAccountKey}
-              />
-            </div>
-          </section>
+      ) : null}
 
-          {hasZeroConnectedAccounts ? (
-            <section className="panel first-run-shell-cta" aria-live="polite">
-              <div className="row">
-                <h2>Get started by adding your first account</h2>
-                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
-              </div>
-              <p className="hint">
-                Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
-              </p>
-            </section>
-          ) : null}
+      {signedIn && hasZeroConnectedAccounts ? (
+        <section className="panel first-run-shell-cta" aria-live="polite">
+          <div className="row">
+            <h2>Get started by adding your first account</h2>
+            <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
+          </div>
+          <p className="hint">
+            Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
+          </p>
+        </section>
+      ) : null}
 
-          <Routes>
+      <Routes>
             <Route path="/" element={<Navigate to="/app" replace />} />
             <Route
               path="/app"
               element={(
                 <AppLandingPage
+                  signedIn={signedIn}
                   hasZeroConnectedAccounts={hasZeroConnectedAccounts}
                   accountConnectionState={accountConnectionState}
                   onAddAccount={() => openAddAccountFlow('mt5_bridge')}
@@ -846,6 +851,7 @@ function App() {
               path="/app/accounts"
               element={(
                 <AccountsOverviewPage
+                  signedIn={signedIn}
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
@@ -891,24 +897,22 @@ function App() {
               )}
             />
             <Route path="*" element={<Navigate to="/app/accounts" replace />} />
-          </Routes>
-          <AddAccountFlowModal
-            isOpen={isAddAccountOpen}
-            providers={addAccountProviders}
-            selectedProviderType={selectedProviderType}
-            setSelectedProviderType={setSelectedProviderType}
-            draft={addAccountDraft}
-            setDraft={setAddAccountDraft}
-            onClose={closeAddAccountFlow}
-            onSubmit={submitAddAccount}
-            onCheckMt5Pairing={checkMt5Pairing}
-            onCreateMt5PairingToken={createPairingToken}
-            onLoadMt5RegistrationStatus={loadMt5RegistrationStatus}
-            isSubmitting={isAddAccountSubmitting}
-            error={addAccountError}
-          />
-        </>
-      )}
+      </Routes>
+      <AddAccountFlowModal
+        isOpen={isAddAccountOpen}
+        providers={addAccountProviders}
+        selectedProviderType={selectedProviderType}
+        setSelectedProviderType={setSelectedProviderType}
+        draft={addAccountDraft}
+        setDraft={setAddAccountDraft}
+        onClose={closeAddAccountFlow}
+        onSubmit={submitAddAccount}
+        onCheckMt5Pairing={checkMt5Pairing}
+        onCreateMt5PairingToken={createPairingToken}
+        onLoadMt5RegistrationStatus={loadMt5RegistrationStatus}
+        isSubmitting={isAddAccountSubmitting}
+        error={addAccountError}
+      />
     </div>
   )
 }

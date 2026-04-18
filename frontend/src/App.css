@@ -53,6 +53,11 @@ body {
   flex-wrap: wrap;
 }
 
+.auth-shell-gate {
+  border-color: rgba(76, 195, 255, 0.45);
+  background: linear-gradient(160deg, rgba(12, 25, 47, 0.94), rgba(7, 14, 29, 0.94));
+}
+
 .app-nav {
   display: flex;
   gap: 8px;

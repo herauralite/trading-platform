@@ -1,6 +1,23 @@
 import { NavLink } from 'react-router-dom'
 
-function AppLandingPage({ hasZeroConnectedAccounts, accountConnectionState, onAddAccount }) {
+function AppLandingPage({ signedIn, hasZeroConnectedAccounts, accountConnectionState, onAddAccount }) {
+  if (!signedIn) {
+    return (
+      <section className="panel app-dashboard-hub">
+        <div className="row">
+          <h2>Workspace Dashboard</h2>
+        </div>
+        <p className="hint">
+          You are viewing the premium app shell. Sign in with Telegram above to add accounts and unlock account-linked workflows.
+        </p>
+        <div className="row app-onboarding-links">
+          <NavLink className="app-nav-link" to="/app/accounts">Open Accounts</NavLink>
+          <NavLink className="app-nav-link" to="/app/connections">Open Connections</NavLink>
+        </div>
+      </section>
+    )
+  }
+
   if (hasZeroConnectedAccounts) {
     return (
       <section className="panel app-onboarding-hub">
