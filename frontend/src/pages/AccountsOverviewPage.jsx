@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import AccountStatusBadge from '../components/AccountStatusBadge'
 import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
+import { deriveAccountConnectionState } from '../accountConnectionState'
 
 function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
@@ -15,21 +16,23 @@ function AccountsOverviewPage({
   formatDate,
 }) {
   const summary = useMemo(() => {
-    const total = accountWorkspaces.length
-    const connected = countBy(accountWorkspaces, (account) => account.connection_status === 'connected' || account.connection_status === 'active')
+    const connectionState = deriveAccountConnectionState(accountWorkspaces)
     const attention = countBy(accountWorkspaces, (account) => account.connection_status === 'sync_error' || account.sync_state === 'failed')
     const syncing = countBy(accountWorkspaces, (account) => ['queued', 'running', 'retrying'].includes(account.sync_state))
     const primary = accountWorkspaces.find((account) => account.is_primary) || null
     return {
-      total,
-      connected,
+      total: connectionState.totalCount,
+      connected: connectionState.connectedUsableCount,
+      pendingOnly: connectionState.pendingOnlyCount,
+      staleInactive: connectionState.staleInactiveCount,
       attention,
       syncing,
       primary,
+      hasZeroConnectedAccounts: connectionState.hasZeroConnectedAccounts,
     }
   }, [accountWorkspaces])
 
-  if (accountWorkspaces.length === 0) {
+  if (summary.hasZeroConnectedAccounts) {
     return (
       <section className="panel">
         <div className="row">
@@ -50,6 +53,12 @@ function AccountsOverviewPage({
             <li><strong>Manual Journal</strong> to add accounts and trades manually.</li>
           </ul>
           <button type="button" className="primary-cta" onClick={onAddAccount}>Add your first account</button>
+          {summary.total > 0 ? (
+            <p className="hint">
+              Existing workspace rows: {summary.total} (pending-only: {summary.pendingOnly}, inactive/stale: {summary.staleInactive}).
+              Onboarding stays visible until at least one account is currently connected.
+            </p>
+          ) : null}
           <p className="hint">Need operational setup and connector controls later? Use <strong>Connections</strong>.</p>
         </div>
       </section>
@@ -75,7 +84,7 @@ function AccountsOverviewPage({
       ) : null}
       <div className="meta-grid accounts-summary-grid">
         <div className="meta-card summary-card">
-          <span className="hint">All connected accounts</span>
+          <span className="hint">All workspace accounts</span>
           <strong>{summary.total}</strong>
         </div>
         <div className="meta-card summary-card">
