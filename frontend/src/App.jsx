@@ -21,6 +21,7 @@ import {
 import { buildConnectorConfigDraft } from './connectorConfig'
 import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
 import { fetchAccountWorkspaces } from './accountWorkspaceService'
+import { deriveAccountConnectionState, isCurrentlyConnectedAccount } from './accountConnectionState'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
@@ -189,7 +190,8 @@ function App() {
   const addAccountProviders = useMemo(() => buildAddAccountProviders(catalog, sourceLabel), [catalog])
 
   const addFlowIntent = useMemo(() => new URLSearchParams(location.search).get('addFlow') || '', [location.search])
-  const isFirstRunWithoutAccounts = signedIn && unifiedAccountWorkspaces.length === 0
+  const accountConnectionState = useMemo(() => deriveAccountConnectionState(unifiedAccountWorkspaces), [unifiedAccountWorkspaces])
+  const hasZeroConnectedAccounts = signedIn && accountConnectionState.hasZeroConnectedAccounts
 
 
   useEffect(() => {
@@ -234,7 +236,7 @@ function App() {
       if (exists) return
     }
     const primary = unifiedAccountWorkspaces.find((account) => account.is_primary)
-    const firstConnected = unifiedAccountWorkspaces.find((account) => account.connection_status === 'connected')
+    const firstConnected = unifiedAccountWorkspaces.find((account) => isCurrentlyConnectedAccount(account))
     setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || unifiedAccountWorkspaces[0]?.account_key || '')
   }, [unifiedAccountWorkspaces, selectedAccountKey])
 
@@ -263,13 +265,13 @@ function App() {
   }, [widgetScriptLoaded, signedIn])
 
   useEffect(() => {
-    if (!isFirstRunWithoutAccounts) return
+    if (!hasZeroConnectedAccounts) return
     if (location.pathname !== '/app' && location.pathname !== '/app/accounts') return
     if (isAddAccountOpen) return
     if (sessionStorage.getItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY) === '1') return
     sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
     openAddAccountFlow('mt5_bridge')
-  }, [isFirstRunWithoutAccounts, location.pathname, isAddAccountOpen])
+  }, [hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
@@ -776,7 +778,7 @@ function App() {
             </div>
           </section>
 
-          {isFirstRunWithoutAccounts ? (
+          {hasZeroConnectedAccounts ? (
             <section className="panel first-run-shell-cta" aria-live="polite">
               <div className="row">
                 <h2>Get started by adding your first account</h2>
