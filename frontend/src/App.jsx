@@ -18,6 +18,7 @@ import {
 } from './sessionAuth'
 import { buildConnectorConfigDraft } from './connectorConfig'
 import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
+import { fetchAccountWorkspaces } from './accountWorkspaceService'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
@@ -27,6 +28,7 @@ const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sou
 const CANONICAL_HOST = 'www.talitrade.com'
 const AUTH_DEBUG_QUERY_KEY = 'debugAuth'
 const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth'
+const USE_ACCOUNT_WORKSPACES_API = import.meta.env.VITE_APP_USE_ACCOUNT_WORKSPACES !== '0'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -75,6 +77,7 @@ function App() {
   const [configDrafts, setConfigDrafts] = useState({})
   const [syncHistory, setSyncHistory] = useState({})
   const [selectedAccountKey, setSelectedAccountKey] = useState('')
+  const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -111,9 +114,24 @@ function App() {
     [allAccounts],
   )
 
+  const unifiedAccountWorkspaces = useMemo(
+    () => (workspaceApiAccounts.length > 0
+      ? workspaceApiAccounts.map((account) => ({
+        accountKey: account.account_key,
+        accountId: account.trading_account_id,
+        externalAccountId: account.external_account_id,
+        displayLabel: account.display_label || account.external_account_id || account.account_key,
+        connectorType: account.connector_type,
+        sourceLabel: account.source_label,
+        brokerName: account.broker_name,
+      }))
+      : accountWorkspaces),
+    [workspaceApiAccounts, accountWorkspaces],
+  )
+
   const selectedAccount = useMemo(
-    () => accountWorkspaces.find((account) => account.accountKey === selectedAccountKey) || null,
-    [accountWorkspaces, selectedAccountKey],
+    () => unifiedAccountWorkspaces.find((account) => account.accountKey === selectedAccountKey) || null,
+    [unifiedAccountWorkspaces, selectedAccountKey],
   )
 
   const managedConnectors = useMemo(() => {
@@ -184,11 +202,11 @@ function App() {
 
   useEffect(() => {
     if (selectedAccountKey) {
-      const exists = accountWorkspaces.some((account) => account.accountKey === selectedAccountKey)
+      const exists = unifiedAccountWorkspaces.some((account) => account.accountKey === selectedAccountKey)
       if (exists) return
     }
-    setSelectedAccountKey(accountWorkspaces[0]?.accountKey || '')
-  }, [accountWorkspaces, selectedAccountKey])
+    setSelectedAccountKey(unifiedAccountWorkspaces[0]?.accountKey || '')
+  }, [unifiedAccountWorkspaces, selectedAccountKey])
 
   useEffect(() => {
     if (!widgetScriptLoaded || signedIn) return
@@ -293,6 +311,7 @@ function App() {
     setSessionUser(null)
     setConnectors([])
     setCatalog([])
+    setWorkspaceApiAccounts([])
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
   }
@@ -338,6 +357,16 @@ function App() {
       setCatalog(catalogRes.data.connectors || [])
       const overviewConnectors = overviewRes.data.connectors || []
       setConnectors(overviewConnectors)
+      if (USE_ACCOUNT_WORKSPACES_API) {
+        try {
+          const workspaceRows = await fetchAccountWorkspaces(token)
+          setWorkspaceApiAccounts(workspaceRows)
+        } catch {
+          setWorkspaceApiAccounts([])
+        }
+      } else {
+        setWorkspaceApiAccounts([])
+      }
       const configEntries = await Promise.all(
         overviewConnectors.map(async (connector) => {
           try {
@@ -537,7 +566,7 @@ function App() {
               <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
             </nav>
             <AccountSwitcher
-              accounts={accountWorkspaces}
+              accounts={unifiedAccountWorkspaces}
               selectedAccountKey={selectedAccountKey}
               onSelectAccount={setSelectedAccountKey}
             />
@@ -550,7 +579,7 @@ function App() {
               path="/app/accounts"
               element={(
                 <AccountsOverviewPage
-                  accountWorkspaces={accountWorkspaces}
+                  accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
                 />

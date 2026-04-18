@@ -1,0 +1,46 @@
+import axios from 'axios'
+import { buildApiUrl } from './apiBase.js'
+import { buildAuthHeaders } from './sessionAuth.js'
+
+const DEFAULT_CONNECTION_STATUS = 'disconnected'
+const DEFAULT_SYNC_STATE = 'idle'
+
+function normalizeConnectorType(value) {
+  return String(value || 'manual').trim().toLowerCase().replace(/-/g, '_')
+}
+
+function sourceLabel(connectorType) {
+  if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
+  if (connectorType === 'csv_import') return 'CSV Import'
+  if (connectorType === 'manual') return 'Manual Journal'
+  return connectorType
+}
+
+function normalizeWorkspace(workspace) {
+  const connectorType = normalizeConnectorType(workspace?.connector_type)
+  const accountKey = String(workspace?.account_key || '').trim()
+  return {
+    account_key: accountKey,
+    trading_account_id: workspace?.trading_account_id ?? null,
+    user_id: workspace?.user_id ?? null,
+    external_account_id: workspace?.external_account_id ?? null,
+    display_label: workspace?.display_label || workspace?.external_account_id || accountKey || 'Unnamed account',
+    broker_name: workspace?.broker_name ?? null,
+    broker_family: workspace?.broker_family || connectorType || 'unknown',
+    connector_type: connectorType,
+    connection_status: workspace?.connection_status || DEFAULT_CONNECTION_STATUS,
+    sync_state: workspace?.sync_state || DEFAULT_SYNC_STATE,
+    account_type: workspace?.account_type ?? null,
+    account_size: workspace?.account_size ?? null,
+    last_activity_at: workspace?.last_activity_at ?? null,
+    last_sync_at: workspace?.last_sync_at ?? null,
+    is_primary: Boolean(workspace?.is_primary),
+    source_label: sourceLabel(connectorType),
+  }
+}
+
+export async function fetchAccountWorkspaces(token) {
+  const res = await axios.get(buildApiUrl('/accounts/workspaces'), { headers: buildAuthHeaders(token) })
+  const workspaces = Array.isArray(res?.data?.workspaces) ? res.data.workspaces : []
+  return workspaces.map(normalizeWorkspace)
+}
