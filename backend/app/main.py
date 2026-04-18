@@ -62,6 +62,7 @@ from app.services.mt5_bridge import (
 )
 from app.services.provider_onboarding import (
     PUBLIC_API_BETA_CONNECTORS,
+    connect_alpaca_api_account,
     create_public_api_beta_connection,
     create_tradingview_connection,
     ingest_tradingview_event,
@@ -1748,6 +1749,13 @@ class PublicApiBetaConnectionCreateRequest(BaseModel):
     account_alias: str | None = None
 
 
+class AlpacaApiConnectRequest(BaseModel):
+    label: str
+    environment: str | None = "paper"
+    api_key: str
+    api_secret: str
+
+
 @app.get("/connectors/{connector_type}")
 async def connector_status_detail(
     connector_type: str,
@@ -2149,6 +2157,39 @@ async def create_public_api_beta_provider_connection(
         "provider": normalized_provider,
         "connection": connection,
         "status": "awaiting_secure_auth",
+    }
+
+
+@app.post("/providers/public-api/alpaca_api/connect")
+async def connect_alpaca_public_api_provider(
+    payload: AlpacaApiConnectRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    label = str(payload.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="label is required")
+    result = await connect_alpaca_api_account(
+        user_id=resolved_uid,
+        label=label,
+        environment=payload.environment,
+        api_key=payload.api_key,
+        api_secret=payload.api_secret,
+    )
+    return {
+        "ok": True,
+        "provider": "alpaca_api",
+        "status": result["provider_state"],
+        "environment": result["environment"],
+        "validation_error": result.get("validation_error"),
+        "account": {
+            "id": result["account"]["id"],
+            "display_label": result["account"]["display_label"],
+            "environment": result["account"]["environment"],
+            "provider_state": result["provider_state"],
+            "last_validated_at": result["account"]["last_validated_at"],
+            "summary": result["account"].get("account_summary") or {},
+        },
     }
 
 

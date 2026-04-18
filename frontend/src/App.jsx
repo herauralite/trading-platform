@@ -78,6 +78,8 @@ function App() {
     provider_state: '',
     environment: 'paper',
     account_alias: '',
+    api_key: '',
+    api_secret: '',
     tradingview_webhook_url: '',
     tradingview_secret_hint: '',
   })
@@ -264,8 +266,10 @@ function App() {
     if (connectorStatus === 'connected') return 'status-connected'
     if (connectorStatus === 'active') return 'status-connected'
     if (connectorStatus === 'ready_for_account_attach') return 'status-connected'
+    if (connectorStatus === 'paper_connected' || connectorStatus === 'live_connected') return 'status-connected'
     if (connectorStatus === 'sync_running' || connectorStatus === 'sync_queued' || connectorStatus === 'sync_retrying') return 'status-degraded'
     if (connectorStatus === 'awaiting_alerts' || connectorStatus === 'bridge_required' || connectorStatus === 'waiting_for_registration' || connectorStatus === 'beta_pending' || connectorStatus === 'metadata_saved' || connectorStatus === 'awaiting_secure_auth' || connectorStatus === 'waiting_for_secure_auth_support') return 'status-degraded'
+    if (connectorStatus === 'validation_failed') return 'status-error'
     if (connectorStatus === 'degraded') return 'status-degraded'
     if (connectorStatus === 'sync_error') return 'status-error'
     return 'status-disconnected'
@@ -597,15 +601,28 @@ function App() {
         return
       }
       if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
-        await axios.post(
-          buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
-          {
-            display_label: displayLabel || provider.title,
-            environment: addAccountDraft.environment || 'paper',
-            account_alias: (addAccountDraft.account_alias || '').trim() || null,
-          },
-          { headers: authHeaders },
-        )
+        if (provider.connectorType === 'alpaca_api') {
+          await axios.post(
+            buildApiUrl('/providers/public-api/alpaca_api/connect'),
+            {
+              label: displayLabel || provider.title,
+              environment: addAccountDraft.environment || 'paper',
+              api_key: (addAccountDraft.api_key || '').trim(),
+              api_secret: (addAccountDraft.api_secret || '').trim(),
+            },
+            { headers: authHeaders },
+          )
+        } else {
+          await axios.post(
+            buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
+            {
+              display_label: displayLabel || provider.title,
+              environment: addAccountDraft.environment || 'paper',
+              account_alias: (addAccountDraft.account_alias || '').trim() || null,
+            },
+            { headers: authHeaders },
+          )
+        }
         closeAddAccountFlow()
         await loadConnectorData({ silent: true })
         navigate('/app/accounts')
@@ -632,6 +649,7 @@ function App() {
     } catch (error) {
       setAddAccountError(error?.message || 'Could not complete this add account flow.')
     } finally {
+      setAddAccountDraft((prev) => ({ ...prev, api_key: '', api_secret: '' }))
       setIsAddAccountSubmitting(false)
     }
   }

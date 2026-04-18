@@ -9,11 +9,13 @@ from typing import Any
 from sqlalchemy import text
 
 from app.core.database import engine
+from app.services.alpaca_provider import normalize_alpaca_environment, validate_alpaca_credentials
 from app.services.connector_ingest import upsert_connector_lifecycle, upsert_trading_account
+from app.services.secret_crypto import encrypt_secret
 from app.services.tradingview_events import normalize_tradingview_event
 
 TRADINGVIEW_CONNECTOR = "tradingview_webhook"
-PUBLIC_API_BETA_CONNECTORS = {"alpaca_api", "oanda_api", "binance_api"}
+PUBLIC_API_BETA_CONNECTORS = {"oanda_api", "binance_api"}
 
 
 def _token_hash(raw: str) -> str:
@@ -248,3 +250,116 @@ async def create_public_api_beta_connection(
         metadata={"provider_state": "awaiting_secure_auth", "onboarding_state": "metadata_saved", "environment": env},
     )
     return dict(row)
+
+
+async def connect_alpaca_api_account(
+    *,
+    user_id: str,
+    label: str,
+    environment: str | None,
+    api_key: str,
+    api_secret: str,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    env = normalize_alpaca_environment(environment)
+    display_label = str(label or "").strip() or "Alpaca API"
+    normalized_key = str(api_key or "").strip()
+    normalized_secret = str(api_secret or "").strip()
+    if not normalized_key or not normalized_secret:
+        raise ValueError("invalid_credentials")
+
+    try:
+        account_summary = await validate_alpaca_credentials(
+            environment=env,
+            api_key=normalized_key,
+            api_secret=normalized_secret,
+        )
+        provider_state = str(account_summary["provider_state"])
+        validation_error: str | None = None
+    except ValueError as exc:
+        provider_state = "validation_failed"
+        validation_error = str(exc)
+        account_summary = {
+            "provider_state": provider_state,
+            "environment": env,
+            "alpaca_account_number": f"invalid-{env}-{secrets.token_hex(6)}",
+        }
+
+    account = await upsert_trading_account({
+        "user_id": user_id,
+        "connector_type": "alpaca_api",
+        "broker_name": "alpaca",
+        "external_account_id": account_summary["alpaca_account_number"],
+        "display_label": display_label,
+        "metadata": {
+            "provider_state": provider_state,
+            "onboarding_state": "credentials_validated" if validation_error is None else "credentials_rejected",
+            "environment": env,
+            "alpaca_status": account_summary.get("alpaca_status"),
+        },
+    })
+
+    encrypted_api_key = encrypt_secret(normalized_key)
+    encrypted_api_secret = encrypt_secret(normalized_secret)
+    async with engine.begin() as conn:
+        row = (await conn.execute(text("""
+            INSERT INTO public_api_beta_connections (
+                user_id, connector_type, trading_account_id, display_label,
+                environment, beta_state, encrypted_api_key, encrypted_api_secret,
+                account_summary, last_validation_error, last_validated_at, metadata, created_at, updated_at
+            ) VALUES (
+                :user_id, 'alpaca_api', :trading_account_id, :display_label,
+                :environment, :beta_state, :encrypted_api_key, :encrypted_api_secret,
+                CAST(:account_summary AS jsonb), :last_validation_error, :last_validated_at, CAST(:metadata AS jsonb), :created_at, :created_at
+            )
+            ON CONFLICT (trading_account_id) DO UPDATE SET
+                display_label = EXCLUDED.display_label,
+                environment = EXCLUDED.environment,
+                beta_state = EXCLUDED.beta_state,
+                encrypted_api_key = EXCLUDED.encrypted_api_key,
+                encrypted_api_secret = EXCLUDED.encrypted_api_secret,
+                account_summary = EXCLUDED.account_summary,
+                last_validation_error = EXCLUDED.last_validation_error,
+                last_validated_at = EXCLUDED.last_validated_at,
+                metadata = public_api_beta_connections.metadata || EXCLUDED.metadata,
+                updated_at = :created_at
+            RETURNING id, user_id, connector_type, trading_account_id, display_label,
+                      environment, beta_state, account_summary, last_validation_error, last_validated_at, created_at, updated_at
+        """), {
+            "user_id": user_id,
+            "trading_account_id": account["id"],
+            "display_label": display_label,
+            "environment": env,
+            "beta_state": provider_state,
+            "encrypted_api_key": encrypted_api_key,
+            "encrypted_api_secret": encrypted_api_secret,
+            "account_summary": json.dumps(account_summary),
+            "last_validation_error": validation_error,
+            "last_validated_at": now,
+            "metadata": json.dumps({
+                "provider_state": provider_state,
+                "environment": env,
+                "onboarding_state": "credentials_validated" if validation_error is None else "credentials_rejected",
+            }),
+            "created_at": now,
+        })).mappings().first()
+
+    await upsert_connector_lifecycle(
+        user_id=user_id,
+        connector_type="alpaca_api",
+        status=provider_state,
+        is_connected=provider_state in {"paper_connected", "live_connected"},
+        last_activity_at=now,
+        metadata={
+            "provider_state": provider_state,
+            "environment": env,
+            "validation_error": validation_error,
+        },
+        last_error=validation_error,
+    )
+    return {
+        "provider_state": provider_state,
+        "environment": env,
+        "validation_error": validation_error,
+        "account": dict(row),
+    }

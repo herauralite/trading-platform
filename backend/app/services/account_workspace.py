@@ -30,6 +30,9 @@ CONNECTION_STATUS_MAP = {
     "metadata_saved": "metadata_saved",
     "awaiting_secure_auth": "awaiting_secure_auth",
     "waiting_for_secure_auth_support": "waiting_for_secure_auth_support",
+    "paper_connected": "paper_connected",
+    "live_connected": "live_connected",
+    "validation_failed": "validation_failed",
 }
 
 
@@ -73,7 +76,11 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
     account_key = row.get("account_key") or compute_account_key(connector_type, user_id, external_account_id)
     display_label = row.get("display_label") or external_account_id
 
-    connector_connection_status = _normalize_connection_status(row.get("lifecycle_status"), row.get("lifecycle_is_connected"))
+    provider_state = str((row.get("metadata") or {}).get("provider_state") or "").strip().lower()
+    if provider_state in CONNECTION_STATUS_MAP:
+        connector_connection_status = provider_state
+    else:
+        connector_connection_status = _normalize_connection_status(row.get("lifecycle_status"), row.get("lifecycle_is_connected"))
     connector_sync_state = _normalize_sync_state(row.get("latest_sync_status"))
 
     # NOTE: lifecycle/sync joins are currently connector-scoped (user_id + connector_type),
