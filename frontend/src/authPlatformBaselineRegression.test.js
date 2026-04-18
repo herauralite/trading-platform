@@ -65,7 +65,7 @@ test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/co
   const rewrites = Array.isArray(config.rewrites) ? config.rewrites : []
 
   assert.deepEqual(rewrites, [
-    { source: '/app', destination: '/index.html' },
-    { source: '/app/:path*', destination: '/index.html' },
+    { source: '/app', destination: '/app.html' },
+    { source: '/app/:path*', destination: '/app.html' },
   ])
 })
