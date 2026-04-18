@@ -12,19 +12,17 @@ function canAttemptMt5Check(draft) {
 
 function mt5StateTone(pairing) {
   if (!pairing) return 'hint'
-  if (pairing.bridge_status === 'bridge_not_reachable') return 'error-text'
-  if (pairing.discovery_status === 'discovered_account_ready' || pairing.discovery_status === 'discovered_accounts_available') return 'hint success-text'
+  if (pairing.bridge_status === 'bridge_required') return 'error-text'
+  if (pairing.bridge_status === 'waiting_for_bridge_worker' || pairing.discovery_status === 'account_id_provided') return 'hint success-text'
   return 'hint'
 }
 
 function renderMt5DiscoverySummary(pairing) {
   if (!pairing) return 'Run a bridge/discovery check to continue.'
   if (pairing.bridge_status === 'bridge_required') return 'Bridge URL required before discovery can run.'
-  if (pairing.bridge_status === 'bridge_not_reachable') return 'Bridge is not reachable from the API right now.'
-  if (pairing.discovery_status === 'waiting_for_bridge') return 'Bridge is reachable but discovery endpoint is not ready yet.'
-  if (pairing.discovery_status === 'account_not_discovered_yet') return 'Bridge responded but the account is not discovered yet.'
-  if (pairing.discovery_status === 'discovered_account_ready') return 'The requested MT5 account is discovered and ready to add.'
-  if (pairing.discovery_status === 'discovered_accounts_available') return 'Bridge returned discovered accounts. Pick one to continue.'
+  if (pairing.bridge_status === 'bridge_registration_pending') return 'Bridge URL is captured, but worker registration is still pending.'
+  if (pairing.bridge_status === 'waiting_for_bridge_worker') return 'Bridge registration details exist. Waiting for trusted bridge worker linkage.'
+  if (pairing.discovery_status === 'account_id_provided') return 'Account ID is provided and can be saved for later bridge worker pairing.'
   return pairing.message || 'Discovery status is available.'
 }
 
@@ -185,11 +183,11 @@ function AddAccountFlowModal({
 
                 {mt5Step === 3 ? (
                   <div className="mt5-wizard-block">
-                    <p className="hint">Run bridge connectivity + account discovery check before adding this MT5 account.</p>
+                    <p className="hint">Validate pairing readiness and store bridge/account details without live network probing.</p>
                     <div className="row">
                       <button type="button" className="secondary-button" onClick={() => setMt5Step(2)}>Back</button>
                       <button type="button" onClick={() => void runMt5PairingCheck()} disabled={mt5IsChecking || !canAttemptMt5Check(draft)}>
-                        {mt5IsChecking ? 'Checking bridge…' : 'Check bridge and discovery'}
+                        {mt5IsChecking ? 'Checking pairing state…' : 'Check pairing state'}
                       </button>
                     </div>
                   </div>
@@ -206,26 +204,12 @@ function AddAccountFlowModal({
                         <div className="meta-card"><span className="hint">Add allowed</span><strong>{mt5Pairing.can_add_account ? 'yes' : 'no'}</strong></div>
                       </div>
                     ) : null}
-                    {mt5Pairing?.discovered_accounts?.length ? (
-                      <div>
-                        <p className="hint">Discovered accounts:</p>
-                        <div className="discovered-list">
-                          {mt5Pairing.discovered_accounts.map((account) => (
-                            <button
-                              key={account.external_account_id}
-                              type="button"
-                              className="discovered-item"
-                              onClick={() => setDraft((prev) => ({
-                                ...prev,
-                                external_account_id: account.external_account_id,
-                                display_label: prev.display_label || account.display_label || prev.display_label,
-                              }))}
-                            >
-                              <strong>{account.display_label || account.external_account_id}</strong>
-                              <span className="mono">{account.external_account_id}</span>
-                            </button>
-                          ))}
-                        </div>
+                    {mt5Pairing?.registration ? (
+                      <div className="meta-grid">
+                        <div className="meta-card"><span className="hint">Bridge URL provided</span><strong>{mt5Pairing.registration.bridge_url_provided ? 'yes' : 'no'}</strong></div>
+                        <div className="meta-card"><span className="hint">MT5 server provided</span><strong>{mt5Pairing.registration.mt5_server_provided ? 'yes' : 'no'}</strong></div>
+                        <div className="meta-card"><span className="hint">Bridge ID linked</span><strong>{mt5Pairing.registration.bridge_id_provided ? 'yes' : 'no'}</strong></div>
+                        <div className="meta-card"><span className="hint">Pairing token linked</span><strong>{mt5Pairing.registration.pairing_token_provided ? 'yes' : 'no'}</strong></div>
                       </div>
                     ) : null}
                     {mt5PairingError ? <p className="error-text">{mt5PairingError}</p> : null}

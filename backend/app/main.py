@@ -1650,6 +1650,8 @@ class MT5PairingCheckRequest(BaseModel):
     external_account_id: str | None = None
     bridge_url: str | None = None
     mt5_server: str | None = None
+    bridge_id: str | None = None
+    pairing_token: str | None = None
 
 
 @app.get("/connectors/{connector_type}")
@@ -1834,6 +1836,8 @@ async def mt5_pairing_check(
         external_account_id=payload.external_account_id,
         bridge_url=payload.bridge_url,
         mt5_server=payload.mt5_server,
+        bridge_id=payload.bridge_id,
+        pairing_token=payload.pairing_token,
     )
     return {"ok": True, "pairing": pairing_state}
 
