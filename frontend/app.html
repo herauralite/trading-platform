@@ -1,17 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TaliTrade App Redirect</title>
-  <script>
-    (function redirectToCanonicalAppShell() {
-      var target = '/app' + window.location.search + window.location.hash;
-      window.location.replace(target);
-    })();
-  </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TaliTrade App</title>
 </head>
 <body>
-  <p>Redirecting to the app shell… <a href="/app">Continue</a></p>
+  <div id="root" data-app-shell="canonical"></div>
+  <script type="module" src="/src/main.jsx"></script>
 </body>
 </html>

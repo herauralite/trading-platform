@@ -4,14 +4,18 @@ import { readFile } from 'node:fs/promises'
 
 test('/app route family resolves through canonical React shell entrypoint', async () => {
   const vercelRaw = await readFile(new URL('../vercel.json', import.meta.url), 'utf8')
+  const appEntryHtml = await readFile(new URL('../app.html', import.meta.url), 'utf8')
   const mainSource = await readFile(new URL('./main.jsx', import.meta.url), 'utf8')
   const appSource = await readFile(new URL('./App.jsx', import.meta.url), 'utf8')
 
   const rewrites = JSON.parse(vercelRaw).rewrites
   assert.deepEqual(rewrites, [
-    { source: '/app', destination: '/index.html' },
-    { source: '/app/:path*', destination: '/index.html' },
+    { source: '/app', destination: '/app.html' },
+    { source: '/app/:path*', destination: '/app.html' },
   ])
+
+  assert.equal(appEntryHtml.includes('data-app-shell="canonical"'), true)
+  assert.equal(appEntryHtml.includes('src="/src/main.jsx"'), true)
 
   assert.equal(mainSource.includes('<BrowserRouter>'), true)
   assert.equal(mainSource.includes('<App />'), true)
