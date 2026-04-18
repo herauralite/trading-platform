@@ -22,9 +22,11 @@ import { buildConnectorConfigDraft } from './connectorConfig'
 import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
 import { fetchAccountWorkspaces } from './accountWorkspaceService'
 import { deriveAccountConnectionState, isCurrentlyConnectedAccount } from './accountConnectionState'
+import { deriveAppOnboardingState } from './onboardingState'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
+import AppLandingPage from './pages/AppLandingPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
 import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS } from './addAccountFlow'
 import { checkMt5PairingState, createMt5PairingToken, fetchMt5BridgeRegistrationStatus } from './mt5PairingService'
@@ -143,7 +145,7 @@ function App() {
       connector_type: account.connector_type,
       source_label: sourceLabel(account.connector_type),
       broker_name: account.broker_name || null,
-      connection_status: String(account.connection_status || account.connector_status || 'disconnected').toLowerCase(),
+      connection_status: String(account.connection_status || 'disconnected').toLowerCase(),
       sync_state: String(account.sync_state || 'idle').toLowerCase(),
       account_type: account.account_type || null,
       last_activity_at: account.last_activity_at || null,
@@ -211,7 +213,14 @@ function App() {
 
   const addFlowIntent = useMemo(() => new URLSearchParams(location.search).get('addFlow') || '', [location.search])
   const accountConnectionState = useMemo(() => deriveAccountConnectionState(unifiedAccountWorkspaces), [unifiedAccountWorkspaces])
-  const hasZeroConnectedAccounts = signedIn && accountConnectionState.hasZeroConnectedAccounts
+  const onboardingState = useMemo(() => deriveAppOnboardingState({
+    signedIn,
+    useWorkspaceApi: USE_ACCOUNT_WORKSPACES_API,
+    workspaceApiHydrated,
+    workspaceApiAccounts,
+    fallbackAccounts: accountWorkspaces,
+  }), [signedIn, workspaceApiHydrated, workspaceApiAccounts, accountWorkspaces])
+  const hasZeroConnectedAccounts = onboardingState.hasZeroUsableAccounts
 
 
   useEffect(() => {
@@ -815,8 +824,17 @@ function App() {
           ) : null}
 
           <Routes>
-            <Route path="/" element={<Navigate to="/app/accounts" replace />} />
-            <Route path="/app" element={<Navigate to="/app/accounts" replace />} />
+            <Route path="/" element={<Navigate to="/app" replace />} />
+            <Route
+              path="/app"
+              element={(
+                <AppLandingPage
+                  hasZeroConnectedAccounts={hasZeroConnectedAccounts}
+                  accountConnectionState={accountConnectionState}
+                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                />
+              )}
+            />
             <Route
               path="/app/accounts"
               element={(
