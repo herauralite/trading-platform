@@ -36,10 +36,10 @@ const PROVIDER_DEFAULTS = {
   alpaca_api: {
     title: 'Alpaca API',
     shortLabel: 'Alpaca',
-    flowType: 'public_api_beta',
+    flowType: 'alpaca_connect',
     badge: 'Beta',
-    description: 'Register for beta API onboarding with metadata only.',
-    ctaLabel: 'Join beta access',
+    description: 'Connect read-only Alpaca API credentials to validate account access.',
+    ctaLabel: 'Connect Alpaca',
   },
   oanda_api: {
     title: 'OANDA API',
