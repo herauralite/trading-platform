@@ -867,15 +867,12 @@ footer{
 
 <!-- ── SCRIPTS ──────────────────────────────────────────────────────────────── -->
 
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
-const DEFAULT_API_BASE = 'https://trading-platform-production-70e0.up.railway.app';
-const TALI_CONFIG = window.__TALI_CONFIG__ || {};
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script>
+<script src="/tali-api-base.js"></script><script>
 const AUTH_DIAGNOSTICS = [];
 
 function getBaseApiUrl() {
-  const configured = String(TALI_CONFIG.apiBase || TALI_CONFIG.api_base || '').trim();
-  if (configured) return configured.replace(/\/$/, '');
-  return DEFAULT_API_BASE;
+  return window.TaliApiBase.resolveApiBase({ buildEnvApiBase: typeof API !== 'undefined' ? API : '' });
 }
 
 function classifyAuthConfigFailure(error, status) {
@@ -919,19 +916,19 @@ function isDemoCanonicalHost() {
 
 async function hydrateDemoTelegramConfig() {
   const apiBase = getBaseApiUrl();
-  const configUrl = apiBase + '/auth/telegram/config';
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+  const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');
   try {
     pushHomepageAuthDiag(`resolved_api_base=${apiBase}`);
     pushHomepageAuthDiag(`config_url=${configUrl}`);
-    const res = await fetch(configUrl, { credentials: 'include', mode: 'cors', signal: controller.signal });
+    const res = await fetch(configUrl, { credentials: 'include', mode: 'cors' });
     pushHomepageAuthDiag(`config_fetch_status=${res.status}`);
     pushHomepageAuthDiag(`config_fetch_content_type=${res.headers.get('content-type') || 'missing'}`);
     pushHomepageAuthDiag(`config_fetch_auth_mode_header=${res.headers.get('x-tali-auth-mode') || 'missing'}`);
     if (!res.ok) {
       demoTelegramConfigFailed = true;
       pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(null, res.status)}`);
+      pushHomepageAuthDiag('config_fetch_error_name=n/a');
+      pushHomepageAuthDiag(`config_fetch_error_message=http_${res.status}`);
       return;
     }
     const cfg = await res.json();
@@ -950,13 +947,13 @@ async function hydrateDemoTelegramConfig() {
     pushHomepageAuthDiag(`config_fetch_error_message=${String(error?.message || '').slice(0, 120) || 'n/a'}`);
     demoTelegramConfigFailed = true;
   } finally {
-    window.clearTimeout(timeoutId);
+    // no timeout abort: allow slower cold starts during auth bootstrap
   }
 }
 
 // ── Demo leaderboard ──────────────────────────────────────────────────────────
 function fetchDemoLeaderboard(){
-  fetch(getBaseApiUrl() + '/demo/leaderboard')
+  fetch(window.TaliApiBase.buildApiUrl('/demo/leaderboard'))
     .then(r => r.json())
     .then(data => renderLeaderboard(data.leaderboard || []))
     .catch(() => {
