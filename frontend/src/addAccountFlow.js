@@ -9,6 +9,13 @@ const REQUIRED_CONNECTORS = [
   'manual',
 ]
 
+export const PUBLIC_API_BETA_CONNECTORS = ['alpaca_api', 'oanda_api', 'binance_api']
+export const GUIDED_ADD_ACCOUNT_CONNECTORS = ['tradingview_webhook', ...PUBLIC_API_BETA_CONNECTORS]
+
+export function isGuidedAddAccountConnector(connectorType) {
+  return GUIDED_ADD_ACCOUNT_CONNECTORS.includes(connectorType)
+}
+
 const PROVIDER_DEFAULTS = {
   mt5_bridge: {
     title: 'MetaTrader 5 (MT5)',

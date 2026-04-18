@@ -103,7 +103,7 @@ def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
             "id": 55,
             "connector_type": "alpaca_api",
             "display_label": "Alpaca Beta",
-            "beta_state": "waiting_for_secure_auth_support",
+            "beta_state": "awaiting_secure_auth",
         }
 
     monkeypatch.setattr("app.main.create_public_api_beta_connection", fake_create_public_api_beta_connection)
@@ -121,5 +121,5 @@ def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
     response = asyncio.run(_run())
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "waiting_for_secure_auth_support"
-    assert body["connection"]["beta_state"] == "waiting_for_secure_auth_support"
+    assert body["status"] == "awaiting_secure_auth"
+    assert body["connection"]["beta_state"] == "awaiting_secure_auth"

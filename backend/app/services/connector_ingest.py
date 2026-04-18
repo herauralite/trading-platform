@@ -16,7 +16,7 @@ SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
 DEFAULT_CONNECTOR_STATUS = "connected"
 ALLOWED_CONNECTOR_STATUSES = {"connected", "degraded", "disconnected", "sync_error"}
-ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying", "awaiting_alerts", "active", "bridge_required", "waiting_for_registration", "ready_for_account_attach", "beta_pending", "metadata_saved", "waiting_for_secure_auth_support"})
+ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying", "awaiting_alerts", "active", "bridge_required", "waiting_for_registration", "ready_for_account_attach", "beta_pending", "metadata_saved", "awaiting_secure_auth", "waiting_for_secure_auth_support"})
 SYNC_RUN_FINAL_STATUSES = {"succeeded", "failed"}
 SYNC_RUN_RETRY_DELAYS_SECONDS = [2, 5]
 SYNC_RUN_LEASE_SECONDS = 300
