@@ -17,6 +17,7 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": False,
         "integration_status": "live",
         "connection_layer": "broker_connector",
+        "supported_capabilities": ["account_sync", "position_ingest", "trade_ingest"],
         "onboarding_copy": "Connect through the installed extension.",
         "connection_state_labels": {
             "connected": "Connected",
@@ -34,6 +35,7 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "integration_status": "beta_bridge_required",
         "connection_layer": "broker_connector",
         "notes": "Trusted bridge worker registration required.",
+        "supported_capabilities": ["trusted_bridge_pairing", "account_shell_attach"],
         "onboarding_copy": "Pair your MT5 bridge, then attach an account.",
         "connection_state_labels": {
             "bridge_required": "Bridge required",
@@ -52,6 +54,7 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": True,
         "integration_status": "beta_webhook",
         "connection_layer": "signal_ingest",
+        "supported_capabilities": ["webhook_signal_ingestion"],
         "onboarding_copy": "Create a webhook endpoint and paste it into TradingView alerts.",
         "connection_state_labels": {
             "webhook_created": "Webhook created",
@@ -69,11 +72,12 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": True,
         "integration_status": "beta_pending_secure_auth",
         "connection_layer": "public_api_connector",
+        "supported_capabilities": ["beta_metadata_registration"],
         "onboarding_copy": "Register metadata now; secure credential support is coming soon.",
         "connection_state_labels": {
             "beta_pending": "Beta pending",
             "metadata_saved": "Metadata saved",
-            "waiting_for_secure_auth_support": "Waiting for secure auth support",
+            "awaiting_secure_auth": "Awaiting secure auth",
         },
     },
     "oanda_api": {
@@ -86,11 +90,12 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": True,
         "integration_status": "beta_pending_secure_auth",
         "connection_layer": "public_api_connector",
+        "supported_capabilities": ["beta_metadata_registration"],
         "onboarding_copy": "Register metadata now; secure credential support is coming soon.",
         "connection_state_labels": {
             "beta_pending": "Beta pending",
             "metadata_saved": "Metadata saved",
-            "waiting_for_secure_auth_support": "Waiting for secure auth support",
+            "awaiting_secure_auth": "Awaiting secure auth",
         },
     },
     "binance_api": {
@@ -103,11 +108,12 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": True,
         "integration_status": "beta_pending_secure_auth",
         "connection_layer": "public_api_connector",
+        "supported_capabilities": ["beta_metadata_registration"],
         "onboarding_copy": "Register metadata now; secure credential support is coming soon.",
         "connection_state_labels": {
             "beta_pending": "Beta pending",
             "metadata_saved": "Metadata saved",
-            "waiting_for_secure_auth_support": "Waiting for secure auth support",
+            "awaiting_secure_auth": "Awaiting secure auth",
         },
     },
     "csv_import": {
@@ -120,6 +126,7 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": False,
         "integration_status": "live",
         "connection_layer": "import_tool",
+        "supported_capabilities": ["manual_import"],
         "onboarding_copy": "Import historical rows from CSV/JSON.",
         "connection_state_labels": {
             "ready": "Ready",
@@ -135,6 +142,7 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
         "beta": False,
         "integration_status": "live",
         "connection_layer": "manual_entry",
+        "supported_capabilities": ["manual_account_journal"],
         "onboarding_copy": "Create and journal trades manually.",
         "connection_state_labels": {
             "ready": "Ready",

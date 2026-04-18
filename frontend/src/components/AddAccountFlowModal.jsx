@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { PUBLIC_API_BETA_CONNECTORS } from '../addAccountFlow'
 
 const MT5_TOTAL_STEPS = 6
 
@@ -342,7 +343,7 @@ function AddAccountFlowModal({
 
             {selectedProvider.connectorType === 'tradingview_webhook' ? (
               <>
-                <p className="hint">Create a TradingView webhook connection. Status stays <strong>Awaiting TradingView alerts</strong> until real alerts arrive.</p>
+                <p className="hint">Create a TradingView webhook connection. Paste this webhook URL into your TradingView alert. Status stays <strong>Awaiting first alert</strong> until a real event arrives.</p>
                 <div className="row">
                   <input
                     placeholder="Connection label"
@@ -370,11 +371,12 @@ function AddAccountFlowModal({
                     </div>
                   </div>
                 ) : null}
+                {draft.tradingview_webhook_url ? <p className="hint">Connection becomes active after your first valid alert.</p> : null}
                 {copiedField ? <p className="hint success-text">Copied.</p> : null}
               </>
             ) : null}
 
-            {['alpaca_api', 'oanda_api', 'binance_api'].includes(selectedProvider.connectorType) ? (
+            {PUBLIC_API_BETA_CONNECTORS.includes(selectedProvider.connectorType) ? (
               <>
                 <p className="hint">Register this provider for beta onboarding. We only save safe metadata in this slice.</p>
                 <div className="row">
@@ -397,7 +399,7 @@ function AddAccountFlowModal({
                     onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
                   />
                 </div>
-                <p className="hint">End state: <strong>Waiting for secure auth support</strong>. No live broker connectivity is claimed yet.</p>
+                <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
               </>
             ) : null}
 

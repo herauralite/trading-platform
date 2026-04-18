@@ -1,5 +1,6 @@
 import { buildConnectorConfigDraft, connectorConfigStateLabel } from '../connectorConfig'
 import { formatSyncRunDiagnostics } from '../syncRunDiagnostics'
+import { isGuidedAddAccountConnector } from '../addAccountFlow'
 
 function ConnectionsPage({
   catalog,
@@ -85,7 +86,7 @@ function ConnectionsPage({
                 Sync
               </button>
               <button
-                disabled={!signedIn || connector.account_count > 0 || ['tradingview_webhook', 'alpaca_api', 'oanda_api', 'binance_api'].includes(connector.connector_type)}
+                disabled={!signedIn || connector.account_count > 0 || isGuidedAddAccountConnector(connector.connector_type)}
                 onClick={() => connectorAction(connector.connector_type, 'connect', {
                   external_account_id: connectorDrafts[connector.connector_type]?.external_account_id || `${connector.connector_type}-account`,
                   display_label: connectorDrafts[connector.connector_type]?.display_label || sourceLabel(connector.connector_type),
@@ -102,10 +103,10 @@ function ConnectionsPage({
               </button>
               <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'disconnect')}>Disconnect</button>
             </div>
-            {['tradingview_webhook', 'alpaca_api', 'oanda_api', 'binance_api'].includes(connector.connector_type) ? (
+            {isGuidedAddAccountConnector(connector.connector_type) ? (
               <p className="hint">Use <strong>Add Account</strong> for this provider’s guided onboarding flow.</p>
             ) : null}
-            {connector.account_count === 0 && !['tradingview_webhook', 'alpaca_api', 'oanda_api', 'binance_api'].includes(connector.connector_type) ? (
+            {connector.account_count === 0 && !isGuidedAddAccountConnector(connector.connector_type) ? (
               <div className="row">
                 <input
                   placeholder="Account id for connect"

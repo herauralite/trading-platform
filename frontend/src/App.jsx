@@ -23,7 +23,7 @@ import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
-import { buildAddAccountProviders } from './addAccountFlow'
+import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS } from './addAccountFlow'
 import { checkMt5PairingState, createMt5PairingToken, fetchMt5BridgeRegistrationStatus } from './mt5PairingService'
 import './App.css'
 
@@ -280,7 +280,7 @@ function App() {
     if (connectorStatus === 'active') return 'status-connected'
     if (connectorStatus === 'ready_for_account_attach') return 'status-connected'
     if (connectorStatus === 'sync_running' || connectorStatus === 'sync_queued' || connectorStatus === 'sync_retrying') return 'status-degraded'
-    if (connectorStatus === 'awaiting_alerts' || connectorStatus === 'bridge_required' || connectorStatus === 'waiting_for_registration' || connectorStatus === 'beta_pending' || connectorStatus === 'metadata_saved' || connectorStatus === 'waiting_for_secure_auth_support') return 'status-degraded'
+    if (connectorStatus === 'awaiting_alerts' || connectorStatus === 'bridge_required' || connectorStatus === 'waiting_for_registration' || connectorStatus === 'beta_pending' || connectorStatus === 'metadata_saved' || connectorStatus === 'awaiting_secure_auth' || connectorStatus === 'waiting_for_secure_auth_support') return 'status-degraded'
     if (connectorStatus === 'degraded') return 'status-degraded'
     if (connectorStatus === 'sync_error') return 'status-error'
     return 'status-disconnected'
@@ -604,7 +604,7 @@ function App() {
         navigate('/app/accounts')
         return
       }
-      if (['alpaca_api', 'oanda_api', 'binance_api'].includes(provider.connectorType)) {
+      if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
         await axios.post(
           buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
           {
