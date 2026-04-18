@@ -24,4 +24,6 @@ test('/app route family resolves through canonical React shell entrypoint', asyn
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
   assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
+  assert.equal(appSource.includes("className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes('TaliTrade Platform'), false)
 })
