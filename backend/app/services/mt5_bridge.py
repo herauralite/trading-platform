@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import asyncio
 import json
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 from sqlalchemy import text
 
@@ -70,6 +71,58 @@ class StubMT5BridgeClient:
 
 def build_mt5_bridge_client() -> MT5BridgeClient:
     return StubMT5BridgeClient()
+
+
+def _sanitize_bridge_url(bridge_url: str | None) -> str:
+    candidate = str(bridge_url or "").strip()
+    if not candidate:
+        return ""
+    parsed = urlparse(candidate)
+    if parsed.scheme not in {"http", "https"}:
+        return ""
+    if not parsed.netloc:
+        return ""
+    return candidate.rstrip("/")
+
+
+async def check_mt5_pairing_state(
+    *,
+    external_account_id: str | None = None,
+    bridge_url: str | None = None,
+    mt5_server: str | None = None,
+    bridge_id: str | None = None,
+    pairing_token: str | None = None,
+) -> dict[str, Any]:
+    account_id = str(external_account_id or "").strip()
+    server = str(mt5_server or "").strip()
+    resolved_bridge_url = _sanitize_bridge_url(bridge_url)
+    resolved_bridge_id = str(bridge_id or "").strip()
+    resolved_pairing_token = str(pairing_token or "").strip()
+
+    bridge_status = "bridge_required"
+    if resolved_bridge_id or resolved_pairing_token:
+        bridge_status = "waiting_for_bridge_worker"
+    elif resolved_bridge_url:
+        bridge_status = "bridge_registration_pending"
+
+    discovery_status = "account_id_provided" if account_id else "bridge_required"
+    registration = {
+        "bridge_url_provided": bool(resolved_bridge_url),
+        "bridge_url_format_valid": bool(resolved_bridge_url),
+        "mt5_server_provided": bool(server),
+        "bridge_id_provided": bool(resolved_bridge_id),
+        "pairing_token_provided": bool(resolved_pairing_token),
+    }
+
+    return {
+        "bridge_status": bridge_status,
+        "discovery_status": discovery_status,
+        "implementation_mode": "safe_non_probing_pairing",
+        "message": "Bridge connectivity is not probed from user-supplied URLs. Pairing remains registration-based until a trusted worker is linked.",
+        "can_add_account": bool(account_id),
+        "discovered_accounts": [],
+        "registration": registration,
+    }
 
 
 async def upsert_mt5_bridge_account(

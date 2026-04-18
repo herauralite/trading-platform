@@ -58,7 +58,10 @@ function AccountsOverviewPage({
 
 
       {recentlyAddedAccountLabel ? (
-        <p className="hint">Focused newly added account: <strong>{recentlyAddedAccountLabel}</strong></p>
+        <div className="card add-success-banner">
+          <strong>Account added successfully.</strong>
+          <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>. You can manage connector/bridge details in Connections.</p>
+        </div>
       ) : null}
       <div className="meta-grid accounts-summary-grid">
         <div className="meta-card summary-card">

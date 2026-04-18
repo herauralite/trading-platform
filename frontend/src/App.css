@@ -296,3 +296,40 @@ ul {
 .add-account-form {
   margin-top: 10px;
 }
+
+.mt5-step-label {
+  font-weight: 600;
+  color: #1e293b;
+}
+
+.mt5-wizard-block {
+  border: 1px solid #dbe2ee;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.success-text {
+  color: #166534;
+}
+
+.discovered-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.discovered-item {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
+.add-success-banner {
+  border-color: #86efac;
+  background: #f0fdf4;
+}
