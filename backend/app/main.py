@@ -39,11 +39,21 @@ from app.services.connector_ingest import (
     upsert_connector_config,
     upsert_connector_lifecycle,
     upsert_trading_account,
-    validate_fundingpips_connector_config,
+)
+from app.services.connector_catalog import (
+    CONNECTOR_CATALOG,
+    connector_config_spec,
+    connector_supports_live_sync,
+    connector_validation_for,
+    normalize_connector_type,
 )
 from app.services.account_workspace import (
     get_account_workspace,
     list_account_workspaces,
+)
+from app.services.mt5_bridge import (
+    get_mt5_bridge_account_state,
+    upsert_mt5_bridge_account,
 )
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
@@ -120,32 +130,6 @@ TELEGRAM_LOGIN_DOMAIN_RAW  = os.getenv("TELEGRAM_LOGIN_DOMAIN", "www.talitrade.c
 TELEGRAM_BOT_USERNAME      = normalize_telegram_bot_username(TELEGRAM_BOT_USERNAME_RAW)
 TELEGRAM_LOGIN_DOMAIN      = normalize_telegram_login_domain(TELEGRAM_LOGIN_DOMAIN_RAW)
 
-CONNECTOR_CATALOG = {
-    "fundingpips_extension": {
-        "label": "FundingPips Extension",
-        "category": "extension",
-        "supports_live_sync": True,
-    },
-    "csv_import": {
-        "label": "CSV Import",
-        "category": "file_import",
-        "supports_live_sync": False,
-    },
-    "manual": {
-        "label": "Manual Journal",
-        "category": "manual",
-        "supports_live_sync": False,
-    },
-}
-
-CONNECTOR_CONFIG_SPEC: dict[str, dict[str, Any]] = {
-    "fundingpips_extension": {
-        "non_secret_fields": ["healthcheck_url", "external_account_id", "timeout_seconds"],
-        "secret_fields": ["api_token"],
-        "supports_external_sync": True,
-    }
-}
-
 
 def telegram_oidc_enabled() -> bool:
     if TELEGRAM_OIDC_MODE == "legacy_widget":
@@ -159,16 +143,6 @@ def telegram_auth_mode() -> str:
 
 def resolved_oidc_authorize_host() -> str:
     return normalize_hostname(TELEGRAM_OIDC_AUTHORIZE_URL, "")
-
-
-def connector_supports_live_sync(connector_type: str) -> bool:
-    normalized = connector_type.strip().lower().replace("-", "_")
-    return bool(CONNECTOR_CATALOG.get(normalized, {}).get("supports_live_sync", False))
-
-
-def connector_config_spec(connector_type: str) -> dict[str, Any]:
-    normalized = connector_type.strip().lower().replace("-", "_")
-    return CONNECTOR_CONFIG_SPEC.get(normalized, {"non_secret_fields": [], "secret_fields": [], "supports_external_sync": False})
 
 
 def sanitize_connector_config_payload(connector_type: str, payload: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1658,6 +1632,7 @@ class ConnectorActionRequest(BaseModel):
     display_label: str | None = None
     account_type: str | None = None
     account_size: int | None = None
+    connection_metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConnectorConfigUpsertRequest(BaseModel):
@@ -1677,7 +1652,7 @@ async def connector_status_detail(
 ):
     resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     runs = await get_connector_sync_runs(resolved_uid, normalized, limit=10)
     connector = next((c for c in connectors if c["connector_type"] == normalized), None)
     if connector is None:
@@ -1708,7 +1683,7 @@ async def connector_config_detail(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     spec = connector_config_spec(normalized)
     config = await get_connector_config(resolved_uid, normalized)
     if not config:
@@ -1740,12 +1715,13 @@ async def connector_config_set(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     non_secret, secret = sanitize_connector_config_payload(normalized, payload.model_dump())
     status = "configured"
     validation_error = None
-    if normalized == "fundingpips_extension":
-        status, validation_error = validate_fundingpips_connector_config(non_secret, secret)
+    validator = connector_validation_for(normalized)
+    if validator:
+        status, validation_error = validator(non_secret, secret)
     row = await upsert_connector_config(
         resolved_uid,
         normalized,
@@ -1765,7 +1741,7 @@ async def connector_config_update(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     existing = await get_connector_config(resolved_uid, normalized, include_secret=True) or {}
     existing_non_secret = dict(existing.get("non_secret_config") or {})
     existing_secret = dict(existing.get("secret_config") or {})
@@ -1774,8 +1750,9 @@ async def connector_config_update(
     merged_secret = {**existing_secret, **patch_secret}
     status = "configured"
     validation_error = None
-    if normalized == "fundingpips_extension":
-        status, validation_error = validate_fundingpips_connector_config(merged_non_secret, merged_secret)
+    validator = connector_validation_for(normalized)
+    if validator:
+        status, validation_error = validator(merged_non_secret, merged_secret)
     await upsert_connector_config(
         resolved_uid,
         normalized,
@@ -1794,7 +1771,7 @@ async def connector_config_clear(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     removed = await clear_connector_config(resolved_uid, normalized)
     return {"ok": True, "connector_type": normalized, "removed": removed}
 
@@ -1806,9 +1783,10 @@ async def connector_connect(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
+    trading_account = None
     if payload.external_account_id:
-        await upsert_trading_account({
+        trading_account = await upsert_trading_account({
             "user_id": resolved_uid,
             "connector_type": normalized,
             "broker_name": payload.broker_name or normalized,
@@ -1817,7 +1795,17 @@ async def connector_connect(
             "account_type": payload.account_type,
             "account_size": payload.account_size,
             "is_active": True,
+            "metadata": payload.connection_metadata or {},
         })
+        if normalized == "mt5_bridge":
+            await upsert_mt5_bridge_account(
+                user_id=resolved_uid,
+                trading_account_id=trading_account["id"],
+                external_account_id=payload.external_account_id,
+                bridge_url=(payload.connection_metadata or {}).get("bridge_url"),
+                mt5_server=(payload.connection_metadata or {}).get("mt5_server"),
+                metadata={"source": "connect_action"},
+            )
     lifecycle = await upsert_connector_lifecycle(
         user_id=resolved_uid,
         connector_type=normalized,
@@ -1826,7 +1814,7 @@ async def connector_connect(
         last_activity_at=datetime.now(timezone.utc),
         metadata={"action": "connect"},
     )
-    return {"ok": True, "connector": lifecycle}
+    return {"ok": True, "connector": lifecycle, "trading_account": trading_account}
 
 
 @app.post("/connectors/{connector_type}/sync")
@@ -1835,7 +1823,7 @@ async def connector_sync(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     if not connector_supports_live_sync(normalized):
         raise HTTPException(
             status_code=409,
@@ -1858,7 +1846,7 @@ async def connector_sync_runs(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     runs = await get_connector_sync_runs(resolved_uid, normalized, limit=limit)
     return {"connector_type": normalized, "runs": runs, "count": len(runs)}
 
@@ -1869,7 +1857,7 @@ async def connector_disconnect(
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
     resolved_uid = str(session_user_id).strip()
-    normalized = connector_type.strip().lower().replace("-", "_")
+    normalized = normalize_connector_type(connector_type)
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -1886,6 +1874,36 @@ async def connector_disconnect(
         metadata={"action": "disconnect"},
     )
     return {"ok": True, "connector": lifecycle}
+
+
+@app.get("/connectors/mt5_bridge/accounts/{external_account_id}/state")
+async def mt5_bridge_account_state(
+    external_account_id: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    account_id = str(external_account_id or "").strip()
+    if not account_id:
+        raise HTTPException(status_code=400, detail="external_account_id is required")
+    async with engine.connect() as conn:
+        account = (await conn.execute(text("""
+            SELECT id, external_account_id
+            FROM trading_accounts
+            WHERE user_id = :uid
+              AND connector_type = 'mt5_bridge'
+              AND external_account_id = :external_account_id
+              AND is_active = TRUE
+            ORDER BY updated_at DESC
+            LIMIT 1
+        """), {"uid": resolved_uid, "external_account_id": account_id})).mappings().first()
+    if not account:
+        raise HTTPException(status_code=404, detail="MT5 account not found for user")
+    state = await get_mt5_bridge_account_state(
+        user_id=resolved_uid,
+        trading_account_id=account["id"],
+        external_account_id=account_id,
+    )
+    return {"ok": True, "state": state}
 
 
 @app.exception_handler(Exception)
