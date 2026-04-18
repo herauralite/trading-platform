@@ -119,6 +119,14 @@ h3 {
   flex-wrap: wrap;
 }
 
+.app-shell-health-strip {
+  padding: 10px 14px;
+}
+
+.app-shell-auth-prompt {
+  border-color: rgba(255, 194, 74, 0.55);
+}
+
 .app-shell-nav-block {
   display: flex;
   flex-direction: column;
@@ -248,6 +256,12 @@ h3 {
   border: 1px solid rgba(153, 122, 255, 0.75);
   color: #f2ecff;
   background: linear-gradient(140deg, #8252ff, #6538d4);
+}
+
+.secondary-button {
+  border: 1px solid rgba(109, 145, 202, 0.65);
+  background: rgba(13, 24, 42, 0.9);
+  color: #dce8fb;
 }
 
 button,
