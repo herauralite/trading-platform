@@ -735,10 +735,10 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}>
       <header className="app-header panel">
         <div>
-          <h1>TaliTrade Platform</h1>
+          <h1>TaliTrade Command Center</h1>
           <p>Status: {status}</p>
         </div>
         <div className="row">
@@ -753,7 +753,7 @@ function App() {
         <section className="panel">
           <h2>Session</h2>
           {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-          <p>Primary login path: Telegram authenticated session.</p>
+          <p>Sign in with Telegram to open your authenticated account workspace.</p>
           {telegramConfig?.oidcEnabled ? (
             <button onClick={startOidcFlow}>Sign in with Telegram</button>
           ) : (
@@ -762,7 +762,7 @@ function App() {
                 <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
               ) : (
                 <>
-                  {isConfigLoading ? <p className="hint">Preparing secure Telegram sign-in…</p> : null}
+                  {isConfigLoading ? <p className="hint">Loading Telegram secure sign-in widget…</p> : null}
                   <script
                     async
                     src="https://telegram.org/js/telegram-widget.js?22"
