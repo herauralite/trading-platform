@@ -886,21 +886,14 @@ window.onTelegramAuth = async function(tgUser) {
       throw new Error('auth_rejected');
     }
 
-    const user = normalizeTaliUserShape(data.user);
+    let user = normalizeTaliUserShape(data.user) || normalizeTaliUserShape(normalizeWidgetUserShape(tgUser));
     const token = String(data.access_token || '');
-    if (!token) {
-      throw new Error('missing_session_token');
-    }
-
-    if (!user) {
-      throw new Error('missing_or_invalid_user');
-    }
+    if (!token) throw new Error('missing_session_token');
 
     // Populate ACCOUNTS map dynamically from this user's linked accounts
     hydrateAccountsMap(data.accounts || []);
 
-    // 2. Persist user
-    localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
+    // Persist token first so bootstrap probes can execute.
     localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
 
     try {
@@ -912,11 +905,14 @@ window.onTelegramAuth = async function(tgUser) {
       if (meRes.ok) {
         const meData = await meRes.json();
         const meUser = normalizeTaliUserShape(meData.user);
-        if (meUser) localStorage.setItem(TALI_USER_KEY, JSON.stringify(meUser));
+        if (meUser) user = meUser;
       }
     } catch (meErr) {
       pushGateDiagnostic(`/auth/me_failure=${meErr?.message || meErr}`);
     }
+
+    if (!user) throw new Error('missing_or_invalid_user');
+    localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
 
     // 2b. Push telegramUserId into the extension's chrome.storage.local so
     //     content.js (which runs on fundingpips.com, a different origin) can
@@ -1017,6 +1013,24 @@ function normalizeTaliUserShape(rawUser) {
     last_name: rawUser.last_name || rawUser.lastName || '',
     photoUrl: rawUser.photoUrl || rawUser.photo_url || '',
     photo_url: rawUser.photo_url || rawUser.photoUrl || '',
+  };
+}
+
+function normalizeWidgetUserShape(rawWidgetUser) {
+  if (!rawWidgetUser || typeof rawWidgetUser !== 'object') return null;
+  const telegramUserId = String(rawWidgetUser.id || rawWidgetUser.telegramUserId || rawWidgetUser.telegram_user_id || '').trim();
+  if (!telegramUserId) return null;
+  return {
+    telegramUserId,
+    telegram_user_id: telegramUserId,
+    username: rawWidgetUser.username || '',
+    telegram_username: rawWidgetUser.username || '',
+    firstName: rawWidgetUser.first_name || '',
+    first_name: rawWidgetUser.first_name || '',
+    lastName: rawWidgetUser.last_name || '',
+    last_name: rawWidgetUser.last_name || '',
+    photoUrl: rawWidgetUser.photo_url || '',
+    photo_url: rawWidgetUser.photo_url || '',
   };
 }
 

@@ -987,7 +987,7 @@ window.onTelegramAuth = async function(tgUser) {
       setGateTelegramError(msg);
       throw new Error(msg);
     }
-    await finishTelegramLogin(data);
+    await finishTelegramLogin(data, tgUser);
   } catch (e) {
     document.getElementById('gate-signing').style.display = 'none';
     document.getElementById('tg-widget-wrap').style.opacity = '1';
@@ -998,13 +998,29 @@ window.onTelegramAuth = async function(tgUser) {
   }
 };
 
-async function finishTelegramLogin(data) {
-  const user = normalizeTaliUserShape(data.user);
+function normalizeWidgetUserShape(rawWidgetUser) {
+  if (!rawWidgetUser || typeof rawWidgetUser !== 'object') return null;
+  const telegramUserId = String(rawWidgetUser.id || rawWidgetUser.telegramUserId || rawWidgetUser.telegram_user_id || '').trim();
+  if (!telegramUserId) return null;
+  return {
+    telegramUserId,
+    telegram_user_id: telegramUserId,
+    username: rawWidgetUser.username || '',
+    telegram_username: rawWidgetUser.username || '',
+    firstName: rawWidgetUser.first_name || '',
+    first_name: rawWidgetUser.first_name || '',
+    lastName: rawWidgetUser.last_name || '',
+    last_name: rawWidgetUser.last_name || '',
+    photoUrl: rawWidgetUser.photo_url || '',
+    photo_url: rawWidgetUser.photo_url || '',
+  };
+}
+
+async function finishTelegramLogin(data, widgetUser = null) {
+  let user = normalizeTaliUserShape(data.user) || normalizeTaliUserShape(normalizeWidgetUserShape(widgetUser));
   const token = String(data.access_token || '');
   if (!token) throw new Error('missing_session_token');
-  if (!user) throw new Error('missing_or_invalid_user');
   hydrateAccountsMap(data.accounts || []);
-  localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
   localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
   sessionStorage.setItem(TALI_TG_DONE_KEY, '1');
 
@@ -1018,10 +1034,13 @@ async function finishTelegramLogin(data) {
     const meData = await meRes.json();
     const meUser = normalizeTaliUserShape(meData.user);
     if (!meUser) throw new Error('auth_me_missing_user');
-    localStorage.setItem(TALI_USER_KEY, JSON.stringify(meUser));
+    user = meUser;
   } catch (meErr) {
     pushGateDiagnostic(`/auth/me_failure=${meErr?.message || meErr}`);
   }
+
+  if (!user) throw new Error('missing_or_invalid_user');
+  localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
 
   try {
     const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
