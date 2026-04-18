@@ -303,6 +303,11 @@ async def ensure_connector_tables() -> None:
                 environment TEXT,
                 account_alias TEXT,
                 beta_state TEXT NOT NULL DEFAULT 'beta_pending',
+                encrypted_api_key TEXT,
+                encrypted_api_secret TEXT,
+                account_summary JSONB DEFAULT '{}'::jsonb,
+                last_validation_error TEXT,
+                last_validated_at TIMESTAMPTZ,
                 metadata JSONB DEFAULT '{}'::jsonb,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -311,8 +316,14 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS environment TEXT"))
         await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS account_alias TEXT"))
         await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS beta_state TEXT NOT NULL DEFAULT 'beta_pending'"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS encrypted_api_key TEXT"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS encrypted_api_secret TEXT"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS account_summary JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS last_validation_error TEXT"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS public_api_beta_user_idx ON public_api_beta_connections(user_id, connector_type, created_at DESC)"))
+        await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS public_api_beta_trading_account_uq ON public_api_beta_connections(trading_account_id)"))
 
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS account_snapshots (
