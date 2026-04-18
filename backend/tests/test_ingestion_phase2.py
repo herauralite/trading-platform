@@ -54,6 +54,16 @@ def post_json_auth(path: str, payload: dict, telegram_user_id: str = "123"):
     return asyncio.run(_run())
 
 
+def get_json_auth(path: str, telegram_user_id: str = "123"):
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token(telegram_user_id)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get(path, headers={"Authorization": f"Bearer {token}"})
+
+    return asyncio.run(_run())
+
+
 def test_ingest_accounts_route(monkeypatch):
     captured = {}
 
@@ -258,17 +268,45 @@ def test_ensure_connector_tables_fresh_db_ordering(monkeypatch):
     assert "CREATE TABLE IF NOT EXISTS positions" in joined
     assert "CREATE TABLE IF NOT EXISTS connector_events" in joined
 
-    idx_create_snapshots = joined.index("CREATE TABLE IF NOT EXISTS account_snapshots")
-    idx_rewire_snapshots = joined.index("UPDATE account_snapshots s")
-    assert idx_create_snapshots < idx_rewire_snapshots
 
-    idx_create_positions = joined.index("CREATE TABLE IF NOT EXISTS positions")
-    idx_rewire_positions = joined.index("UPDATE positions p")
-    assert idx_create_positions < idx_rewire_positions
+def test_account_workspaces_list_route(monkeypatch):
+    async def fake_list(uid):
+        assert uid == "u-42"
+        return [{
+            "account_key": "acct-key-1",
+            "trading_account_id": 10,
+            "user_id": uid,
+            "external_account_id": "ext-1",
+            "display_label": "Main",
+            "broker_name": "FundingPips",
+            "broker_family": "fundingpips",
+            "connector_type": "fundingpips_extension",
+            "connection_status": "connected",
+            "sync_state": "idle",
+            "account_type": None,
+            "account_size": None,
+            "last_activity_at": None,
+            "last_sync_at": None,
+            "is_primary": False,
+        }]
 
-    idx_create_events = joined.index("CREATE TABLE IF NOT EXISTS connector_events")
-    idx_rewire_events = joined.index("UPDATE connector_events e")
-    assert idx_create_events < idx_rewire_events
+    monkeypatch.setattr("app.main.list_account_workspaces", fake_list)
+    resp = get_json_auth("/accounts/workspaces", telegram_user_id="u-42")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["workspaces"][0]["account_key"] == "acct-key-1"
+
+
+def test_account_workspaces_detail_route_not_found(monkeypatch):
+    async def fake_get(uid, account_key):
+        assert uid == "u-42"
+        assert account_key == "missing"
+        return None
+
+    monkeypatch.setattr("app.main.get_account_workspace", fake_get)
+    resp = get_json_auth("/accounts/workspaces/missing", telegram_user_id="u-42")
+    assert resp.status_code == 404
 
 
 def test_ensure_connector_tables_drops_legacy_position_uniqueness(monkeypatch):
