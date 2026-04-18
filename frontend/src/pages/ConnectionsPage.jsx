@@ -60,6 +60,13 @@ function ConnectionsPage({
                 Provider state: <strong>{connector.provider_state}</strong>
               </div>
             ) : null}
+            {connector.connector_type === 'alpaca_api' ? (
+              <div className="meta">
+                Environment: <strong>{connector.accounts[0]?.metadata?.environment || '—'}</strong>
+                {' · '}
+                Last validated: {formatDate(connector.accounts[0]?.metadata?.last_validated_at || connector.last_sync_at)}
+              </div>
+            ) : null}
             {connector.connector_type === 'tradingview_webhook' ? (
               <div className="meta">
                 {connector.status === 'active'
@@ -81,6 +88,12 @@ function ConnectionsPage({
                   <span>{account.display_label || account.external_account_id}</span>
                   <span className="pill">{sourceLabel(connector.connector_type)}</span>
                   <span className="pill">{account.broker_name || 'Unknown broker'}</span>
+                  {connector.connector_type === 'alpaca_api' ? (
+                    <>
+                      <span className="pill">{account.metadata?.environment || 'paper'}</span>
+                      <span className="pill">{account.metadata?.provider_state || connector.status}</span>
+                    </>
+                  ) : null}
                   {connector.connector_type === 'tradingview_webhook' ? (
                     <span className="pill">
                       {account.activation_state === 'active' ? 'Webhook active' : 'Awaiting first alert'}

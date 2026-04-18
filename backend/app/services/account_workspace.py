@@ -30,6 +30,11 @@ CONNECTION_STATUS_MAP = {
     "metadata_saved": "metadata_saved",
     "awaiting_secure_auth": "awaiting_secure_auth",
     "waiting_for_secure_auth_support": "waiting_for_secure_auth_support",
+    "configured": "configured",
+    "validation_failed": "validation_failed",
+    "account_verified": "account_verified",
+    "paper_connected": "paper_connected",
+    "live_connected": "live_connected",
 }
 
 

@@ -130,11 +130,11 @@ def test_tradingview_ingest_rejects_invalid_token(monkeypatch):
 
 def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
     async def fake_create_public_api_beta_connection(**kwargs):
-        assert kwargs["connector_type"] == "alpaca_api"
+        assert kwargs["connector_type"] == "oanda_api"
         return {
             "id": 55,
-            "connector_type": "alpaca_api",
-            "display_label": "Alpaca Beta",
+            "connector_type": "oanda_api",
+            "display_label": "OANDA Beta",
             "beta_state": "awaiting_secure_auth",
         }
 
@@ -145,8 +145,8 @@ def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
         token = create_session_token("u-beta")
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             return await client.post(
-                "/providers/public-api/alpaca_api/beta",
-                json={"display_label": "Alpaca Beta", "environment": "paper"},
+                "/providers/public-api/oanda_api/beta",
+                json={"display_label": "OANDA Beta", "environment": "paper"},
                 headers={"Authorization": f"Bearer {token}"},
             )
 
@@ -155,3 +155,71 @@ def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
     body = response.json()
     assert body["status"] == "awaiting_secure_auth"
     assert body["connection"]["beta_state"] == "awaiting_secure_auth"
+
+
+def test_alpaca_connect_returns_validated_account_without_secrets(monkeypatch):
+    async def fake_connect_alpaca_api(**kwargs):
+        assert kwargs["user_id"] == "u-alpaca"
+        assert kwargs["api_key"] == "key123"
+        assert kwargs["api_secret"] == "secret123"
+        return {
+            "provider_state": "paper_connected",
+            "account_verified": True,
+            "environment": "paper",
+            "validated_at": "2026-04-18T12:00:00Z",
+            "account_summary": {"account_id": "alp-1", "status": "ACTIVE", "currency": "USD", "equity": "1000.50", "buying_power": "2000.00"},
+            "connection": {"id": 12, "display_label": "My Alpaca", "environment": "paper", "beta_state": "paper_connected", "updated_at": "2026-04-18T12:00:00Z"},
+            "trading_account": {"id": 34, "external_account_id": "alp-1", "display_label": "My Alpaca", "connector_type": "alpaca_api"},
+        }
+
+    monkeypatch.setattr("app.main.connect_alpaca_api", fake_connect_alpaca_api)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-alpaca")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/alpaca_api/connect",
+                json={"display_label": "My Alpaca", "environment": "paper", "api_key": "key123", "api_secret": "secret123"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "paper_connected"
+    assert body["trading_account"]["external_account_id"] == "alp-1"
+    serialized = response.text
+    assert "secret123" not in serialized
+    assert "key123" not in serialized
+
+
+def test_alpaca_connect_invalid_credentials_returns_400(monkeypatch):
+    from app.services.alpaca_provider import AlpacaValidationError
+
+    async def fake_connect_alpaca_api(**kwargs):
+        raise AlpacaValidationError("Alpaca credentials are invalid for the selected environment")
+
+    async def fake_upsert_connector_lifecycle(*args, **kwargs):
+        return {"status": "validation_failed"}
+
+    async def fake_upsert_connector_config(*args, **kwargs):
+        return {"status": "invalid"}
+
+    monkeypatch.setattr("app.main.connect_alpaca_api", fake_connect_alpaca_api)
+    monkeypatch.setattr("app.main.upsert_connector_lifecycle", fake_upsert_connector_lifecycle)
+    monkeypatch.setattr("app.main.upsert_connector_config", fake_upsert_connector_config)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-alpaca-fail")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/alpaca_api/connect",
+                json={"display_label": "Bad Alpaca", "environment": "live", "api_key": "bad", "api_secret": "bad"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 400
+    assert "invalid" in response.json()["detail"].lower()

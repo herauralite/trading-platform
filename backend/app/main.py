@@ -62,10 +62,12 @@ from app.services.mt5_bridge import (
 )
 from app.services.provider_onboarding import (
     PUBLIC_API_BETA_CONNECTORS,
+    connect_alpaca_api,
     create_public_api_beta_connection,
     create_tradingview_connection,
     ingest_tradingview_event,
 )
+from app.services.alpaca_provider import AlpacaValidationError
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -1748,6 +1750,14 @@ class PublicApiBetaConnectionCreateRequest(BaseModel):
     account_alias: str | None = None
 
 
+class AlpacaConnectionCreateRequest(BaseModel):
+    display_label: str
+    environment: str | None = "paper"
+    account_alias: str | None = None
+    api_key: str
+    api_secret: str
+
+
 @app.get("/connectors/{connector_type}")
 async def connector_status_detail(
     connector_type: str,
@@ -2149,6 +2159,69 @@ async def create_public_api_beta_provider_connection(
         "provider": normalized_provider,
         "connection": connection,
         "status": "awaiting_secure_auth",
+    }
+
+
+@app.post("/providers/public-api/alpaca_api/connect")
+async def connect_alpaca_provider(
+    payload: AlpacaConnectionCreateRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    display_label = str(payload.display_label or "").strip()
+    if not display_label:
+        raise HTTPException(status_code=400, detail="display_label is required")
+    try:
+        connected = await connect_alpaca_api(
+            user_id=resolved_uid,
+            display_label=display_label,
+            api_key=payload.api_key,
+            api_secret=payload.api_secret,
+            environment=payload.environment,
+            account_alias=payload.account_alias,
+        )
+    except AlpacaValidationError as exc:
+        await upsert_connector_lifecycle(
+            user_id=resolved_uid,
+            connector_type="alpaca_api",
+            status="validation_failed",
+            is_connected=False,
+            last_activity_at=datetime.now(timezone.utc),
+            error=str(exc),
+            metadata={"provider_state": "validation_failed", "validation_error": str(exc)},
+        )
+        await upsert_connector_config(
+            resolved_uid,
+            "alpaca_api",
+            non_secret_config={"environment": str(payload.environment or "paper").strip().lower() or "paper"},
+            secret_config={"api_key": payload.api_key, "api_secret": payload.api_secret},
+            status="invalid",
+            validation_error=str(exc),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "provider": "alpaca_api",
+        "status": connected["provider_state"],
+        "account_verified": connected["account_verified"],
+        "environment": connected["environment"],
+        "validated_at": connected["validated_at"],
+        "account_summary": connected["account_summary"],
+        "connection": {
+            "id": connected["connection"]["id"],
+            "display_label": connected["connection"].get("display_label"),
+            "environment": connected["connection"].get("environment"),
+            "beta_state": connected["connection"].get("beta_state"),
+            "updated_at": connected["connection"].get("updated_at"),
+        },
+        "trading_account": {
+            "id": connected["trading_account"]["id"],
+            "external_account_id": connected["trading_account"]["external_account_id"],
+            "display_label": connected["trading_account"]["display_label"],
+            "connector_type": connected["trading_account"]["connector_type"],
+        },
+        "secret_fields_configured": ["api_key", "api_secret"],
     }
 
 
