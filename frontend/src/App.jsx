@@ -67,6 +67,7 @@ function App() {
   const [telegramConfig, setTelegramConfig] = useState(null)
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
+  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false)
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const [widgetStatus, setWidgetStatus] = useState('')
   const [widgetDiagnostics, setWidgetDiagnostics] = useState([])
@@ -402,6 +403,7 @@ function App() {
     setCatalog([])
     setWorkspaceApiAccounts([])
     setWorkspaceApiHydrated(false)
+    setIsWorkspaceLoading(false)
     setRecentlyAddedAccountLabel('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
@@ -448,6 +450,7 @@ function App() {
   }
 
   async function loadConnectorData({ token = sessionToken, silent = false } = {}) {
+    setIsWorkspaceLoading(true)
     try {
       const [catalogRes, overviewRes] = await Promise.all([
         axios.get(buildApiUrl('/connectors/catalog')),
@@ -503,6 +506,8 @@ function App() {
         return
       }
       setStatus(`Failed to load connectors: ${error.message}`)
+    } finally {
+      setIsWorkspaceLoading(false)
     }
   }
 
@@ -741,38 +746,40 @@ function App() {
 
   return (
     <div className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}>
-      <header className="app-header panel">
-        <div>
-          <h1>TaliTrade Premium App</h1>
-          <p>Status: {status}</p>
+      <header className="app-header-shell">
+        <div className="app-brand-row">
+          <div className="brand-avatar">T</div>
+          <div>
+            <h1>TaliTrade</h1>
+            <p className="hint">{signedIn ? 'Connected workspace' : 'Waiting for Telegram sign-in'}</p>
+          </div>
         </div>
-        <div className="row">
-          <span>Signed in:</span>
-          <strong>{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'No'}</strong>
-          {signedIn ? <button onClick={() => loadConnectorData()}>Refresh</button> : null}
-          {signedIn ? <button onClick={clearSession}>Sign out</button> : null}
+        <div className="app-header-actions">
+          <span className="header-clock">{new Date().toLocaleTimeString()}</span>
+          <span className="header-bell" aria-hidden>🔔</span>
+          <span className="header-profile">{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'Guest'}</span>
+          {signedIn ? <button onClick={() => loadConnectorData()} type="button">Refresh</button> : null}
+          {signedIn ? <button onClick={clearSession} type="button">Sign out</button> : null}
         </div>
       </header>
 
       <section className="panel app-shell-top">
         <div className="app-shell-nav-block">
+          <p className="kicker">Workspace</p>
           <nav className="app-nav" aria-label="Primary app navigation">
+            <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app">Dashboard</NavLink>
             <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
             <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
-            <button
-              type="button"
-              className="app-nav-link add-account-nav-link"
-              onClick={() => openAddAccountFlow('mt5_bridge')}
-            >
-              Add Account
-            </button>
           </nav>
-          <p className="hint app-shell-nav-hint">
-            <strong>Accounts</strong> is where you add and manage trading accounts. <strong>Connections</strong> is for integration setup and connector operations.
-          </p>
         </div>
         <div className="row app-shell-actions">
-          <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add Account</button>
+          <button
+            type="button"
+            className="app-nav-link add-account-nav-link"
+            onClick={() => openAddAccountFlow('mt5_bridge')}
+          >
+            + Add Account
+          </button>
           <AccountSwitcher
             accounts={unifiedAccountWorkspaces}
             selectedAccountKey={selectedAccountKey}
@@ -780,12 +787,11 @@ function App() {
           />
         </div>
       </section>
-
       {!signedIn ? (
         <section className="panel auth-shell-gate" aria-live="polite">
           <h2>Sign in with Telegram</h2>
           {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-          <p>Authenticate to connect accounts, run sync actions, and unlock account workflows.</p>
+          <p>Authenticate to connect broker accounts, sync workspace data, and unlock account actions.</p>
           {telegramConfig?.oidcEnabled ? (
             <button onClick={startOidcFlow}>Continue with Telegram</button>
           ) : (
@@ -825,7 +831,7 @@ function App() {
       {signedIn && hasZeroConnectedAccounts ? (
         <section className="panel first-run-shell-cta" aria-live="polite">
           <div className="row">
-            <h2>Get started by adding your first account</h2>
+            <h2>Start your account workspace</h2>
             <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
           </div>
           <p className="hint">
@@ -844,6 +850,11 @@ function App() {
                   hasZeroConnectedAccounts={hasZeroConnectedAccounts}
                   accountConnectionState={accountConnectionState}
                   onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  selectedAccount={selectedAccount}
+                  managedConnectors={managedConnectors}
+                  syncHistory={syncHistory}
+                  formatDate={formatDate}
+                  isWorkspaceLoading={isWorkspaceLoading}
                 />
               )}
             />
@@ -858,6 +869,7 @@ function App() {
                   onAddAccount={() => openAddAccountFlow('mt5_bridge')}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}
+                  isWorkspaceLoading={isWorkspaceLoading}
                 />
               )}
             />
@@ -893,6 +905,7 @@ function App() {
                   importCsvTrades={importCsvTrades}
                   onAddAccount={() => openAddAccountFlow('mt5_bridge')}
                   addFlowIntent={addFlowIntent}
+                  isWorkspaceLoading={isWorkspaceLoading}
                 />
               )}
             />
