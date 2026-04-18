@@ -104,6 +104,9 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
         "last_sync_at": row.get("last_sync_at"),
         "is_primary": bool(row.get("is_primary")),
         "provider_state": (row.get("metadata") or {}).get("provider_state"),
+        "tradingview_activation_state": row.get("tradingview_activation_state"),
+        "tradingview_last_event_at": row.get("tradingview_last_event_at"),
+        "recent_events": row.get("recent_events") if isinstance(row.get("recent_events"), list) else [],
     }
 
 
@@ -211,7 +214,30 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                 mba.last_bridge_sync_at AS bridge_last_sync_at,
                 lmb.bridge_id AS trusted_bridge_id,
                 lmb.display_name AS trusted_bridge_display_name,
-                lmb.last_heartbeat_at AS trusted_bridge_last_heartbeat_at
+                lmb.last_heartbeat_at AS trusted_bridge_last_heartbeat_at,
+                tvc.activation_state AS tradingview_activation_state,
+                tvc.last_event_at AS tradingview_last_event_at,
+                COALESCE((
+                    SELECT jsonb_agg(ev.event_obj ORDER BY ev.event_time DESC)
+                    FROM (
+                        SELECT
+                            ce.event_time,
+                            jsonb_build_object(
+                                'event_type', ce.event_type,
+                                'received_at', ce.event_time,
+                                'symbol', ce.event_payload->>'symbol',
+                                'timeframe', ce.event_payload->>'timeframe',
+                                'title', ce.event_payload->>'title',
+                                'message', ce.event_payload->>'message',
+                                'validity_status', COALESCE(ce.event_payload->>'validity_status', 'valid')
+                            ) AS event_obj
+                        FROM connector_events ce
+                        WHERE ce.trading_account_id = ma.trading_account_id
+                          AND ce.connector_type = 'tradingview_webhook'
+                        ORDER BY ce.event_time DESC
+                        LIMIT 5
+                    ) ev
+                ), '[]'::jsonb) AS recent_events
             FROM merged_accounts ma
             LEFT JOIN connector_lifecycle lc
               ON lc.user_id = :uid AND lc.connector_type = ma.connector_type
@@ -221,6 +247,8 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
               ON mba.user_id = :uid AND mba.trading_account_id = ma.trading_account_id
             LEFT JOIN latest_mt5_bridge lmb
               ON lmb.user_id = :uid AND ma.connector_type = 'mt5_bridge'
+            LEFT JOIN tradingview_webhook_connections tvc
+              ON tvc.user_id = :uid AND tvc.trading_account_id = ma.trading_account_id
             ORDER BY ma.last_activity_at DESC NULLS LAST, ma.external_account_id
         """), {"uid": telegram_user_id})
         rows = [dict(row) for row in result.mappings().all()]

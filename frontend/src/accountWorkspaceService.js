@@ -42,6 +42,9 @@ function normalizeWorkspace(workspace) {
     is_primary: Boolean(workspace?.is_primary),
     source_label: sourceLabel(connectorType),
     provider_state: workspace?.provider_state || null,
+    tradingview_activation_state: workspace?.tradingview_activation_state || null,
+    tradingview_last_event_at: workspace?.tradingview_last_event_at || null,
+    recent_events: Array.isArray(workspace?.recent_events) ? workspace.recent_events : [],
   }
 }
 

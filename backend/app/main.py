@@ -652,6 +652,11 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 SELECT *
                 FROM connector_lifecycle
                 WHERE user_id = :uid
+            ),
+            tradingview_connections AS (
+                SELECT trading_account_id, activation_state, last_event_at
+                FROM tradingview_webhook_connections
+                WHERE user_id = :uid
             )
             SELECT
                 ar.*,
@@ -660,10 +665,14 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 lc.last_sync_at AS lifecycle_last_sync_at,
                 lc.last_activity_at AS lifecycle_last_activity_at,
                 lc.last_error AS lifecycle_last_error,
-                lc.last_error_at AS lifecycle_last_error_at
+                lc.last_error_at AS lifecycle_last_error_at,
+                tvc.activation_state AS tv_activation_state,
+                tvc.last_event_at AS tv_last_event_at
             FROM account_rows
             LEFT JOIN lifecycle lc
               ON lc.connector_type = ar.connector_type
+            LEFT JOIN tradingview_connections tvc
+              ON tvc.trading_account_id = ar.id
             ORDER BY connector_type, created_at DESC NULLS LAST, id DESC
         """), {"uid": telegram_user_id})
 
@@ -684,8 +693,9 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     "last_error": None,
                     "last_error_at": None,
                     "account_count": 0,
-                "accounts": [],
+                    "accounts": [],
                     "provider_state": None,
+                    "recent_events": [],
                 }
 
             connector_obj = grouped[connector]
@@ -701,6 +711,8 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "is_active": row["is_active"],
                 "last_activity_at": row["last_activity_at"],
                 "last_sync_at": row["last_snapshot_at"],
+                "activation_state": row.get("tv_activation_state"),
+                "last_event_at": row.get("tv_last_event_at"),
             })
 
             activity = row["last_activity_at"]
@@ -726,6 +738,10 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
             account_state = (row.get("metadata") or {}).get("provider_state")
             if account_state:
                 connector_obj["provider_state"] = account_state
+            if row.get("tv_last_event_at"):
+                activity = max(activity, row["tv_last_event_at"]) if activity else row["tv_last_event_at"]
+                if connector_obj["last_activity_at"] is None or activity > connector_obj["last_activity_at"]:
+                    connector_obj["last_activity_at"] = activity
 
         lifecycle_only = await conn.execute(text("""
             SELECT connector_type, status, is_connected, last_sync_at, last_activity_at, last_error, last_error_at, metadata
@@ -751,6 +767,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "account_count": 0,
                 "accounts": [],
                 "provider_state": (row.get("metadata") or {}).get("provider_state"),
+                "recent_events": [],
             }
 
         latest_runs = await conn.execute(text("""
@@ -782,11 +799,38 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     "last_error_at": None,
                     "account_count": 0,
                     "accounts": [],
+                    "recent_events": [],
                 }
             grouped[connector]["current_sync_state"] = row["status"]
             grouped[connector]["current_sync_run_id"] = row["id"]
             grouped[connector]["current_sync_retry_count"] = row["retry_count"] or 0
             grouped[connector]["next_retry_at"] = row["next_retry_at"]
+
+        recent_events = await conn.execute(text("""
+            SELECT connector_type, event_type, event_payload, event_time
+            FROM connector_events
+            WHERE user_id = :uid
+              AND connector_type = 'tradingview_webhook'
+            ORDER BY event_time DESC
+            LIMIT 20
+        """), {"uid": telegram_user_id})
+        for row in recent_events.mappings().all():
+            connector = row["connector_type"] or "manual"
+            if connector not in grouped:
+                continue
+            connector_events = grouped[connector]["recent_events"]
+            if len(connector_events) >= 5:
+                continue
+            payload = row.get("event_payload") or {}
+            connector_events.append({
+                "event_type": row["event_type"],
+                "received_at": row["event_time"],
+                "symbol": payload.get("symbol"),
+                "timeframe": payload.get("timeframe"),
+                "title": payload.get("title"),
+                "message": payload.get("message"),
+                "validity_status": payload.get("validity_status") or "valid",
+            })
 
     connectors = list(grouped.values())
     for connector in connectors:
@@ -2113,14 +2157,24 @@ async def ingest_tradingview_webhook_event(
     webhook_token: str,
     request: Request,
 ):
+    raw_body = await request.body()
+    if not raw_body:
+        raise HTTPException(status_code=400, detail="invalid_payload")
     try:
-        payload = await request.json()
-    except Exception:
-        payload = {}
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="malformed_json") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="invalid_payload")
     try:
         result = await ingest_tradingview_event(token=webhook_token, payload=payload)
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        detail = str(exc)
+        if detail in {"invalid_payload", "malformed_json"}:
+            raise HTTPException(status_code=400, detail=detail) from exc
+        if detail in {"invalid_token", "not_found"}:
+            raise HTTPException(status_code=404, detail="not_found") from exc
+        raise HTTPException(status_code=400, detail=detail) from exc
     return result
 
 
