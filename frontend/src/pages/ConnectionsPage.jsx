@@ -33,6 +33,9 @@ function ConnectionsPage({
     <>
       <section className="panel">
         <h2>Connections</h2>
+        <p className="hint">
+          Operational connector management lives here. Your day-to-day account overview is now centered in <strong>Accounts</strong>.
+        </p>
         <p>Available connectors: {catalog.map((entry) => entry.label).join(', ') || '—'}</p>
         {managedConnectors.map((connector) => (
           <div key={connector.connector_type} className="card">
