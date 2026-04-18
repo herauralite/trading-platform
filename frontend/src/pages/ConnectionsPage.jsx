@@ -28,11 +28,16 @@ function ConnectionsPage({
   createManualAccount,
   createManualTrade,
   importCsvTrades,
+  onAddAccount,
+  addFlowIntent,
 }) {
   return (
     <>
       <section className="panel">
-        <h2>Connections</h2>
+        <div className="row">
+          <h2>Connections</h2>
+          <button type="button" onClick={onAddAccount}>Add Account</button>
+        </div>
         <p className="hint">
           Operational connector management lives here. Your day-to-day account overview is now centered in <strong>Accounts</strong>.
         </p>
@@ -229,8 +234,9 @@ function ConnectionsPage({
         ))}
       </section>
 
-      <section className="panel">
+      <section className={`panel${addFlowIntent === "manual" ? " dev-panel" : ""}`}>
         <h2>Manual Journal (authenticated)</h2>
+        {addFlowIntent === "manual" ? <p className="hint">Add Account routed you here for manual account setup.</p> : null}
         <div className="row">
           <input placeholder="External account id" value={manualAccount.externalAccountId} onChange={(event) => setManualAccount({ ...manualAccount, externalAccountId: event.target.value })} />
           <input placeholder="Display label" value={manualAccount.displayLabel} onChange={(event) => setManualAccount({ ...manualAccount, displayLabel: event.target.value })} />
@@ -248,8 +254,9 @@ function ConnectionsPage({
         </div>
       </section>
 
-      <section className="panel">
+      <section className={`panel${addFlowIntent === "csv" ? " dev-panel" : ""}`}>
         <h2>CSV Import (authenticated)</h2>
+        {addFlowIntent === "csv" ? <p className="hint">Add Account routed you here for CSV import setup.</p> : null}
         <div className="row">
           <input value={csvAccount} onChange={(event) => setCsvAccount(event.target.value)} placeholder="CSV account id" />
           <button disabled={!signedIn} onClick={importCsvTrades}>Import JSON rows as CSV trades</button>

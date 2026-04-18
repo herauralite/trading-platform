@@ -241,3 +241,58 @@ button:disabled {
 ul {
   padding-left: 18px;
 }
+
+.secondary-button {
+  background: #ffffff;
+  color: #334155;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding: 28px 16px;
+  z-index: 40;
+}
+
+.modal-panel {
+  width: min(900px, 100%);
+  max-height: calc(100vh - 56px);
+  overflow: auto;
+  border-radius: 14px;
+  background: #f8fafc;
+  border: 1px solid #dbe2ee;
+  padding: 14px;
+}
+
+.modal-header-row {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.provider-card {
+  text-align: left;
+  border: 1px solid #dbe2ee;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.provider-card.selected {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 1px #0f172a;
+}
+
+.add-account-form {
+  margin-top: 10px;
+}
