@@ -508,10 +508,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 #gate-step2.visible { animation: stepIn .3s cubic-bezier(.23,1,.32,1) both; }
 </style>
 
+<script src="/tali-api-base.js"></script>
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = String((window.__TALI_CONFIG__ && window.__TALI_CONFIG__.devGatePassword) || '').trim();
-const DEFAULT_API_BASE = 'https://trading-platform-production-70e0.up.railway.app';
 let TALI_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
 let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
 let TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
@@ -565,10 +565,7 @@ function normalizeLoginHost(value) {
 }
 
 function getBaseApiUrl() {
-  const configured = String((window.__TALI_CONFIG__ && (window.__TALI_CONFIG__.apiBase || window.__TALI_CONFIG__.api_base)) || '').trim();
-  if (configured) return configured.replace(/\/$/, '');
-  if (typeof API !== 'undefined' && String(API || '').trim()) return String(API).trim().replace(/\/$/, '');
-  return DEFAULT_API_BASE;
+  return window.TaliApiBase.resolveApiBase({ buildEnvApiBase: typeof API !== 'undefined' ? API : '' });
 }
 
 function classifyAuthConfigFailure(error, status) {
@@ -617,19 +614,19 @@ function validateTelegramLoginConfig() {
 
 async function hydrateTelegramWidgetConfig() {
   const apiBase = getBaseApiUrl();
-  const configUrl = apiBase + '/auth/telegram/config';
-  const controller = new AbortController();
-  const timeoutId = window.setTimeout(() => controller.abort(), 8000);
+  const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config', { buildEnvApiBase: typeof API !== 'undefined' ? API : '' });
   try {
     pushGateDiagnostic(`resolved_api_base=${apiBase}`);
     pushGateDiagnostic(`config_url=${configUrl}`);
-    const res = await fetch(configUrl, { credentials: 'include', mode: 'cors', signal: controller.signal });
+    const res = await fetch(configUrl, { credentials: 'include', mode: 'cors' });
     pushGateDiagnostic(`config_fetch_status=${res.status}`);
     pushGateDiagnostic(`config_fetch_content_type=${res.headers.get('content-type') || 'missing'}`);
     pushGateDiagnostic(`config_fetch_auth_mode_header=${res.headers.get('x-tali-auth-mode') || 'missing'}`);
     if (!res.ok) {
       taliTelegramConfigFetchFailed = true;
       pushGateDiagnostic(`config_fetch_failed=${classifyAuthConfigFailure(null, res.status)}`);
+      pushGateDiagnostic('config_fetch_error_name=n/a');
+      pushGateDiagnostic(`config_fetch_error_message=http_${res.status}`);
       return;
     }
     const cfg = await res.json();
@@ -653,7 +650,7 @@ async function hydrateTelegramWidgetConfig() {
     pushGateDiagnostic(`config_fetch_error_name=${error?.name || 'unknown'}`);
     pushGateDiagnostic(`config_fetch_error_message=${String(error?.message || '').slice(0, 120) || 'n/a'}`);
   } finally {
-    window.clearTimeout(timeoutId);
+    // no timeout abort: allow slower cold starts during auth bootstrap
   }
 }
 
