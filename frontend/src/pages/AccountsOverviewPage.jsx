@@ -99,6 +99,7 @@ function AccountsOverviewPage({
               <span className="pill">{selectedAccount.broker_name || 'Unknown broker'}</span>
               <span className="hint">Connection</span>
               <AccountStatusBadge value={selectedAccount.connection_status} />
+              {selectedAccount.provider_state ? <span className="pill">{selectedAccount.provider_state}</span> : null}
               <span className="hint">Sync</span>
               <AccountStatusBadge variant="sync" value={selectedAccount.sync_state} />
             </div>

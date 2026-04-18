@@ -16,7 +16,7 @@ SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
 DEFAULT_CONNECTOR_STATUS = "connected"
 ALLOWED_CONNECTOR_STATUSES = {"connected", "degraded", "disconnected", "sync_error"}
-ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying"})
+ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying", "awaiting_alerts", "active", "bridge_required", "waiting_for_registration", "ready_for_account_attach", "beta_pending", "metadata_saved", "waiting_for_secure_auth_support"})
 SYNC_RUN_FINAL_STATUSES = {"succeeded", "failed"}
 SYNC_RUN_RETRY_DELAYS_SECONDS = [2, 5]
 SYNC_RUN_LEASE_SECONDS = 300
@@ -268,6 +268,51 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS last_seen_ip TEXT"))
         await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS mt5_trusted_bridges_user_idx ON mt5_trusted_bridges(user_id, updated_at DESC)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS tradingview_webhook_connections (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                trading_account_id INTEGER NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+                display_label TEXT,
+                account_alias TEXT,
+                webhook_token_hash TEXT NOT NULL UNIQUE,
+                webhook_token_hint TEXT NOT NULL,
+                activation_state TEXT NOT NULL DEFAULT 'awaiting_alerts',
+                last_event_at TIMESTAMPTZ,
+                last_event_payload JSONB DEFAULT '{}'::jsonb,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE tradingview_webhook_connections ADD COLUMN IF NOT EXISTS account_alias TEXT"))
+        await conn.execute(text("ALTER TABLE tradingview_webhook_connections ADD COLUMN IF NOT EXISTS activation_state TEXT NOT NULL DEFAULT 'awaiting_alerts'"))
+        await conn.execute(text("ALTER TABLE tradingview_webhook_connections ADD COLUMN IF NOT EXISTS last_event_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE tradingview_webhook_connections ADD COLUMN IF NOT EXISTS last_event_payload JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("ALTER TABLE tradingview_webhook_connections ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS tv_webhook_user_idx ON tradingview_webhook_connections(user_id, created_at DESC)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS public_api_beta_connections (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                connector_type TEXT NOT NULL,
+                trading_account_id INTEGER NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+                display_label TEXT,
+                environment TEXT,
+                account_alias TEXT,
+                beta_state TEXT NOT NULL DEFAULT 'beta_pending',
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS environment TEXT"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS account_alias TEXT"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS beta_state TEXT NOT NULL DEFAULT 'beta_pending'"))
+        await conn.execute(text("ALTER TABLE public_api_beta_connections ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS public_api_beta_user_idx ON public_api_beta_connections(user_id, connector_type, created_at DESC)"))
 
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS account_snapshots (

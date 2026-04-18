@@ -12,6 +12,10 @@ function normalizeConnectorType(value) {
 function sourceLabel(connectorType) {
   if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
   if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
+  if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
+  if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
+  if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
+  if (connectorType === 'binance_api') return 'Binance API (Beta)'
   if (connectorType === 'csv_import') return 'CSV Import'
   if (connectorType === 'manual') return 'Manual Journal'
   return connectorType
@@ -37,6 +41,7 @@ function normalizeWorkspace(workspace) {
     last_sync_at: workspace?.last_sync_at ?? null,
     is_primary: Boolean(workspace?.is_primary),
     source_label: sourceLabel(connectorType),
+    provider_state: workspace?.provider_state || null,
   }
 }
 
