@@ -10,6 +10,7 @@ function AppLandingPage({
   onAddAccount,
   formatDate,
   isWorkspaceLoading,
+  workspaceLoadError,
 }) {
   const connectorsWithErrors = managedConnectors.filter((connector) => connector.last_error)
   const connectorsSyncing = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state))
@@ -48,6 +49,19 @@ function AppLandingPage({
           <div className="skeleton-card" />
           <div className="skeleton-card" />
         </div>
+      </section>
+    )
+  }
+
+  if (workspaceLoadError) {
+    return (
+      <section className="panel page-panel app-dashboard-hub">
+        <div className="panel-header">
+          <p className="kicker">Dashboard</p>
+          <h2>Workspace data could not be loaded</h2>
+        </div>
+        <p className="error-text">{workspaceLoadError}</p>
+        <p className="hint">Use Refresh in the shell header to retry loading account and connector data.</p>
       </section>
     )
   }
