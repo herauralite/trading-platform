@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 import os
 import sys
 import types
@@ -27,6 +28,8 @@ if "jwt" not in sys.modules:
 
 from app.core.auth_session import create_session_token
 from app.main import app
+import app.services.provider_onboarding as onboarding_mod
+from app.services.secret_crypto import decrypt_secret
 
 
 def test_catalog_includes_new_provider_foundation():
@@ -130,11 +133,11 @@ def test_tradingview_ingest_rejects_invalid_token(monkeypatch):
 
 def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
     async def fake_create_public_api_beta_connection(**kwargs):
-        assert kwargs["connector_type"] == "alpaca_api"
+        assert kwargs["connector_type"] == "oanda_api"
         return {
             "id": 55,
-            "connector_type": "alpaca_api",
-            "display_label": "Alpaca Beta",
+            "connector_type": "oanda_api",
+            "display_label": "OANDA Beta",
             "beta_state": "awaiting_secure_auth",
         }
 
@@ -146,12 +149,196 @@ def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
         async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
             return await client.post(
                 "/providers/public-api/alpaca_api/beta",
-                json={"display_label": "Alpaca Beta", "environment": "paper"},
+                json={"display_label": "OANDA Beta", "environment": "paper"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 404
+
+
+def test_alpaca_connect_success_paper(monkeypatch):
+    async def fake_connect(**kwargs):
+        assert kwargs["environment"] == "paper"
+        assert kwargs["api_secret"] == "secret-value"
+        return {
+            "provider_state": "paper_connected",
+            "environment": "paper",
+            "validation_error": None,
+            "account": {
+                "id": 77,
+                "display_label": "My Alpaca",
+                "environment": "paper",
+                "account_summary": {"alpaca_account_number": "PA123"},
+                "last_validated_at": "2026-04-18T12:00:00Z",
+            },
+        }
+
+    monkeypatch.setattr("app.main.connect_alpaca_api_account", fake_connect)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-alpaca")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/alpaca_api/connect",
+                json={
+                    "label": "My Alpaca",
+                    "environment": "paper",
+                    "api_key": "key-value",
+                    "api_secret": "secret-value",
+                },
                 headers={"Authorization": f"Bearer {token}"},
             )
 
     response = asyncio.run(_run())
     assert response.status_code == 200
-    body = response.json()
-    assert body["status"] == "awaiting_secure_auth"
-    assert body["connection"]["beta_state"] == "awaiting_secure_auth"
+    payload = response.json()
+    assert payload["status"] == "paper_connected"
+    assert payload["account"]["summary"]["alpaca_account_number"] == "PA123"
+
+
+def test_alpaca_connect_invalid_credentials_path(monkeypatch):
+    async def fake_connect(**kwargs):
+        return {
+            "provider_state": "validation_failed",
+            "environment": "paper",
+            "validation_error": "invalid_credentials",
+            "account": {
+                "id": 88,
+                "display_label": "My Alpaca",
+                "environment": "paper",
+                "account_summary": {"alpaca_account_number": "invalid-paper-abc"},
+                "last_validated_at": "2026-04-18T12:01:00Z",
+            },
+        }
+
+    monkeypatch.setattr("app.main.connect_alpaca_api_account", fake_connect)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-alpaca")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/alpaca_api/connect",
+                json={
+                    "label": "My Alpaca",
+                    "environment": "paper",
+                    "api_key": "bad",
+                    "api_secret": "bad",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 200
+    assert response.json()["status"] == "validation_failed"
+
+
+def test_alpaca_connect_response_never_echoes_raw_secret(monkeypatch):
+    async def fake_connect(**kwargs):
+        return {
+            "provider_state": "paper_connected",
+            "environment": "paper",
+            "validation_error": None,
+            "account": {
+                "id": 99,
+                "display_label": "My Alpaca",
+                "environment": "paper",
+                "account_summary": {"alpaca_account_number": "PA999"},
+                "last_validated_at": "2026-04-18T12:02:00Z",
+            },
+        }
+
+    monkeypatch.setattr("app.main.connect_alpaca_api_account", fake_connect)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-alpaca")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/alpaca_api/connect",
+                json={
+                    "label": "My Alpaca",
+                    "environment": "paper",
+                    "api_key": "key-value",
+                    "api_secret": "super-secret-value",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    serialized = str(response.json())
+    assert "super-secret-value" not in serialized
+
+
+def test_alpaca_secret_storage_is_encrypted(monkeypatch):
+    captured_params = {}
+
+    async def fake_validate_alpaca_credentials(**kwargs):
+        return {
+            "provider_state": "paper_connected",
+            "environment": "paper",
+            "alpaca_account_number": "PA500",
+            "alpaca_status": "ACTIVE",
+        }
+
+    async def fake_upsert_trading_account(payload):
+        return {"id": 501}
+
+    async def fake_upsert_connector_lifecycle(**kwargs):
+        return kwargs
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {
+                "id": 5,
+                "user_id": "u-encrypted",
+                "connector_type": "alpaca_api",
+                "trading_account_id": 501,
+                "display_label": "Enc",
+                "environment": "paper",
+                "beta_state": "paper_connected",
+                "account_summary": {"alpaca_account_number": "PA500"},
+                "last_validation_error": None,
+                "last_validated_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            captured_params.update(params or {})
+            return FakeResult()
+
+    class FakeBegin:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def begin(self):
+            return FakeBegin()
+
+    monkeypatch.setattr(onboarding_mod, "validate_alpaca_credentials", fake_validate_alpaca_credentials)
+    monkeypatch.setattr(onboarding_mod, "upsert_trading_account", fake_upsert_trading_account)
+    monkeypatch.setattr(onboarding_mod, "upsert_connector_lifecycle", fake_upsert_connector_lifecycle)
+    monkeypatch.setattr(onboarding_mod, "engine", FakeEngine())
+
+    asyncio.run(onboarding_mod.connect_alpaca_api_account(
+        user_id="u-encrypted",
+        label="Enc",
+        environment="paper",
+        api_key="raw-api-key",
+        api_secret="raw-api-secret",
+    ))
+
+    assert captured_params["encrypted_api_key"] != "raw-api-key"
+    assert captured_params["encrypted_api_secret"] != "raw-api-secret"
+    assert decrypt_secret(captured_params["encrypted_api_key"]) == "raw-api-key"
+    assert decrypt_secret(captured_params["encrypted_api_secret"]) == "raw-api-secret"

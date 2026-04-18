@@ -378,10 +378,14 @@ function AddAccountFlowModal({
 
             {PUBLIC_API_BETA_CONNECTORS.includes(selectedProvider.connectorType) ? (
               <>
-                <p className="hint">Register this provider for beta onboarding. We only save safe metadata in this slice.</p>
+                <p className="hint">
+                  {selectedProvider.connectorType === 'alpaca_api'
+                    ? 'Connect read-only Alpaca API credentials. Credentials are validated server-side and never echoed back.'
+                    : 'Register this provider for beta onboarding. We only save safe metadata in this slice.'}
+                </p>
                 <div className="row">
                   <input
-                    placeholder="Display name"
+                    placeholder={selectedProvider.connectorType === 'alpaca_api' ? 'Account label' : 'Display name'}
                     value={draft.display_label}
                     onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
                     required
@@ -391,15 +395,35 @@ function AddAccountFlowModal({
                     onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
                   >
                     <option value="paper">Paper</option>
-                    <option value="live">Live (metadata only)</option>
+                    <option value="live">{selectedProvider.connectorType === 'alpaca_api' ? 'Live' : 'Live (metadata only)'}</option>
                   </select>
-                  <input
-                    placeholder="Optional account alias"
-                    value={draft.account_alias || ''}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
-                  />
+                  {selectedProvider.connectorType !== 'alpaca_api' ? (
+                    <input
+                      placeholder="Optional account alias"
+                      value={draft.account_alias || ''}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
+                    />
+                  ) : null}
                 </div>
-                <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
+                {selectedProvider.connectorType === 'alpaca_api' ? (
+                  <div className="row">
+                    <input
+                      placeholder="API key"
+                      value={draft.api_key || ''}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, api_key: event.target.value }))}
+                      required
+                    />
+                    <input
+                      type="password"
+                      placeholder="API secret"
+                      value={draft.api_secret || ''}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, api_secret: event.target.value }))}
+                      required
+                    />
+                  </div>
+                ) : (
+                  <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
+                )}
               </>
             ) : null}
 

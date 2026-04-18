@@ -56,6 +56,20 @@ export function connectionStatusMeta(status) {
       helper: 'Public API connector is in beta metadata mode only.',
     }
   }
+  if (normalized === 'paper_connected' || normalized === 'live_connected') {
+    return {
+      toneClass: 'status-connected',
+      label: toTitle(normalized),
+      helper: 'Alpaca credentials were validated server-side and account access is read-only.',
+    }
+  }
+  if (normalized === 'validation_failed') {
+    return {
+      toneClass: 'status-error',
+      label: 'Validation Failed',
+      helper: 'Credential validation failed; no live connection is claimed.',
+    }
+  }
   return {
     toneClass: 'status-disconnected',
     label: 'Disconnected',
