@@ -34,6 +34,15 @@ test('react app keeps /app gate behavior and deep-link routes stable', async () 
   assert.equal(appSource.includes('<Route path="*" element={<Navigate to="/app/accounts" replace />} />'), true)
 })
 
+test('react app resolves account-presence from workspace inventory once hydrated (including zero rows)', async () => {
+  const appSource = await readFrontendFile('src/App.jsx')
+
+  assert.equal(appSource.includes('const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)'), true)
+  assert.equal(appSource.includes('if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return workspaceApiAccounts'), true)
+  assert.equal(appSource.includes('setWorkspaceApiHydrated(true)'), true)
+  assert.equal(appSource.includes('setWorkspaceApiHydrated(false)'), true)
+})
+
 test('homepage demo auth modal continues bootstrapping config and saving leaderboard after telegram widget auth', async () => {
   const indexHtml = await readFrontendFile('index.html')
 

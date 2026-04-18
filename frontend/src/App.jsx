@@ -45,6 +45,18 @@ const normalizeHost = (value) => {
 
 const normalizeSessionUser = (user) => normalizeTelegramAuthUser(user)
 
+function hasWorkspaceIdentity(account) {
+  return Boolean(
+    account
+    && (
+      account.account_key
+      || account.trading_account_id
+      || account.id
+      || account.external_account_id
+    ),
+  )
+}
+
 function App() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -70,6 +82,7 @@ function App() {
   const [syncHistory, setSyncHistory] = useState({})
   const [selectedAccountKey, setSelectedAccountKey] = useState('')
   const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
+  const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
   const [selectedProviderType, setSelectedProviderType] = useState('mt5_bridge')
   const [addAccountDraft, setAddAccountDraft] = useState({
@@ -112,10 +125,14 @@ function App() {
     return connectorType
   }
 
-  const allAccounts = useMemo(
-    () => connectors.flatMap((connector) => connector.accounts.map((account) => ({ ...account, connector_type: connector.connector_type }))),
-    [connectors],
-  )
+  const allAccounts = useMemo(() => (
+    connectors.flatMap((connector) => {
+      const connectorAccounts = Array.isArray(connector?.accounts) ? connector.accounts : []
+      return connectorAccounts
+        .filter((account) => hasWorkspaceIdentity(account))
+        .map((account) => ({ ...account, connector_type: connector.connector_type, connector_status: connector.status }))
+    })
+  ), [connectors])
 
   const accountWorkspaces = useMemo(
     () => allAccounts.map((account) => ({
@@ -126,8 +143,8 @@ function App() {
       connector_type: account.connector_type,
       source_label: sourceLabel(account.connector_type),
       broker_name: account.broker_name || null,
-      connection_status: 'connected',
-      sync_state: 'idle',
+      connection_status: String(account.connection_status || account.connector_status || 'disconnected').toLowerCase(),
+      sync_state: String(account.sync_state || 'idle').toLowerCase(),
       account_type: account.account_type || null,
       last_activity_at: account.last_activity_at || null,
       last_sync_at: account.last_sync_at || null,
@@ -136,7 +153,10 @@ function App() {
     [allAccounts],
   )
 
-  const unifiedAccountWorkspaces = useMemo(() => (workspaceApiAccounts.length > 0 ? workspaceApiAccounts : accountWorkspaces), [workspaceApiAccounts, accountWorkspaces])
+  const unifiedAccountWorkspaces = useMemo(() => {
+    if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return workspaceApiAccounts
+    return accountWorkspaces
+  }, [workspaceApiAccounts, accountWorkspaces, workspaceApiHydrated])
 
   const selectedAccount = useMemo(
     () => unifiedAccountWorkspaces.find((account) => account.account_key === selectedAccountKey) || null,
@@ -371,6 +391,7 @@ function App() {
     setConnectors([])
     setCatalog([])
     setWorkspaceApiAccounts([])
+    setWorkspaceApiHydrated(false)
     setRecentlyAddedAccountLabel('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
@@ -431,9 +452,12 @@ function App() {
           setWorkspaceApiAccounts(workspaceRows)
         } catch {
           setWorkspaceApiAccounts([])
+        } finally {
+          setWorkspaceApiHydrated(true)
         }
       } else {
         setWorkspaceApiAccounts([])
+        setWorkspaceApiHydrated(false)
       }
       const configEntries = await Promise.all(
         overviewConnectors.map(async (connector) => {
