@@ -96,6 +96,38 @@ def test_tradingview_ingest_transitions_to_active(monkeypatch):
     assert response.json()["state"] == "active"
 
 
+def test_tradingview_ingest_rejects_malformed_json():
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/webhooks/tradingview/tvw_token",
+                content="{not-json",
+                headers={"Content-Type": "application/json"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 400
+    assert response.json()["detail"] == "malformed_json"
+
+
+def test_tradingview_ingest_rejects_invalid_token(monkeypatch):
+    async def fake_ingest(**kwargs):
+        assert kwargs["token"] == "bad_token"
+        raise ValueError("not_found")
+
+    monkeypatch.setattr("app.main.ingest_tradingview_event", fake_ingest)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post("/webhooks/tradingview/bad_token", json={"symbol": "BTCUSDT"})
+
+    response = asyncio.run(_run())
+    assert response.status_code == 404
+    assert response.json()["detail"] == "not_found"
+
+
 def test_public_api_beta_shell_stays_waiting_state(monkeypatch):
     async def fake_create_public_api_beta_connection(**kwargs):
         assert kwargs["connector_type"] == "alpaca_api"

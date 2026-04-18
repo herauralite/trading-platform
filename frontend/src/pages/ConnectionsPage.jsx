@@ -60,6 +60,13 @@ function ConnectionsPage({
                 Provider state: <strong>{connector.provider_state}</strong>
               </div>
             ) : null}
+            {connector.connector_type === 'tradingview_webhook' ? (
+              <div className="meta">
+                {connector.status === 'active'
+                  ? `Webhook active · Last alert received ${formatDate(connector.last_activity_at)}`
+                  : 'Awaiting first TradingView alert'}
+              </div>
+            ) : null}
             <div className="meta">
               Sync state: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
             </div>
@@ -74,9 +81,31 @@ function ConnectionsPage({
                   <span>{account.display_label || account.external_account_id}</span>
                   <span className="pill">{sourceLabel(connector.connector_type)}</span>
                   <span className="pill">{account.broker_name || 'Unknown broker'}</span>
+                  {connector.connector_type === 'tradingview_webhook' ? (
+                    <span className="pill">
+                      {account.activation_state === 'active' ? 'Webhook active' : 'Awaiting first alert'}
+                    </span>
+                  ) : null}
                 </li>
               ))}
             </ul>
+            {connector.connector_type === 'tradingview_webhook' && (connector.recent_events || []).length > 0 ? (
+              <details>
+                <summary>Recent TradingView alerts ({connector.recent_events.length})</summary>
+                <ul>
+                  {connector.recent_events.map((event, index) => (
+                    <li key={`tv-event-${index}`}>
+                      <strong>{event.symbol || event.event_type || 'alert'}</strong>
+                      {event.timeframe ? ` · ${event.timeframe}` : ''}
+                      {event.title ? ` · ${event.title}` : ''}
+                      {event.message ? ` · ${event.message}` : ''}
+                      {' · '}
+                      {formatDate(event.received_at)}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            ) : null}
             <div className="row">
               {!connector.supports_live_sync ? <span className="hint">Sync not supported</span> : null}
               <button

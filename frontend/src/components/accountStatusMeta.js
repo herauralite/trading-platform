@@ -31,15 +31,15 @@ export function connectionStatusMeta(status) {
   if (normalized === 'awaiting_alerts') {
     return {
       toneClass: 'status-degraded',
-      label: 'Awaiting Alerts',
-      helper: 'TradingView webhook is created and waiting for first alert event.',
+      label: 'Awaiting First Alert',
+      helper: 'TradingView webhook is created and waiting for the first valid alert event.',
     }
   }
   if (normalized === 'active') {
     return {
       toneClass: 'status-connected',
-      label: 'Active',
-      helper: 'Provider has received real events and is active.',
+      label: 'Webhook Active',
+      helper: 'TradingView webhook has received a valid alert event.',
     }
   }
   if (normalized === 'bridge_required' || normalized === 'waiting_for_registration' || normalized === 'ready_for_account_attach') {
