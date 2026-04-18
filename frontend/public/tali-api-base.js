@@ -1,5 +1,5 @@
 (function initTaliApiBaseResolver(globalScope) {
-  const FALLBACK_API_BASE = 'https://api.talitrade.com'
+  const FALLBACK_API_BASE = 'https://trading-platform-production-0614.up.railway.app'
 
   const normalizeBase = (value) => String(value || '').trim().replace(/\/$/, '')
 
