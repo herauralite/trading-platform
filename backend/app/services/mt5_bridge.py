@@ -7,7 +7,6 @@ import json
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
-import httpx
 from sqlalchemy import text
 
 from app.core.database import engine
@@ -86,101 +85,43 @@ def _sanitize_bridge_url(bridge_url: str | None) -> str:
     return candidate.rstrip("/")
 
 
-def _normalize_discovered_account(raw: dict[str, Any]) -> dict[str, Any]:
-    external_account_id = str(raw.get("external_account_id") or raw.get("account_id") or "").strip()
-    return {
-        "external_account_id": external_account_id,
-        "display_label": str(raw.get("display_label") or raw.get("label") or external_account_id).strip() or external_account_id,
-        "mt5_server": str(raw.get("mt5_server") or raw.get("server") or "").strip() or None,
-    }
-
-
 async def check_mt5_pairing_state(
     *,
     external_account_id: str | None = None,
     bridge_url: str | None = None,
     mt5_server: str | None = None,
+    bridge_id: str | None = None,
+    pairing_token: str | None = None,
 ) -> dict[str, Any]:
     account_id = str(external_account_id or "").strip()
     server = str(mt5_server or "").strip()
     resolved_bridge_url = _sanitize_bridge_url(bridge_url)
-    if not resolved_bridge_url:
-        return {
-            "bridge_status": "bridge_required",
-            "discovery_status": "bridge_required",
-            "implementation_mode": "stub_safe",
-            "message": "Bridge URL is required before discovery can run.",
-            "can_add_account": bool(account_id),
-            "discovered_accounts": [],
-        }
+    resolved_bridge_id = str(bridge_id or "").strip()
+    resolved_pairing_token = str(pairing_token or "").strip()
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(3.0, connect=2.0)) as client:
-        health_url = f"{resolved_bridge_url}/health"
-        try:
-            health_res = await client.get(health_url)
-            health_ok = health_res.status_code < 400
-        except httpx.HTTPError:
-            health_ok = False
+    bridge_status = "bridge_required"
+    if resolved_bridge_id or resolved_pairing_token:
+        bridge_status = "waiting_for_bridge_worker"
+    elif resolved_bridge_url:
+        bridge_status = "bridge_registration_pending"
 
-        if not health_ok:
-            return {
-                "bridge_status": "bridge_not_reachable",
-                "discovery_status": "bridge_not_reachable",
-                "implementation_mode": "stub_safe",
-                "message": "Bridge endpoint is not reachable from the API host.",
-                "can_add_account": bool(account_id),
-                "discovered_accounts": [],
-            }
-
-        discovery_url = f"{resolved_bridge_url}/accounts/discover"
-        try:
-            discovery_res = await client.post(discovery_url, json={
-                "external_account_id": account_id or None,
-                "mt5_server": server or None,
-            })
-        except httpx.HTTPError:
-            return {
-                "bridge_status": "waiting_for_bridge",
-                "discovery_status": "waiting_for_bridge",
-                "implementation_mode": "stub_safe",
-                "message": "Bridge health responded, but discovery endpoint is not ready.",
-                "can_add_account": bool(account_id),
-                "discovered_accounts": [],
-            }
-
-    if discovery_res.status_code >= 400:
-        return {
-            "bridge_status": "waiting_for_bridge",
-            "discovery_status": "waiting_for_bridge",
-            "implementation_mode": "stub_safe",
-            "message": "Bridge health is reachable, but discovery endpoint returned an error.",
-            "can_add_account": bool(account_id),
-            "discovered_accounts": [],
-        }
-
-    payload = discovery_res.json() if discovery_res.headers.get("content-type", "").lower().find("json") >= 0 else {}
-    discovered = payload.get("discovered_accounts") or payload.get("accounts") or []
-    normalized_accounts = [
-        _normalize_discovered_account(item)
-        for item in discovered
-        if isinstance(item, dict)
-    ]
-    normalized_accounts = [item for item in normalized_accounts if item["external_account_id"]]
-
-    if account_id and any(item["external_account_id"] == account_id for item in normalized_accounts):
-        discovery_status = "discovered_account_ready"
-    elif normalized_accounts:
-        discovery_status = "discovered_accounts_available"
-    else:
-        discovery_status = "account_not_discovered_yet"
+    discovery_status = "account_id_provided" if account_id else "bridge_required"
+    registration = {
+        "bridge_url_provided": bool(resolved_bridge_url),
+        "bridge_url_format_valid": bool(resolved_bridge_url),
+        "mt5_server_provided": bool(server),
+        "bridge_id_provided": bool(resolved_bridge_id),
+        "pairing_token_provided": bool(resolved_pairing_token),
+    }
 
     return {
-        "bridge_status": "bridge_reachable",
+        "bridge_status": bridge_status,
         "discovery_status": discovery_status,
-        "implementation_mode": "bridge_discovery_probe",
-        "message": "Bridge probe completed.",
+        "implementation_mode": "safe_non_probing_pairing",
+        "message": "Bridge connectivity is not probed from user-supplied URLs. Pairing remains registration-based until a trusted worker is linked.",
         "can_add_account": bool(account_id),
-        "discovered_accounts": normalized_accounts,
+        "discovered_accounts": [],
+        "registration": registration,
     }
 
 
