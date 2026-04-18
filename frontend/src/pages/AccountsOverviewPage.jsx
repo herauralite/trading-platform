@@ -8,6 +8,7 @@ function countBy(items, predicate) {
 }
 
 function AccountsOverviewPage({
+  signedIn,
   accountWorkspaces,
   selectedAccount,
   onSelectAccount,
@@ -31,6 +32,20 @@ function AccountsOverviewPage({
       hasZeroConnectedAccounts: connectionState.hasZeroConnectedAccounts,
     }
   }, [accountWorkspaces])
+
+  if (!signedIn) {
+    return (
+      <section className="panel">
+        <div className="row">
+          <h2>Accounts</h2>
+          <button type="button" disabled onClick={onAddAccount}>Add Account</button>
+        </div>
+        <p className="hint">
+          This page is ready. Sign in with Telegram in the app shell to load your account workspace and enable Add Account.
+        </p>
+      </section>
+    )
+  }
 
   if (summary.hasZeroConnectedAccounts) {
     return (
