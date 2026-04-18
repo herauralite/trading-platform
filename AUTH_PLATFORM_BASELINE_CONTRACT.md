@@ -2,6 +2,12 @@
 
 Recorded on **April 18, 2026**.
 
+## Baseline lock reference
+
+- Current locked baseline merge commit: `f9184ae0d2f9162522e95b52ee7f18002be23ae7`
+- Merged from PR #87: **Harden known-good Telegram auth/app baseline with targeted regression tests**
+- This commit is the reference point to compare against before/after future auth, routing, demo, or leaderboard changes.
+
 This is the regression contract that must hold before/after future merges.
 
 ## What must keep working
