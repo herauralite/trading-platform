@@ -42,7 +42,9 @@ function ConnectionsPage({
             <div className="row">
               <strong>{sourceLabel(connector.connector_type)}</strong>
               <span className={`badge ${statusTone(connector.status)}`}>{connector.status}</span>
+              {connector.integration_status ? <span className="pill">{connector.integration_status}</span> : null}
             </div>
+            {connector.notes ? <p className="hint">{connector.notes}</p> : null}
             <div className="meta">
               State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
             </div>
@@ -77,6 +79,12 @@ function ConnectionsPage({
                   external_account_id: connectorDrafts[connector.connector_type]?.external_account_id || `${connector.connector_type}-account`,
                   display_label: connectorDrafts[connector.connector_type]?.display_label || sourceLabel(connector.connector_type),
                   broker_name: connector.connector_type,
+                  connection_metadata: connector.connector_type === 'mt5_bridge'
+                    ? {
+                      bridge_url: connectorDrafts[connector.connector_type]?.bridge_url || '',
+                      mt5_server: connectorDrafts[connector.connector_type]?.mt5_server || '',
+                    }
+                    : {},
                 })}
               >
                 Connect
@@ -107,6 +115,32 @@ function ConnectionsPage({
                     },
                   }))}
                 />
+                {connector.connector_type === 'mt5_bridge' ? (
+                  <>
+                    <input
+                      placeholder="Bridge URL (optional for placeholder connect)"
+                      value={connectorDrafts[connector.connector_type]?.bridge_url || ''}
+                      onChange={(event) => setConnectorDrafts((prev) => ({
+                        ...prev,
+                        [connector.connector_type]: {
+                          ...prev[connector.connector_type],
+                          bridge_url: event.target.value,
+                        },
+                      }))}
+                    />
+                    <input
+                      placeholder="MT5 server name"
+                      value={connectorDrafts[connector.connector_type]?.mt5_server || ''}
+                      onChange={(event) => setConnectorDrafts((prev) => ({
+                        ...prev,
+                        [connector.connector_type]: {
+                          ...prev[connector.connector_type],
+                          mt5_server: event.target.value,
+                        },
+                      }))}
+                    />
+                  </>
+                ) : null}
               </div>
             ) : null}
             <details>
