@@ -90,6 +90,11 @@ function App() {
     display_label: '',
     bridge_url: '',
     mt5_server: '',
+    provider_state: '',
+    environment: 'paper',
+    account_alias: '',
+    tradingview_webhook_url: '',
+    tradingview_secret_hint: '',
   })
   const [isAddAccountSubmitting, setIsAddAccountSubmitting] = useState(false)
   const [addAccountError, setAddAccountError] = useState('')
@@ -109,6 +114,10 @@ function App() {
   function sourceLabel(connectorType) {
     if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
     if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
+    if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
+    if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
+    if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
+    if (connectorType === 'binance_api') return 'Binance API (Beta)'
     if (connectorType === 'csv_import') return 'CSV Import'
     if (connectorType === 'manual') return 'Manual Journal'
     return connectorType
@@ -168,6 +177,9 @@ function App() {
           connection_layer: entry.connection_layer || null,
           notes: entry.notes || '',
           category: entry.category || null,
+          connection_state_labels: entry.connection_state_labels || {},
+          onboarding_copy: entry.onboarding_copy || '',
+          beta: Boolean(entry.beta),
         })
       } else {
         map.set(entry.connector_type, {
@@ -177,6 +189,9 @@ function App() {
           connection_layer: entry.connection_layer || map.get(entry.connector_type)?.connection_layer || null,
           notes: entry.notes || map.get(entry.connector_type)?.notes || '',
           category: entry.category || map.get(entry.connector_type)?.category || null,
+          connection_state_labels: entry.connection_state_labels || map.get(entry.connector_type)?.connection_state_labels || {},
+          onboarding_copy: entry.onboarding_copy || map.get(entry.connector_type)?.onboarding_copy || '',
+          beta: Boolean(entry.beta),
         })
       }
     }
@@ -262,7 +277,10 @@ function App() {
 
   const statusTone = (connectorStatus) => {
     if (connectorStatus === 'connected') return 'status-connected'
+    if (connectorStatus === 'active') return 'status-connected'
+    if (connectorStatus === 'ready_for_account_attach') return 'status-connected'
     if (connectorStatus === 'sync_running' || connectorStatus === 'sync_queued' || connectorStatus === 'sync_retrying') return 'status-degraded'
+    if (connectorStatus === 'awaiting_alerts' || connectorStatus === 'bridge_required' || connectorStatus === 'waiting_for_registration' || connectorStatus === 'beta_pending' || connectorStatus === 'metadata_saved' || connectorStatus === 'waiting_for_secure_auth_support') return 'status-degraded'
     if (connectorStatus === 'degraded') return 'status-degraded'
     if (connectorStatus === 'sync_error') return 'status-error'
     return 'status-disconnected'
@@ -561,6 +579,46 @@ function App() {
         navigate('/app/connections?addFlow=manual')
         return
       }
+      if (provider.connectorType === 'tradingview_webhook') {
+        if (!addAccountDraft.tradingview_webhook_url) {
+          const tvRes = await axios.post(
+            buildApiUrl('/providers/tradingview-webhook/connections'),
+            {
+              display_label: displayLabel || 'TradingView Signals',
+              account_alias: (addAccountDraft.account_alias || '').trim() || null,
+            },
+            { headers: authHeaders },
+          )
+          const created = tvRes?.data?.connection || {}
+          setAddAccountDraft((prev) => ({
+            ...prev,
+            provider_state: 'webhook_created',
+            tradingview_webhook_url: created.webhook_url || '',
+            tradingview_secret_hint: created.webhook_secret_hint || '',
+          }))
+          await loadConnectorData({ silent: true })
+          setStatus('TradingView webhook created. Copy the URL and complete the flow.')
+          return
+        }
+        closeAddAccountFlow()
+        navigate('/app/accounts')
+        return
+      }
+      if (['alpaca_api', 'oanda_api', 'binance_api'].includes(provider.connectorType)) {
+        await axios.post(
+          buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
+          {
+            display_label: displayLabel || provider.title,
+            environment: addAccountDraft.environment || 'paper',
+            account_alias: (addAccountDraft.account_alias || '').trim() || null,
+          },
+          { headers: authHeaders },
+        )
+        closeAddAccountFlow()
+        await loadConnectorData({ silent: true })
+        navigate('/app/accounts')
+        return
+      }
 
       const payload = {
         external_account_id: externalAccountId,
@@ -570,6 +628,7 @@ function App() {
           ? {
             bridge_url: (addAccountDraft.bridge_url || '').trim(),
             mt5_server: (addAccountDraft.mt5_server || '').trim(),
+            provider_state: (addAccountDraft.provider_state || '').trim() || 'bridge_required',
           }
           : {},
       }

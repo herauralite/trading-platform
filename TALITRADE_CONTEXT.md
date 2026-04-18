@@ -44,10 +44,10 @@ FundingPips (Match Trader platform) does not expose a public API. The Chrome ext
 
 | Service | URL / Details |
 |---------|--------------|
-| **Backend** | Railway → `https://trading-platform-production-0614.up.railway.app` |
+| **Backend** | Railway → `https://api.talitrade.com` |
 | **Frontend** | Vercel → `talitrade.com/app` (GitHub repo connected, auto-deploys on push) |
 | **Database** | Neon PostgreSQL (connected via `DATABASE_URL` env var on Railway) |
-| **Bot** | Telegram bot, webhook set to `{RAILWAY_URL}/telegram/webhook` on startup |
+| **Bot** | Telegram bot, webhook set to `{APP_BASE_URL}/telegram/webhook` on startup |
 | **Extension ID** | `aigdpcmfcnnjkbdikpnblooomhjlkcao` |
 | **Extension target** | `https://mtr-platform.fundingpips.com` |
 
@@ -70,7 +70,7 @@ FundingPips (Match Trader platform) does not expose a public API. The Chrome ext
 ## KEY CONSTANTS (DO NOT CHANGE WITHOUT UPDATING BOTH SIDES)
 
 ```
-RAILWAY_URL     = "https://trading-platform-production-0614.up.railway.app"
+APP_BASE_URL     = "https://api.talitrade.com"
 EXTENSION_ID    = "aigdpcmfcnnjkbdikpnblooomhjlkcao"
 DEV_PASSWORD    = "tali2024dev"   (gate step 1 password in app.html)
 

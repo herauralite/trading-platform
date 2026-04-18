@@ -50,9 +50,15 @@ function ConnectionsPage({
               {connector.integration_status ? <span className="pill">{connector.integration_status}</span> : null}
             </div>
             {connector.notes ? <p className="hint">{connector.notes}</p> : null}
+            {connector.onboarding_copy ? <p className="hint">{connector.onboarding_copy}</p> : null}
             <div className="meta">
               State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
             </div>
+            {connector.provider_state ? (
+              <div className="meta">
+                Provider state: <strong>{connector.provider_state}</strong>
+              </div>
+            ) : null}
             <div className="meta">
               Sync state: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
             </div>
@@ -79,7 +85,7 @@ function ConnectionsPage({
                 Sync
               </button>
               <button
-                disabled={!signedIn || connector.account_count > 0}
+                disabled={!signedIn || connector.account_count > 0 || ['tradingview_webhook', 'alpaca_api', 'oanda_api', 'binance_api'].includes(connector.connector_type)}
                 onClick={() => connectorAction(connector.connector_type, 'connect', {
                   external_account_id: connectorDrafts[connector.connector_type]?.external_account_id || `${connector.connector_type}-account`,
                   display_label: connectorDrafts[connector.connector_type]?.display_label || sourceLabel(connector.connector_type),
@@ -96,7 +102,10 @@ function ConnectionsPage({
               </button>
               <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'disconnect')}>Disconnect</button>
             </div>
-            {connector.account_count === 0 ? (
+            {['tradingview_webhook', 'alpaca_api', 'oanda_api', 'binance_api'].includes(connector.connector_type) ? (
+              <p className="hint">Use <strong>Add Account</strong> for this provider’s guided onboarding flow.</p>
+            ) : null}
+            {connector.account_count === 0 && !['tradingview_webhook', 'alpaca_api', 'oanda_api', 'binance_api'].includes(connector.connector_type) ? (
               <div className="row">
                 <input
                   placeholder="Account id for connect"
