@@ -565,7 +565,7 @@ function normalizeLoginHost(value) {
 }
 
 function getBaseApiUrl() {
-  return window.TaliApiBase.resolveApiBase({ buildEnvApiBase: typeof API !== 'undefined' ? API : '' });
+  return window.TaliApiBase.resolveApiBase();
 }
 
 function classifyAuthConfigFailure(error, status) {
@@ -614,7 +614,7 @@ function validateTelegramLoginConfig() {
 
 async function hydrateTelegramWidgetConfig() {
   const apiBase = getBaseApiUrl();
-  const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config', { buildEnvApiBase: typeof API !== 'undefined' ? API : '' });
+  const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');
   try {
     pushGateDiagnostic(`resolved_api_base=${apiBase}`);
     pushGateDiagnostic(`config_url=${configUrl}`);

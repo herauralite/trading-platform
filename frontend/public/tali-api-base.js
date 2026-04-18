@@ -1,5 +1,12 @@
 (function initTaliApiBaseResolver(globalScope) {
+  const FALLBACK_API_BASE = 'https://trading-platform-production-0614.up.railway.app'
+
   const normalizeBase = (value) => String(value || '').trim().replace(/\/$/, '')
+
+  const hasSameOriginProxy = () => {
+    const config = globalScope?.__TALI_CONFIG__ || {}
+    return config.sameOriginApiProxy === true || config.useRelativeApi === true
+  }
 
   const resolveApiBase = (options = {}) => {
     const runtimeConfigured = normalizeBase(
@@ -10,11 +17,14 @@
     const buildConfigured = normalizeBase(options?.buildEnvApiBase || '')
     if (buildConfigured) return buildConfigured
 
-    return ''
+    if (hasSameOriginProxy()) return ''
+
+    return FALLBACK_API_BASE
   }
 
   const buildApiUrl = (path, options = {}) => {
-    const normalizedPath = String(path || '').startsWith('/') ? String(path || '') : `/${String(path || '')}`
+    const rawPath = String(path || '')
+    const normalizedPath = rawPath.startsWith('/') ? rawPath : `/${rawPath}`
     const base = resolveApiBase(options)
     return base ? `${base}${normalizedPath}` : normalizedPath
   }
@@ -22,5 +32,6 @@
   globalScope.TaliApiBase = {
     resolveApiBase,
     buildApiUrl,
+    FALLBACK_API_BASE,
   }
 })(window)
