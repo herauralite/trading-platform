@@ -21,6 +21,8 @@ import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './
 
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
 const CANONICAL_HOST = 'www.talitrade.com'
+const AUTH_DEBUG_QUERY_KEY = 'debugAuth'
+const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -57,6 +59,9 @@ function App() {
   const [connectors, setConnectors] = useState([])
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const [widgetStatus, setWidgetStatus] = useState('')
+  const [widgetDiagnostics, setWidgetDiagnostics] = useState([])
+  const [configLoadFailed, setConfigLoadFailed] = useState(false)
+  const [isConfigLoading, setIsConfigLoading] = useState(false)
   const [widgetScriptLoaded, setWidgetScriptLoaded] = useState(false)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const widgetWrapRef = useRef(null)
@@ -69,6 +74,10 @@ function App() {
   const [syncHistory, setSyncHistory] = useState({})
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
+  const authDebugEnabled = useMemo(() => {
+    const params = new URLSearchParams(window.location.search)
+    return params.get(AUTH_DEBUG_QUERY_KEY) === '1' || localStorage.getItem(AUTH_DEBUG_STORAGE_KEY) === '1'
+  }, [])
   const authHeaders = buildAuthHeaders(sessionToken)
   const currentHost = normalizeHost(window.location.hostname)
   const canonicalHost = normalizeHost(telegramConfig?.canonicalLoginDomain || telegramConfig?.loginDomain || CANONICAL_HOST)
@@ -164,6 +173,8 @@ function App() {
   const syncStateLabel = (state) => state || 'idle'
 
   async function loadTelegramAuthConfig() {
+    setIsConfigLoading(true)
+    setConfigLoadFailed(false)
     const resolvedBase = resolveApiBase()
     const requestUrl = buildApiUrl('/auth/telegram/config')
     try {
@@ -177,10 +188,12 @@ function App() {
         configFetchStatus: res.status,
         configFetchContentType: res?.headers?.['content-type'] || 'missing',
       })
+      setWidgetDiagnostics(diagnostics)
       setTelegramConfig(res.data || null)
-      setWidgetStatus(['Telegram config loaded.', ...diagnostics].join(' '))
+      setWidgetStatus('Telegram sign-in is ready.')
     } catch (error) {
       setTelegramConfig(null)
+      setConfigLoadFailed(true)
       const status = error?.response?.status
       const reason = status === 404
         ? 'http_404'
@@ -201,11 +214,10 @@ function App() {
         configFetchErrorName: error?.name || 'unknown',
         configFetchErrorMessage: String(error?.message || '').slice(0, 180) || 'n/a',
       })
-      setWidgetStatus([
-        'Could not load Telegram config. Login may fail.',
-        `config_fetch_failed=${reason}`,
-        ...diagnostics,
-      ].join(' '))
+      setWidgetDiagnostics([`config_fetch_failed=${reason}`, ...diagnostics])
+      setWidgetStatus('We could not prepare Telegram sign-in right now. Please retry.')
+    } finally {
+      setIsConfigLoading(false)
     }
   }
 
@@ -215,7 +227,7 @@ function App() {
     const timer = window.setTimeout(() => {
       const rendered = Boolean(widgetWrapRef.current?.querySelector('iframe, .telegram-login, div[id^="telegram-login"]'))
       if (!rendered) {
-        setWidgetStatus('Telegram script loaded but widget did not render. Open www.talitrade.com to continue with Telegram sign-in, then disable blockers if needed.')
+        setWidgetStatus('Telegram sign-in did not finish loading. Confirm you are on www.talitrade.com and disable browser blockers, then retry.')
       }
     }, 3000)
     return () => window.clearTimeout(timer)
@@ -268,7 +280,7 @@ function App() {
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
       await loadConnectorData({ token, silent: true })
     } catch (e) {
-      setStatus(`Telegram sign-in failed: ${e.message}`)
+      setStatus('Telegram sign-in failed. Please retry.')
     }
   }
 
@@ -283,7 +295,7 @@ function App() {
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
       await loadConnectorData({ token, silent: true })
     } catch (e) {
-      setStatus(`Telegram OIDC sign-in failed: ${e.message}`)
+      setStatus('Telegram sign-in failed. Please retry.')
     } finally {
       clearOidcCorrelation(localStorage)
       setIsBootstrapping(false)
@@ -467,6 +479,7 @@ function App() {
                   <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
                 ) : (
                   <>
+                    {isConfigLoading ? <p className="hint">Preparing secure Telegram sign-in…</p> : null}
                     <script
                       async
                       src="https://telegram.org/js/telegram-widget.js?22"
@@ -482,6 +495,14 @@ function App() {
                   </>
                 )}
                 {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
+                {configLoadFailed ? (
+                  <button onClick={() => loadTelegramAuthConfig()} type="button">
+                    Retry Telegram setup
+                  </button>
+                ) : null}
+                {authDebugEnabled && widgetDiagnostics.length ? (
+                  <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
+                ) : null}
               </div>
             )}
           </>

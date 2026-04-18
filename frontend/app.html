@@ -487,6 +487,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 
       <div id="gate-tg-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;text-align:center;">Authentication failed. Please try again.</div>
       <pre id="gate-tg-diag" style="display:none;margin:-2px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(77,116,144,0.12);border:1px solid rgba(77,116,144,0.35);font-size:11px;line-height:1.45;color:#8bafc7;white-space:pre-wrap;text-align:left;"></pre>
+      <button id="gate-tg-retry" onclick="retryTelegramGateSetup()" style="display:none;width:100%;max-width:280px;margin:0 auto 12px;padding:11px 14px;border-radius:10px;border:1px solid rgba(42,171,238,0.45);background:rgba(42,171,238,0.12);color:#b9e6fb;font-size:12px;font-weight:700;cursor:pointer;">Retry Telegram setup</button>
       <div id="gate-signing" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
 
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
@@ -541,15 +542,32 @@ let taliWidgetScriptInjected = false;
 let taliStep2RenderedMode = '';
 let taliTelegramConfigFetchFailed = false;
 let taliAuthDiagnostics = [];
+const AUTH_DEBUG_QUERY_KEY = 'debugAuth';
+const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth';
+let taliAuthDebugMode = false;
+let taliConfigRetryVisible = false;
+
+function isAuthDebugModeEnabled() {
+  try {
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get(AUTH_DEBUG_QUERY_KEY) === '1') return true;
+    return localStorage.getItem(AUTH_DEBUG_STORAGE_KEY) === '1' || localStorage.getItem(AUTH_DEBUG_QUERY_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
 
 function pushGateDiagnostic(message) {
   if (!message) return;
   taliAuthDiagnostics.push(`[${new Date().toISOString()}] ${message}`);
   if (taliAuthDiagnostics.length > 8) taliAuthDiagnostics.shift();
   const diagEl = document.getElementById('gate-tg-diag');
-  if (diagEl) {
+  if (diagEl && taliAuthDebugMode) {
     diagEl.textContent = taliAuthDiagnostics.join('\n');
     diagEl.style.display = 'block';
+  } else if (diagEl) {
+    diagEl.textContent = '';
+    diagEl.style.display = 'none';
   }
 }
 
@@ -557,6 +575,8 @@ function setGateTelegramError(message) {
   const errEl = document.getElementById('gate-tg-error');
   errEl.textContent = message;
   errEl.style.display = 'block';
+  const retryEl = document.getElementById('gate-tg-retry');
+  if (retryEl) retryEl.style.display = taliConfigRetryVisible ? 'block' : 'none';
 }
 
 function clearGateTelegramError() {
@@ -568,7 +588,20 @@ function clearGateTelegramError() {
     diagEl.textContent = '';
     diagEl.style.display = 'none';
   }
+  const retryEl = document.getElementById('gate-tg-retry');
+  if (retryEl) retryEl.style.display = 'none';
+  taliConfigRetryVisible = false;
   taliAuthDiagnostics = [];
+}
+
+function retryTelegramGateSetup() {
+  taliStep2InitStarted = false;
+  taliWidgetScriptInjected = false;
+  taliTelegramConfigFetchFailed = false;
+  taliConfigRetryVisible = false;
+  const wrap = document.getElementById('tg-widget-wrap');
+  if (wrap) wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Preparing secure Telegram sign-in…</div>';
+  void showTelegramStep();
 }
 
 function normalizeTelegramBotUsername(value) {
@@ -691,7 +724,7 @@ function parseTelegramAuthFailure(res, body) {
   if (reason === 'missing_bot_token') return 'Server Telegram token is missing. Please contact support.';
   if (reason === 'oidc_not_enabled') return 'Telegram OIDC is not enabled on the server yet.';
   if (reason === 'oidc_invalid_token') return 'Telegram token verification failed. Please try again.';
-  return `Telegram login failed (${reason}). Please retry.`;
+  return 'Telegram login failed. Please retry.';
 }
 
 (function() {
@@ -751,7 +784,7 @@ function renderTelegramOidcButton() {
 
 function renderTelegramLegacyWidget() {
   const wrap = document.getElementById('tg-widget-wrap');
-  wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>';
+  wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Preparing secure Telegram sign-in…</div>';
   const existingScript = wrap.querySelector('script[data-tali-telegram-widget="1"]');
   if (existingScript) return;
 
@@ -772,24 +805,25 @@ function renderTelegramLegacyWidget() {
     setTimeout(() => {
       const widgetRendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
       if (!widgetRendered && !taliTelegramAuthStarted) {
-        setGateTelegramError('Telegram script loaded but widget did not render. Disable blockers and verify you are on www.talitrade.com.');
+        setGateTelegramError('Telegram sign-in did not finish loading. Disable blockers and verify you are on www.talitrade.com.');
       }
     }, 3000);
     taliWidgetFailureTimer = setTimeout(() => {
       if (!taliTelegramAuthStarted) {
-        setGateTelegramError('Telegram widget loaded but login did not complete. Confirm BotFather domain settings and try again.');
+        setGateTelegramError('Telegram login did not complete. Please retry.');
       }
     }, 20000);
   };
   script.onerror = () => {
     taliStep2InitStarted = false;
     taliWidgetScriptInjected = false;
-    setGateTelegramError('Could not load Telegram widget. Check browser blockers and try again.');
+    setGateTelegramError('Telegram sign-in widget could not be loaded. Check browser blockers and retry.');
   };
   wrap.appendChild(script);
 }
 
 async function showTelegramStep() {
+  taliAuthDebugMode = isAuthDebugModeEnabled();
   await hydrateTelegramWidgetConfig();
   const step2 = document.getElementById('gate-step2');
   step2.style.display = 'block';
@@ -802,7 +836,8 @@ async function showTelegramStep() {
 
   clearGateTelegramError();
   if (taliTelegramConfigFetchFailed) {
-    setGateTelegramError('Could not load Telegram login config (/auth/telegram/config). Using fallback config; login may fail.');
+    taliConfigRetryVisible = true;
+    setGateTelegramError('We could not load Telegram sign-in settings right now. Please retry.');
   }
   const issues = validateTelegramLoginConfig();
   if (issues.length) {
@@ -810,7 +845,7 @@ async function showTelegramStep() {
       setGateTelegramError('Open www.talitrade.com to continue with Telegram sign-in.');
       return;
     }
-    setGateTelegramError('Telegram login is misconfigured. Please contact support and share: ' + issues.join(','));
+    setGateTelegramError('Telegram sign-in is temporarily unavailable. Please contact support if this continues.');
     return;
   }
 
