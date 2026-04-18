@@ -34,6 +34,7 @@ const CANONICAL_HOST = 'www.talitrade.com'
 const AUTH_DEBUG_QUERY_KEY = 'debugAuth'
 const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth'
 const USE_ACCOUNT_WORKSPACES_API = import.meta.env.VITE_APP_USE_ACCOUNT_WORKSPACES !== '0'
+const FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY = 'tali_first_run_add_account_prompt_seen'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -188,6 +189,7 @@ function App() {
   const addAccountProviders = useMemo(() => buildAddAccountProviders(catalog, sourceLabel), [catalog])
 
   const addFlowIntent = useMemo(() => new URLSearchParams(location.search).get('addFlow') || '', [location.search])
+  const isFirstRunWithoutAccounts = signedIn && unifiedAccountWorkspaces.length === 0
 
 
   useEffect(() => {
@@ -259,6 +261,15 @@ function App() {
     }, 3000)
     return () => window.clearTimeout(timer)
   }, [widgetScriptLoaded, signedIn])
+
+  useEffect(() => {
+    if (!isFirstRunWithoutAccounts) return
+    if (location.pathname !== '/app' && location.pathname !== '/app/accounts') return
+    if (isAddAccountOpen) return
+    if (sessionStorage.getItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY) === '1') return
+    sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
+    openAddAccountFlow('mt5_bridge')
+  }, [isFirstRunWithoutAccounts, location.pathname, isAddAccountOpen])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
@@ -361,6 +372,7 @@ function App() {
     setRecentlyAddedAccountLabel('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
+    sessionStorage.removeItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY)
   }
 
   async function signInWithTelegramWidget(authData) {
@@ -751,15 +763,30 @@ function App() {
                 <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
               </nav>
               <p className="hint app-shell-nav-hint">
-                Accounts is your primary workspace. Connections remains available for connector operations and setup.
+                <strong>Accounts</strong> is where you add and manage trading accounts. <strong>Connections</strong> is for integration setup and connector operations.
               </p>
             </div>
-            <AccountSwitcher
-              accounts={unifiedAccountWorkspaces}
-              selectedAccountKey={selectedAccountKey}
-              onSelectAccount={setSelectedAccountKey}
-            />
+            <div className="row">
+              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add account</button>
+              <AccountSwitcher
+                accounts={unifiedAccountWorkspaces}
+                selectedAccountKey={selectedAccountKey}
+                onSelectAccount={setSelectedAccountKey}
+              />
+            </div>
           </section>
+
+          {isFirstRunWithoutAccounts ? (
+            <section className="panel first-run-shell-cta" aria-live="polite">
+              <div className="row">
+                <h2>Get started by adding your first account</h2>
+                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
+              </div>
+              <p className="hint">
+                Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
+              </p>
+            </section>
+          ) : null}
 
           <Routes>
             <Route path="/" element={<Navigate to="/app/accounts" replace />} />

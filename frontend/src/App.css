@@ -58,6 +58,11 @@
   margin-bottom: 0;
 }
 
+.first-run-shell-cta {
+  border: 1px solid #c7d2fe;
+  background: linear-gradient(160deg, #ffffff, #eef2ff);
+}
+
 .app-nav-link {
   display: inline-flex;
   align-items: center;
@@ -196,6 +201,10 @@
   font-size: 15px;
   font-weight: 600;
   margin-bottom: 10px;
+}
+
+.onboarding-path-list {
+  margin: 0 0 12px 0;
 }
 
 .selected-account-panel {
