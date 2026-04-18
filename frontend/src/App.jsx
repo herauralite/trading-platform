@@ -17,7 +17,7 @@ import {
 } from './sessionAuth'
 import { formatSyncRunDiagnostics } from './syncRunDiagnostics'
 import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connectorConfig'
-import { buildApiUrl, resolveApiBase } from './apiBase'
+import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
 
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
 const CANONICAL_HOST = 'www.talitrade.com'
@@ -30,6 +30,8 @@ const normalizeHost = (value) => {
 
 const normalizeSessionUser = (user) => {
   if (!user || typeof user !== 'object') return null
+  // Keep both field shapes for compatibility across widget/OIDC/login callbacks and stored sessions.
+  // Future auth changes must preserve BOTH keys: telegramUserId and telegram_user_id.
   const telegramUserId = String(user.telegram_user_id || user.telegramUserId || '').trim()
   if (!telegramUserId) return null
   return {
@@ -169,15 +171,14 @@ function App() {
       if (!res?.data || typeof res.data !== 'object') {
         throw new SyntaxError(`invalid_json url=${requestUrl}`)
       }
+      const diagnostics = formatTelegramConfigDiagnostics({
+        resolvedApiBase: resolvedBase,
+        configUrl: requestUrl,
+        configFetchStatus: res.status,
+        configFetchContentType: res?.headers?.['content-type'] || 'missing',
+      })
       setTelegramConfig(res.data || null)
-      setWidgetStatus([
-        'Telegram config loaded.',
-        `resolved_api_base=${resolvedBase || '(empty)'}`,
-        `config_url=${requestUrl}`,
-        `config_fetch_status=${res.status}`,
-        'config_fetch_error_name=n/a',
-        'config_fetch_error_message=n/a',
-      ].join(' '))
+      setWidgetStatus(['Telegram config loaded.', ...diagnostics].join(' '))
     } catch (error) {
       setTelegramConfig(null)
       const status = error?.response?.status
@@ -192,20 +193,22 @@ function App() {
             : (typeof navigator !== 'undefined' && navigator.onLine === false)
               ? 'transport_offline'
               : 'cors_rejected_or_transport'
-      const fetchStatus = status || 'request_failed'
-      const errorName = error?.name || 'unknown'
-      const errorMessage = String(error?.message || '').slice(0, 180) || 'n/a'
+      const diagnostics = formatTelegramConfigDiagnostics({
+        resolvedApiBase: resolvedBase,
+        configUrl: requestUrl,
+        configFetchStatus: status || 'request_failed',
+        configFetchContentType: error?.response?.headers?.['content-type'] || 'missing',
+        configFetchErrorName: error?.name || 'unknown',
+        configFetchErrorMessage: String(error?.message || '').slice(0, 180) || 'n/a',
+      })
       setWidgetStatus([
         'Could not load Telegram config. Login may fail.',
-        `resolved_api_base=${resolvedBase || '(empty)'}`,
-        `config_url=${requestUrl}`,
-        `config_fetch_status=${fetchStatus}`,
         `config_fetch_failed=${reason}`,
-        `config_fetch_error_name=${errorName}`,
-        `config_fetch_error_message=${errorMessage}`,
+        ...diagnostics,
       ].join(' '))
     }
   }
+
 
   useEffect(() => {
     if (!widgetScriptLoaded || signedIn) return
@@ -236,6 +239,8 @@ function App() {
   }
 
   function commitSession(token, user) {
+    // Guardrail: auth success must normalize Telegram user ids into both camelCase and snake_case fields
+    // so gate checks and persisted session hydration remain compatible.
     const normalizedUser = normalizeSessionUser(user)
     if (!normalizedUser) throw new Error('Invalid user payload for session commit')
     setSessionToken(token)

@@ -565,6 +565,7 @@ function normalizeLoginHost(value) {
 }
 
 function getBaseApiUrl() {
+  // Do not bypass TaliApiBase resolution here: it enforces runtime -> build-time -> production fallback order.
   return window.TaliApiBase.resolveApiBase();
 }
 
@@ -616,17 +617,16 @@ async function hydrateTelegramWidgetConfig() {
   const apiBase = getBaseApiUrl();
   const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');
   try {
-    pushGateDiagnostic(`resolved_api_base=${apiBase}`);
-    pushGateDiagnostic(`config_url=${configUrl}`);
     const res = await fetch(configUrl, { credentials: 'include', mode: 'cors' });
-    pushGateDiagnostic(`config_fetch_status=${res.status}`);
-    pushGateDiagnostic(`config_fetch_content_type=${res.headers.get('content-type') || 'missing'}`);
-    pushGateDiagnostic(`config_fetch_auth_mode_header=${res.headers.get('x-tali-auth-mode') || 'missing'}`);
+    window.TaliApiBase.formatTelegramConfigDiagnostics({
+      resolvedApiBase: apiBase,
+      configUrl,
+      configFetchStatus: res.status,
+      configFetchContentType: res.headers.get('content-type') || 'missing',
+    }).forEach(pushGateDiagnostic);
     if (!res.ok) {
       taliTelegramConfigFetchFailed = true;
       pushGateDiagnostic(`config_fetch_failed=${classifyAuthConfigFailure(null, res.status)}`);
-      pushGateDiagnostic('config_fetch_error_name=n/a');
-      pushGateDiagnostic(`config_fetch_error_message=http_${res.status}`);
       return;
     }
     const cfg = await res.json();
@@ -647,8 +647,14 @@ async function hydrateTelegramWidgetConfig() {
   } catch (error) {
     taliTelegramConfigFetchFailed = true;
     pushGateDiagnostic(`config_fetch_failed=${classifyAuthConfigFailure(error)}`);
-    pushGateDiagnostic(`config_fetch_error_name=${error?.name || 'unknown'}`);
-    pushGateDiagnostic(`config_fetch_error_message=${String(error?.message || '').slice(0, 120) || 'n/a'}`);
+    window.TaliApiBase.formatTelegramConfigDiagnostics({
+      resolvedApiBase: apiBase,
+      configUrl,
+      configFetchStatus: 'request_failed',
+      configFetchContentType: 'missing',
+      configFetchErrorName: error?.name || 'unknown',
+      configFetchErrorMessage: String(error?.message || '').slice(0, 120) || 'n/a',
+    }).forEach(pushGateDiagnostic);
   } finally {
     // no timeout abort: allow slower cold starts during auth bootstrap
   }
@@ -947,6 +953,8 @@ window.onTelegramAuth = async function(tgUser) {
 
 function normalizeTaliUserShape(rawUser) {
   if (!rawUser || typeof rawUser !== 'object') return null;
+  // Preserve both id key shapes for gate completion and post-login session hydration compatibility.
+  // Required fields: telegramUserId and telegram_user_id.
   const telegramUserId = String(rawUser.telegramUserId || rawUser.telegram_user_id || '').trim();
   if (!telegramUserId) return null;
   return {
