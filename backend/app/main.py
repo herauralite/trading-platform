@@ -62,7 +62,7 @@ enforce_single_process_runtime()
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
-RAILWAY_URL     = "https://trading-platform-production-70e0.up.railway.app"
+RAILWAY_URL     = "https://trading-platform-production-0614.up.railway.app"
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
 FRONTEND_ALLOWED_ORIGINS = settings.FRONTEND_ALLOWED_ORIGINS
 
