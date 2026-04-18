@@ -58,6 +58,24 @@ const normalizeSessionUser = (user) => {
   }
 }
 
+const coerceWidgetUserToSessionShape = (user) => {
+  if (!user || typeof user !== 'object') return null
+  const telegramUserId = String(user.id || user.telegram_user_id || user.telegramUserId || '').trim()
+  if (!telegramUserId) return null
+  return {
+    telegram_user_id: telegramUserId,
+    telegramUserId,
+    telegram_username: user.username || user.telegram_username || '',
+    username: user.username || user.telegram_username || '',
+    first_name: user.first_name || user.firstName || '',
+    firstName: user.firstName || user.first_name || '',
+    last_name: user.last_name || user.lastName || '',
+    lastName: user.lastName || user.last_name || '',
+    photo_url: user.photo_url || user.photoUrl || '',
+    photoUrl: user.photoUrl || user.photo_url || '',
+  }
+}
+
 function App() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -377,7 +395,7 @@ function App() {
   async function signInWithTelegramWidget(authData) {
     try {
       const res = await axios.post(buildApiUrl('/auth/telegram'), authData)
-      const user = normalizeSessionUser(res.data?.user)
+      const user = normalizeSessionUser(res.data?.user) || normalizeSessionUser(coerceWidgetUserToSessionShape(authData))
       const token = res.data?.access_token || ''
       if (!token || !user?.telegram_user_id) throw new Error('Telegram auth returned no session token')
       commitSession(token, user)
