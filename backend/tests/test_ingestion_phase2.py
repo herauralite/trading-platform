@@ -267,6 +267,17 @@ def test_ensure_connector_tables_fresh_db_ordering(monkeypatch):
     assert "CREATE TABLE IF NOT EXISTS account_snapshots" in joined
     assert "CREATE TABLE IF NOT EXISTS positions" in joined
     assert "CREATE TABLE IF NOT EXISTS connector_events" in joined
+    idx_create_snapshots = joined.index("CREATE TABLE IF NOT EXISTS account_snapshots")
+    idx_rewire_snapshots = joined.index("UPDATE account_snapshots s")
+    assert idx_create_snapshots < idx_rewire_snapshots
+
+    idx_create_positions = joined.index("CREATE TABLE IF NOT EXISTS positions")
+    idx_rewire_positions = joined.index("UPDATE positions p")
+    assert idx_create_positions < idx_rewire_positions
+
+    idx_create_events = joined.index("CREATE TABLE IF NOT EXISTS connector_events")
+    idx_rewire_events = joined.index("UPDATE connector_events e")
+    assert idx_create_events < idx_rewire_events
 
 
 def test_account_workspaces_list_route(monkeypatch):
