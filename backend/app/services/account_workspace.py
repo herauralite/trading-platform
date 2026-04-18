@@ -31,6 +31,8 @@ def _normalize_connector_type(value: str | None) -> str:
 def _normalize_broker_family(broker_name: str | None, connector_type: str | None) -> str:
     broker = str(broker_name or "").strip().lower()
     connector = _normalize_connector_type(connector_type)
+    if connector == "mt5_bridge":
+        return "mt5"
     if "fundingpips" in broker or connector == "fundingpips_extension":
         return "fundingpips"
     if broker:
@@ -81,6 +83,9 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
         "connector_connection_status": connector_connection_status,
         "connector_sync_state": connector_sync_state,
         "status_scope": "connector_rollup",
+        "bridge_status": row.get("bridge_status"),
+        "bridge_profile": row.get("bridge_profile"),
+        "bridge_last_sync_at": row.get("bridge_last_sync_at"),
         "account_type": row.get("account_type"),
         "account_size": row.get("account_size"),
         "last_activity_at": row.get("last_activity_at"),
@@ -175,12 +180,17 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                 lc.status AS lifecycle_status,
                 lc.is_connected AS lifecycle_is_connected,
                 COALESCE(ma.last_sync_at, lc.last_sync_at) AS last_sync_at,
-                lsr.status AS latest_sync_status
+                lsr.status AS latest_sync_status,
+                mba.bridge_status AS bridge_status,
+                mba.bridge_url AS bridge_profile,
+                mba.last_bridge_sync_at AS bridge_last_sync_at
             FROM merged_accounts ma
             LEFT JOIN connector_lifecycle lc
               ON lc.user_id = :uid AND lc.connector_type = ma.connector_type
             LEFT JOIN latest_sync_runs lsr
               ON lsr.connector_type = ma.connector_type
+            LEFT JOIN mt5_bridge_accounts mba
+              ON mba.user_id = :uid AND mba.trading_account_id = ma.trading_account_id
             ORDER BY ma.last_activity_at DESC NULLS LAST, ma.external_account_id
         """), {"uid": telegram_user_id})
         rows = [dict(row) for row in result.mappings().all()]

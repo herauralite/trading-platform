@@ -190,6 +190,28 @@ async def ensure_connector_tables() -> None:
             )
         """))
         await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS account_key TEXT"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS mt5_bridge_accounts (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                trading_account_id INTEGER NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+                external_account_id TEXT NOT NULL,
+                bridge_status TEXT NOT NULL DEFAULT 'bridge_required',
+                bridge_url TEXT,
+                mt5_server TEXT,
+                last_bridge_sync_at TIMESTAMPTZ,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (user_id, trading_account_id)
+            )
+        """))
+        await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS bridge_status TEXT NOT NULL DEFAULT 'bridge_required'"))
+        await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS bridge_url TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS mt5_server TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS last_bridge_sync_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS mt5_bridge_accounts_user_idx ON mt5_bridge_accounts(user_id)"))
 
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS account_snapshots (
