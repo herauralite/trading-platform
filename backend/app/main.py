@@ -52,6 +52,7 @@ from app.services.account_workspace import (
     list_account_workspaces,
 )
 from app.services.mt5_bridge import (
+    check_mt5_pairing_state,
     get_mt5_bridge_account_state,
     upsert_mt5_bridge_account,
 )
@@ -1645,6 +1646,12 @@ class ConnectorConfigPatchRequest(BaseModel):
     secret_config: dict[str, Any] = Field(default_factory=dict)
 
 
+class MT5PairingCheckRequest(BaseModel):
+    external_account_id: str | None = None
+    bridge_url: str | None = None
+    mt5_server: str | None = None
+
+
 @app.get("/connectors/{connector_type}")
 async def connector_status_detail(
     connector_type: str,
@@ -1815,6 +1822,20 @@ async def connector_connect(
         metadata={"action": "connect"},
     )
     return {"ok": True, "connector": lifecycle, "trading_account": trading_account}
+
+
+@app.post("/connectors/mt5_bridge/pairing/check")
+async def mt5_pairing_check(
+    payload: MT5PairingCheckRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    _ = str(session_user_id).strip()
+    pairing_state = await check_mt5_pairing_state(
+        external_account_id=payload.external_account_id,
+        bridge_url=payload.bridge_url,
+        mt5_server=payload.mt5_server,
+    )
+    return {"ok": True, "pairing": pairing_state}
 
 
 @app.post("/connectors/{connector_type}/sync")
