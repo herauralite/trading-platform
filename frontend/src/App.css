@@ -48,6 +48,16 @@
   gap: 8px;
 }
 
+.app-shell-nav-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.app-shell-nav-hint {
+  margin-bottom: 0;
+}
+
 .app-nav-link {
   display: inline-flex;
   align-items: center;
@@ -172,6 +182,20 @@
   border-radius: 12px;
   padding: 18px;
   margin-top: 14px;
+}
+
+.account-onboarding-empty-state {
+  max-width: 720px;
+}
+
+.empty-state-copy {
+  margin-bottom: 12px;
+}
+
+.primary-cta {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
 }
 
 .selected-account-panel {
