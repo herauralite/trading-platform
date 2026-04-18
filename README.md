@@ -6,6 +6,13 @@ TaliTrade is a premium SaaS trading platform for prop firm traders. It combines 
 - `TALITRADE_CONTEXT.md` is the current-state operational source of truth for deployment, auth flow, endpoints, and launch status.
 - The original 25-file TaliTrade model is the intended blueprint, not an assumption that every detail is already implemented in this repo.
 
+
+## Working Telegram auth baseline (must remain stable)
+- Baseline guardrail doc: `BASELINE_TELEGRAM_AUTH.md`
+- Quick regression checklist: `AUTH_SMOKE_TEST_CHECKLIST.md`
+
+Treat these as release blockers for auth-related frontend edits. Preserve API-base precedence and successful Telegram gate-to-app transitions.
+
 ## Current architecture
 - **Backend (`backend/`)**: FastAPI API, Telegram webhook/bot logic, connector ingestion pipeline, account/trade persistence, health/admin endpoints.
 - **Frontend (`frontend/`)**: Vercel-hosted landing + `/app` SPA, onboarding gate, Telegram login widget, analytics UI.

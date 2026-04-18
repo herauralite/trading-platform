@@ -42,8 +42,13 @@ Verify all of the following before merge:
 3. Successful Telegram login on `/app` reaches the app and does not loop back to gate.
 4. Demo login still saves/loads leaderboard correctly.
 5. No stale backend references remain to:
-   - `trading-platform-production-70e0.up.railway.app`
+   - the previously retired Railway host
 
 ## Notes
 
 This file is a guardrail. Treat the current production behavior above as the known-good baseline before making further auth refactors.
+
+
+## Working baseline note
+
+As of April 18, 2026, this baseline is the production reference. Auth hardening changes should be incremental and must not redesign the Telegram login flow.

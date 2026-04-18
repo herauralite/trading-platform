@@ -872,6 +872,7 @@ footer{
 const AUTH_DIAGNOSTICS = [];
 
 function getBaseApiUrl() {
+  // Do not bypass TaliApiBase resolution here: it enforces runtime -> build-time -> production fallback order.
   return window.TaliApiBase.resolveApiBase();
 }
 
@@ -918,17 +919,16 @@ async function hydrateDemoTelegramConfig() {
   const apiBase = getBaseApiUrl();
   const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');
   try {
-    pushHomepageAuthDiag(`resolved_api_base=${apiBase}`);
-    pushHomepageAuthDiag(`config_url=${configUrl}`);
     const res = await fetch(configUrl, { credentials: 'include', mode: 'cors' });
-    pushHomepageAuthDiag(`config_fetch_status=${res.status}`);
-    pushHomepageAuthDiag(`config_fetch_content_type=${res.headers.get('content-type') || 'missing'}`);
-    pushHomepageAuthDiag(`config_fetch_auth_mode_header=${res.headers.get('x-tali-auth-mode') || 'missing'}`);
+    window.TaliApiBase.formatTelegramConfigDiagnostics({
+      resolvedApiBase: apiBase,
+      configUrl,
+      configFetchStatus: res.status,
+      configFetchContentType: res.headers.get('content-type') || 'missing',
+    }).forEach(pushHomepageAuthDiag);
     if (!res.ok) {
       demoTelegramConfigFailed = true;
       pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(null, res.status)}`);
-      pushHomepageAuthDiag('config_fetch_error_name=n/a');
-      pushHomepageAuthDiag(`config_fetch_error_message=http_${res.status}`);
       return;
     }
     const cfg = await res.json();
@@ -943,8 +943,14 @@ async function hydrateDemoTelegramConfig() {
     demoTelegramConfigFailed = false;
   } catch (error) {
     pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(error)}`);
-    pushHomepageAuthDiag(`config_fetch_error_name=${error?.name || 'unknown'}`);
-    pushHomepageAuthDiag(`config_fetch_error_message=${String(error?.message || '').slice(0, 120) || 'n/a'}`);
+    window.TaliApiBase.formatTelegramConfigDiagnostics({
+      resolvedApiBase: apiBase,
+      configUrl,
+      configFetchStatus: 'request_failed',
+      configFetchContentType: 'missing',
+      configFetchErrorName: error?.name || 'unknown',
+      configFetchErrorMessage: String(error?.message || '').slice(0, 120) || 'n/a',
+    }).forEach(pushHomepageAuthDiag);
     demoTelegramConfigFailed = true;
   } finally {
     // no timeout abort: allow slower cold starts during auth bootstrap
