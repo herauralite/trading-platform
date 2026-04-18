@@ -212,6 +212,62 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS last_bridge_sync_at TIMESTAMPTZ"))
         await conn.execute(text("ALTER TABLE mt5_bridge_accounts ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS mt5_bridge_accounts_user_idx ON mt5_bridge_accounts(user_id)"))
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS mt5_pairing_tokens (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                token_hash TEXT NOT NULL UNIQUE,
+                token_hint TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                requested_external_account_id TEXT,
+                requested_mt5_server TEXT,
+                requested_bridge_url TEXT,
+                requested_display_name TEXT,
+                expires_at TIMESTAMPTZ NOT NULL,
+                consumed_at TIMESTAMPTZ,
+                trusted_bridge_id TEXT,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS token_hint TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending'"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS requested_external_account_id TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS requested_mt5_server TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS requested_bridge_url TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS requested_display_name TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS consumed_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS trusted_bridge_id TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_pairing_tokens ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS mt5_pairing_tokens_user_idx ON mt5_pairing_tokens(user_id, created_at DESC)"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS mt5_pairing_tokens_status_idx ON mt5_pairing_tokens(status, expires_at)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS mt5_trusted_bridges (
+                id BIGSERIAL PRIMARY KEY,
+                bridge_id TEXT NOT NULL UNIQUE,
+                user_id TEXT NOT NULL,
+                pairing_token_id BIGINT REFERENCES mt5_pairing_tokens(id) ON DELETE SET NULL,
+                display_name TEXT,
+                machine_label TEXT,
+                bridge_secret_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'registered',
+                last_heartbeat_at TIMESTAMPTZ,
+                last_seen_ip TEXT,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS display_name TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS machine_label TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'registered'"))
+        await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS last_seen_ip TEXT"))
+        await conn.execute(text("ALTER TABLE mt5_trusted_bridges ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}'::jsonb"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS mt5_trusted_bridges_user_idx ON mt5_trusted_bridges(user_id, updated_at DESC)"))
 
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS account_snapshots (
