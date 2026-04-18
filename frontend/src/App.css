@@ -66,6 +66,7 @@
 .app-nav-link {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   border: 1px solid #cbd5e1;
   border-radius: 999px;
   padding: 6px 12px;
@@ -77,6 +78,20 @@
   border-color: #0f172a;
   background: #0f172a;
   color: #ffffff;
+}
+
+.add-account-nav-link {
+  border-color: #7c3aed;
+  color: #6d28d9;
+  font-weight: 600;
+}
+
+.add-account-nav-link:hover {
+  background: #f5f3ff;
+}
+
+.app-shell-actions {
+  justify-content: flex-end;
 }
 
 .account-switcher {
@@ -200,7 +215,36 @@
 .primary-cta {
   font-size: 15px;
   font-weight: 600;
-  margin-bottom: 10px;
+  border-color: #7c3aed;
+  background: linear-gradient(140deg, #7c3aed, #6d28d9);
+  box-shadow: 0 4px 14px rgba(109, 40, 217, 0.25);
+}
+
+.primary-cta:hover {
+  background: linear-gradient(140deg, #6d28d9, #5b21b6);
+}
+
+@media (max-width: 760px) {
+  #root {
+    padding: 16px;
+  }
+
+  .app-shell-top {
+    align-items: stretch;
+  }
+
+  .app-nav {
+    flex-wrap: wrap;
+  }
+
+  .app-shell-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .primary-cta {
+    min-width: 132px;
+  }
 }
 
 .onboarding-path-list {
