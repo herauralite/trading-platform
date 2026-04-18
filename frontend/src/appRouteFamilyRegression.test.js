@@ -38,6 +38,7 @@ test('canonical route ownership keeps homepage at / and app shell on /app family
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
   assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
+  assert.equal(appSource.includes('to="/app">Dashboard</NavLink>'), true)
 
   assert.equal(appSource.includes('TaliTrade Command Center'), false)
   assert.equal(appSource.includes('<h2>Session</h2>'), false)
@@ -56,7 +57,7 @@ test('canonical route ownership keeps homepage at / and app shell on /app family
   assert.equal(appSource.includes('<Routes>'), true)
   assert.equal(appSource.includes('signedIn && hasZeroConnectedAccounts'), true)
 
-  assert.equal(appLandingSource.includes('Workspace Dashboard'), true)
+  assert.equal(appLandingSource.includes('Account workspace overview'), true)
   assert.equal(accountsSource.includes('<h2>Accounts</h2>'), true)
-  assert.equal(connectionsSource.includes('<h2>Connections</h2>'), true)
+  assert.equal(connectionsSource.includes('Connector operations and sync controls'), true)
 })
