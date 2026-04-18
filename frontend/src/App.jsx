@@ -796,13 +796,20 @@ function App() {
               <nav className="app-nav" aria-label="Primary app navigation">
                 <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
                 <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
+                <button
+                  type="button"
+                  className="app-nav-link add-account-nav-link"
+                  onClick={() => openAddAccountFlow('mt5_bridge')}
+                >
+                  Add Account
+                </button>
               </nav>
               <p className="hint app-shell-nav-hint">
                 <strong>Accounts</strong> is where you add and manage trading accounts. <strong>Connections</strong> is for integration setup and connector operations.
               </p>
             </div>
-            <div className="row">
-              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add account</button>
+            <div className="row app-shell-actions">
+              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add Account</button>
               <AccountSwitcher
                 accounts={unifiedAccountWorkspaces}
                 selectedAccountKey={selectedAccountKey}
