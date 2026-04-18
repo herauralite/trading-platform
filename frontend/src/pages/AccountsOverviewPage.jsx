@@ -12,10 +12,11 @@ function AccountsOverviewPage({
   onSelectAccount,
   onAddAccount,
   recentlyAddedAccountLabel,
+  formatDate,
 }) {
   const summary = useMemo(() => {
     const total = accountWorkspaces.length
-    const connected = countBy(accountWorkspaces, (account) => account.connection_status === 'connected')
+    const connected = countBy(accountWorkspaces, (account) => account.connection_status === 'connected' || account.connection_status === 'active')
     const attention = countBy(accountWorkspaces, (account) => account.connection_status === 'sync_error' || account.sync_state === 'failed')
     const syncing = countBy(accountWorkspaces, (account) => ['queued', 'running', 'retrying'].includes(account.sync_state))
     const primary = accountWorkspaces.find((account) => account.is_primary) || null
@@ -103,6 +104,27 @@ function AccountsOverviewPage({
               <span className="hint">Sync</span>
               <AccountStatusBadge variant="sync" value={selectedAccount.sync_state} />
             </div>
+            {selectedAccount.connector_type === 'tradingview_webhook' ? (
+              <div className="meta tradingview-activity-preview">
+                <p className="hint">
+                  {selectedAccount.connection_status === 'active'
+                    ? `Webhook active · Last alert received ${formatDate(selectedAccount.tradingview_last_event_at || selectedAccount.last_activity_at)}`
+                    : 'Awaiting first TradingView alert'}
+                </p>
+                {(selectedAccount.recent_events || []).length > 0 ? (
+                  <ul>
+                    {selectedAccount.recent_events.slice(0, 3).map((event, index) => (
+                      <li key={`${selectedAccount.account_key}-event-${index}`}>
+                        <strong>{event.symbol || event.event_type || 'alert'}</strong>
+                        {event.timeframe ? ` · ${event.timeframe}` : ''}
+                        {' · '}
+                        {formatDate(event.received_at)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="hint">Select an account to establish workspace context for future account-specific views.</p>
