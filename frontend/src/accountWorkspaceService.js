@@ -11,6 +11,7 @@ function normalizeConnectorType(value) {
 
 function sourceLabel(connectorType) {
   if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
+  if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
   if (connectorType === 'csv_import') return 'CSV Import'
   if (connectorType === 'manual') return 'Manual Journal'
   return connectorType

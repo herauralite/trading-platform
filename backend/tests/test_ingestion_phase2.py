@@ -1358,3 +1358,44 @@ def test_sync_execution_uses_configured_external_probe(monkeypatch):
     assert result["result_category"] == "external_probe"
     assert captured["url"] == "https://sync.example.com/health"
     assert captured["headers"]["Authorization"] == "Bearer token-9"
+
+
+def test_connectors_catalog_includes_mt5():
+    resp = get_json_auth("/connectors/catalog", telegram_user_id="u1")
+    assert resp.status_code == 200
+    connectors = resp.json().get("connectors") or []
+    mt5 = next((c for c in connectors if c.get("connector_type") == "mt5_bridge"), None)
+    assert mt5 is not None
+    assert mt5.get("integration_status") == "beta_bridge_required"
+    assert mt5.get("connection_layer") == "broker_connector"
+
+
+def test_mt5_config_validation_requires_bridge_fields(monkeypatch):
+    captured = {}
+
+    async def fake_upsert(user_id, connector_type, **kwargs):
+        captured["user_id"] = user_id
+        captured["connector_type"] = connector_type
+        captured["kwargs"] = kwargs
+        return {"updated_at": datetime.now(timezone.utc).isoformat()}
+
+    async def fake_get(*_args, **_kwargs):
+        return {"status": "incomplete", "non_secret_config": {}, "has_secret_config": False}
+
+    monkeypatch.setattr("app.main.upsert_connector_config", fake_upsert)
+    monkeypatch.setattr("app.main.get_connector_config", fake_get)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u2")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.put("/connectors/mt5_bridge/config", json={
+                "non_secret_config": {},
+                "secret_config": {},
+            }, headers={"Authorization": f"Bearer {token}"})
+
+    resp = asyncio.run(_run())
+    assert resp.status_code == 200
+    assert captured["connector_type"] == "mt5_bridge"
+    assert captured["kwargs"]["status"] == "incomplete"
+    assert "bridge_url is required" in (captured["kwargs"]["validation_error"] or "")

@@ -91,6 +91,7 @@ function App() {
 
   function sourceLabel(connectorType) {
     if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
+    if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
     if (connectorType === 'csv_import') return 'CSV Import'
     if (connectorType === 'manual') return 'Manual Journal'
     return connectorType
@@ -146,11 +147,19 @@ function App() {
           current_sync_retry_count: 0,
           next_retry_at: null,
           supports_live_sync: Boolean(entry.supports_live_sync),
+          integration_status: entry.integration_status || 'unknown',
+          connection_layer: entry.connection_layer || null,
+          notes: entry.notes || '',
+          category: entry.category || null,
         })
       } else {
         map.set(entry.connector_type, {
           ...map.get(entry.connector_type),
           supports_live_sync: Boolean(entry.supports_live_sync),
+          integration_status: entry.integration_status || map.get(entry.connector_type)?.integration_status || 'unknown',
+          connection_layer: entry.connection_layer || map.get(entry.connector_type)?.connection_layer || null,
+          notes: entry.notes || map.get(entry.connector_type)?.notes || '',
+          category: entry.category || map.get(entry.connector_type)?.category || null,
         })
       }
     }
