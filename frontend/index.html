@@ -872,7 +872,7 @@ footer{
 const AUTH_DIAGNOSTICS = [];
 
 function getBaseApiUrl() {
-  return window.TaliApiBase.resolveApiBase({ buildEnvApiBase: typeof API !== 'undefined' ? API : '' });
+  return window.TaliApiBase.resolveApiBase();
 }
 
 function classifyAuthConfigFailure(error, status) {
