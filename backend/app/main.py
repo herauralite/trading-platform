@@ -2104,7 +2104,7 @@ async def create_public_api_beta_provider_connection(
         "ok": True,
         "provider": normalized_provider,
         "connection": connection,
-        "status": "waiting_for_secure_auth_support",
+        "status": "awaiting_secure_auth",
     }
 
 

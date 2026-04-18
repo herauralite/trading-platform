@@ -49,7 +49,7 @@ export function connectionStatusMeta(status) {
       helper: 'MT5 bridge onboarding state is shown honestly before full connectivity.',
     }
   }
-  if (normalized === 'beta_pending' || normalized === 'metadata_saved' || normalized === 'waiting_for_secure_auth_support') {
+  if (normalized === 'beta_pending' || normalized === 'metadata_saved' || normalized === 'awaiting_secure_auth' || normalized === 'waiting_for_secure_auth_support') {
     return {
       toneClass: 'status-degraded',
       label: toTitle(normalized),

@@ -147,7 +147,7 @@ async def create_public_api_beta_connection(
         "external_account_id": f"beta-{normalized}-{secrets.token_hex(4)}",
         "display_label": display_label,
         "metadata": {
-            "provider_state": "waiting_for_secure_auth_support",
+            "provider_state": "awaiting_secure_auth",
             "onboarding_state": "metadata_saved",
             "environment": env,
             "account_alias": (account_alias or "").strip() or None,
@@ -161,7 +161,7 @@ async def create_public_api_beta_connection(
                 environment, account_alias, beta_state, metadata, created_at, updated_at
             ) VALUES (
                 :user_id, :connector_type, :trading_account_id, :display_label,
-                :environment, :account_alias, 'waiting_for_secure_auth_support', CAST(:metadata AS jsonb), :created_at, :created_at
+                :environment, :account_alias, 'awaiting_secure_auth', CAST(:metadata AS jsonb), :created_at, :created_at
             )
             RETURNING id, user_id, connector_type, trading_account_id, display_label,
                       environment, account_alias, beta_state, created_at
@@ -179,9 +179,9 @@ async def create_public_api_beta_connection(
     await upsert_connector_lifecycle(
         user_id=user_id,
         connector_type=normalized,
-        status="waiting_for_secure_auth_support",
+        status="awaiting_secure_auth",
         is_connected=False,
         last_activity_at=now,
-        metadata={"provider_state": "waiting_for_secure_auth_support", "onboarding_state": "metadata_saved", "environment": env},
+        metadata={"provider_state": "awaiting_secure_auth", "onboarding_state": "metadata_saved", "environment": env},
     )
     return dict(row)
