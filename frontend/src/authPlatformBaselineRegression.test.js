@@ -27,14 +27,14 @@ test('react app bootstrap preserves telegram config + token persistence recovery
 test('react app keeps /app gate behavior and deep-link routes stable', async () => {
   const appSource = await readFrontendFile('src/App.jsx')
 
-  assert.equal(appSource.includes('{!signedIn ? ('), true)
+  assert.equal(appSource.includes('Sign in to open your premium account workspace'), true)
   assert.equal(appSource.includes('path="/app"'), true)
   assert.equal(appSource.includes('<AppLandingPage'), true)
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
   assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
   assert.equal(appSource.includes('Add Account'), true)
-  assert.equal(appSource.includes('<Route path="*" element={<Navigate to="/app/accounts" replace />} />'), true)
+  assert.equal(appSource.includes('<Route path="*" element={<Navigate to="/app" replace />} />'), true)
 })
 
 test('react app resolves account-presence from workspace inventory once hydrated (including zero rows)', async () => {
@@ -65,6 +65,8 @@ test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/co
   const rewrites = Array.isArray(config.rewrites) ? config.rewrites : []
 
   assert.deepEqual(rewrites, [
+    { source: '/accounts', destination: '/app/accounts' },
+    { source: '/connections', destination: '/app/connections' },
     { source: '/app', destination: '/app.html' },
     { source: '/app/:path*', destination: '/app.html' },
   ])

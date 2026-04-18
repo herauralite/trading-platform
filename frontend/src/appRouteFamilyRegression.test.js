@@ -21,6 +21,8 @@ test('canonical route ownership keeps homepage at / and app shell on /app family
   assert.equal(appEntryHtml.includes('data-app-shell="canonical"'), true)
 
   assert.deepEqual(rewrites, [
+    { source: '/accounts', destination: '/app/accounts' },
+    { source: '/connections', destination: '/app/connections' },
     { source: '/app', destination: '/app.html' },
     { source: '/app/:path*', destination: '/app.html' },
   ])
@@ -39,7 +41,9 @@ test('canonical route ownership keeps homepage at / and app shell on /app family
   assert.equal(appSource.includes('TaliTrade Platform'), false)
   assert.equal(appSource.includes('Primary login path: Telegram authenticated session.'), false)
   assert.equal(appSource.includes('Preparing secure Telegram sign-in…'), false)
-  assert.equal(appSource.includes("className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes("className={`app app-shell-canonical ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes('TaliTrade Command Center'), false)
+  assert.equal(appSource.includes('<h2>Session</h2>'), false)
 
   assert.equal(appLandingSource.includes('Workspace Dashboard'), true)
   assert.equal(accountsSource.includes('<h2>Accounts</h2>'), true)

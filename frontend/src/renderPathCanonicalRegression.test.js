@@ -10,6 +10,8 @@ test('/app route family resolves through canonical React shell entrypoint', asyn
 
   const rewrites = JSON.parse(vercelRaw).rewrites
   assert.deepEqual(rewrites, [
+    { source: '/accounts', destination: '/app/accounts' },
+    { source: '/connections', destination: '/app/connections' },
     { source: '/app', destination: '/app.html' },
     { source: '/app/:path*', destination: '/app.html' },
   ])
@@ -24,6 +26,8 @@ test('/app route family resolves through canonical React shell entrypoint', asyn
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
   assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
-  assert.equal(appSource.includes("className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes("className={`app app-shell-canonical ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes('TaliTrade Command Center'), false)
+  assert.equal(appSource.includes('<h2>Session</h2>'), false)
   assert.equal(appSource.includes('TaliTrade Platform'), false)
 })

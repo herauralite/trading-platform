@@ -411,8 +411,8 @@ ul {
   background: #f0fdf4;
 }
 
-/* Premium authenticated shell overrides */
-.app-authenticated {
+/* Premium app shell overrides */
+.app-shell-canonical {
   --app-bg: #111926;
   --app-panel: #1a2434;
   --app-panel-2: #212d40;
@@ -427,82 +427,82 @@ ul {
   color: var(--app-text);
 }
 
-.app-authenticated #root,
-.app-authenticated,
-body:has(.app-authenticated) {
+.app-shell-canonical #root,
+.app-shell-canonical,
+body:has(.app-shell-canonical) {
   background: radial-gradient(circle at top, #172234, #0b111c 66%);
 }
 
-.app-authenticated .panel,
-.app-authenticated .card,
-.app-authenticated .meta-card,
-.app-authenticated .account-card,
-.app-authenticated .mt5-wizard-block,
-.app-authenticated .modal-panel,
-.app-authenticated .provider-card,
-.app-authenticated .discovered-item {
+.app-shell-canonical .panel,
+.app-shell-canonical .card,
+.app-shell-canonical .meta-card,
+.app-shell-canonical .account-card,
+.app-shell-canonical .mt5-wizard-block,
+.app-shell-canonical .modal-panel,
+.app-shell-canonical .provider-card,
+.app-shell-canonical .discovered-item {
   background: linear-gradient(165deg, var(--app-panel), var(--app-panel-2));
   border-color: var(--app-border);
   color: var(--app-text);
 }
 
-.app-authenticated .hint,
-.app-authenticated .meta,
-.app-authenticated .mono,
-.app-authenticated .app-shell-nav-hint {
+.app-shell-canonical .hint,
+.app-shell-canonical .meta,
+.app-shell-canonical .mono,
+.app-shell-canonical .app-shell-nav-hint {
   color: var(--app-muted);
 }
 
-.app-authenticated .app-header,
-.app-authenticated .app-shell-top,
-.app-authenticated .first-run-shell-cta {
+.app-shell-canonical .app-header,
+.app-shell-canonical .app-shell-top,
+.app-shell-canonical .first-run-shell-cta {
   box-shadow: 0 16px 36px rgba(2, 6, 23, 0.3);
 }
 
-.app-authenticated .app-nav-link,
-.app-authenticated .secondary-button,
-.app-authenticated input,
-.app-authenticated select,
-.app-authenticated textarea {
+.app-shell-canonical .app-nav-link,
+.app-shell-canonical .secondary-button,
+.app-shell-canonical input,
+.app-shell-canonical select,
+.app-shell-canonical textarea {
   border-color: rgba(148, 163, 184, 0.35);
   background: #0f172a;
   color: var(--app-text);
 }
 
-.app-authenticated .app-nav-link.active {
+.app-shell-canonical .app-nav-link.active {
   background: linear-gradient(140deg, var(--app-primary), var(--app-primary-strong));
   border-color: transparent;
   color: #f8fafc;
 }
 
-.app-authenticated .add-account-nav-link,
-.app-authenticated .primary-cta {
+.app-shell-canonical .add-account-nav-link,
+.app-shell-canonical .primary-cta {
   background: linear-gradient(140deg, var(--app-accent), #7c3aed);
   border-color: transparent;
   color: #f8fafc;
 }
 
-.app-authenticated button {
+.app-shell-canonical button {
   background: linear-gradient(140deg, var(--app-primary), var(--app-primary-strong));
   border-color: transparent;
 }
 
-.app-authenticated .status-connected,
-.app-authenticated .success-text {
+.app-shell-canonical .status-connected,
+.app-shell-canonical .success-text {
   color: #bbf7d0;
   background: rgba(34, 197, 94, 0.18);
 }
 
-.app-authenticated .status-error,
-.app-authenticated .error-text {
+.app-shell-canonical .status-error,
+.app-shell-canonical .error-text {
   color: #fecaca;
   background: rgba(248, 113, 113, 0.16);
 }
 
-.app-authenticated .status-disconnected,
-.app-authenticated .status-degraded,
-.app-authenticated .pill,
-.app-authenticated .badge {
+.app-shell-canonical .status-disconnected,
+.app-shell-canonical .status-degraded,
+.app-shell-canonical .pill,
+.app-shell-canonical .badge {
   background: rgba(15, 23, 42, 0.65);
   color: #cbd5e1;
 }
