@@ -35,7 +35,7 @@ test('api base resolver only returns blank when same-origin proxy is explicitly 
   assert.equal(resolver.resolveApiBase(), '')
 })
 
-test('homepage and app auth/demo flows use shared TaliApiBase backend strategy', async () => {
+test('homepage keeps shared TaliApiBase backend strategy while app legacy HTML files are shim redirects', async () => {
   const indexHtml = await readFile(new URL('../index.html', import.meta.url), 'utf8')
   const appHtml = await readFile(new URL('../app.html', import.meta.url), 'utf8')
   const publicAppHtml = await readFile(new URL('../public/app.html', import.meta.url), 'utf8')
@@ -43,11 +43,11 @@ test('homepage and app auth/demo flows use shared TaliApiBase backend strategy',
   assert.equal(indexHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
   assert.equal(indexHtml.includes("window.TaliApiBase.buildApiUrl('/demo/leaderboard')"), true)
 
-  assert.equal(appHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
-  assert.equal(appHtml.includes('return window.TaliApiBase.resolveApiBase();'), true)
+  assert.equal(appHtml.includes('redirectToCanonicalAppShell'), true)
+  assert.equal(appHtml.includes("var target = '/app' + window.location.search + window.location.hash;"), true)
 
-  assert.equal(publicAppHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
-  assert.equal(publicAppHtml.includes('return window.TaliApiBase.resolveApiBase();'), true)
+  assert.equal(publicAppHtml.includes('redirectToCanonicalAppShell'), true)
+  assert.equal(publicAppHtml.includes("var target = '/app' + window.location.search + window.location.hash;"), true)
 })
 
 test('shared resolver builds auth + leaderboard URLs against the same corrected backend origin', async () => {
