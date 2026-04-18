@@ -403,6 +403,50 @@ function AddAccountFlowModal({
               </>
             ) : null}
 
+            {selectedProvider.connectorType === 'alpaca_api' ? (
+              <>
+                <p className="hint">Connect Alpaca in read-only mode. We validate your API key/secret against Alpaca before marking this account connected.</p>
+                <div className="row">
+                  <input
+                    placeholder="Account label"
+                    value={draft.display_label}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
+                    required
+                  />
+                  <select
+                    value={draft.environment || 'paper'}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
+                  >
+                    <option value="paper">Paper</option>
+                    <option value="live">Live</option>
+                  </select>
+                  <input
+                    placeholder="Optional account alias"
+                    value={draft.account_alias || ''}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
+                  />
+                </div>
+                <div className="row">
+                  <input
+                    placeholder="Alpaca API key"
+                    value={draft.alpaca_api_key || ''}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, alpaca_api_key: event.target.value }))}
+                    autoComplete="off"
+                    required
+                  />
+                  <input
+                    type="password"
+                    placeholder="Alpaca API secret"
+                    value={draft.alpaca_api_secret || ''}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, alpaca_api_secret: event.target.value }))}
+                    autoComplete="new-password"
+                    required
+                  />
+                </div>
+                <p className="hint">No orders are placed. We only verify credentials and sync account identity/status.</p>
+              </>
+            ) : null}
+
             {selectedProvider.connectorType === 'csv_import' ? (
               <p className="hint">This sends you to the CSV import tools in Connections where you can paste/import rows.</p>
             ) : null}

@@ -9,7 +9,8 @@ from typing import Any
 from sqlalchemy import text
 
 from app.core.database import engine
-from app.services.connector_ingest import upsert_connector_lifecycle, upsert_trading_account
+from app.services.alpaca_provider import validate_alpaca_credentials
+from app.services.connector_ingest import upsert_connector_config, upsert_connector_lifecycle, upsert_trading_account
 from app.services.tradingview_events import normalize_tradingview_event
 
 TRADINGVIEW_CONNECTOR = "tradingview_webhook"
@@ -248,3 +249,164 @@ async def create_public_api_beta_connection(
         metadata={"provider_state": "awaiting_secure_auth", "onboarding_state": "metadata_saved", "environment": env},
     )
     return dict(row)
+
+
+async def upsert_public_api_connection(
+    *,
+    user_id: str,
+    connector_type: str,
+    trading_account_id: int,
+    display_label: str,
+    environment: str,
+    account_alias: str | None,
+    provider_state: str,
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    payload_metadata = metadata or {}
+    async with engine.begin() as conn:
+        existing = (await conn.execute(text("""
+            SELECT id
+            FROM public_api_beta_connections
+            WHERE user_id = :user_id
+              AND connector_type = :connector_type
+              AND trading_account_id = :trading_account_id
+            ORDER BY updated_at DESC
+            LIMIT 1
+        """), {
+            "user_id": user_id,
+            "connector_type": connector_type,
+            "trading_account_id": trading_account_id,
+        })).mappings().first()
+        if existing:
+            row = (await conn.execute(text("""
+                UPDATE public_api_beta_connections
+                SET display_label = :display_label,
+                    environment = :environment,
+                    account_alias = :account_alias,
+                    beta_state = :beta_state,
+                    metadata = metadata || CAST(:metadata AS jsonb),
+                    updated_at = :updated_at
+                WHERE id = :id
+                RETURNING *
+            """), {
+                "id": existing["id"],
+                "display_label": display_label,
+                "environment": environment,
+                "account_alias": account_alias,
+                "beta_state": provider_state,
+                "metadata": json.dumps(payload_metadata),
+                "updated_at": now,
+            })).mappings().first()
+        else:
+            row = (await conn.execute(text("""
+                INSERT INTO public_api_beta_connections (
+                    user_id, connector_type, trading_account_id, display_label,
+                    environment, account_alias, beta_state, metadata, created_at, updated_at
+                ) VALUES (
+                    :user_id, :connector_type, :trading_account_id, :display_label,
+                    :environment, :account_alias, :beta_state, CAST(:metadata AS jsonb), :created_at, :created_at
+                )
+                RETURNING *
+            """), {
+                "user_id": user_id,
+                "connector_type": connector_type,
+                "trading_account_id": trading_account_id,
+                "display_label": display_label,
+                "environment": environment,
+                "account_alias": account_alias,
+                "beta_state": provider_state,
+                "metadata": json.dumps(payload_metadata),
+                "created_at": now,
+            })).mappings().first()
+    return dict(row)
+
+
+async def connect_alpaca_api(
+    *,
+    user_id: str,
+    display_label: str,
+    api_key: str,
+    api_secret: str,
+    environment: str | None = None,
+    account_alias: str | None = None,
+) -> dict[str, Any]:
+    validated_at = datetime.now(timezone.utc)
+    summary = await validate_alpaca_credentials(
+        api_key=api_key,
+        api_secret=api_secret,
+        environment=environment,
+    )
+    env = str(summary["environment"])
+    provider_state = "paper_connected" if env == "paper" else "live_connected"
+    account = await upsert_trading_account({
+        "user_id": user_id,
+        "connector_type": "alpaca_api",
+        "broker_name": "alpaca",
+        "external_account_id": summary["account_id"],
+        "display_label": display_label,
+        "metadata": {
+            "provider_state": provider_state,
+            "account_verified": True,
+            "environment": env,
+            "account_status": summary.get("account_status"),
+            "last_validated_at": validated_at.isoformat(),
+            "account_alias": (account_alias or "").strip() or None,
+            "currency": summary.get("currency"),
+        },
+    })
+    await upsert_connector_config(
+        user_id,
+        "alpaca_api",
+        non_secret_config={"environment": env},
+        secret_config={"api_key": api_key, "api_secret": api_secret},
+        status="configured",
+        validation_error=None,
+    )
+    connection = await upsert_public_api_connection(
+        user_id=user_id,
+        connector_type="alpaca_api",
+        trading_account_id=account["id"],
+        display_label=display_label,
+        environment=env,
+        account_alias=account_alias,
+        provider_state=provider_state,
+        metadata={
+            "account_verified": True,
+            "alpaca_account_id": summary["account_id"],
+            "last_validated_at": validated_at.isoformat(),
+            "account_status": summary.get("account_status"),
+        },
+    )
+    lifecycle = await upsert_connector_lifecycle(
+        user_id=user_id,
+        connector_type="alpaca_api",
+        status=provider_state,
+        is_connected=True,
+        last_sync_at=validated_at,
+        last_activity_at=validated_at,
+        metadata={
+            "provider_state": provider_state,
+            "account_verified": True,
+            "environment": env,
+            "last_validated_at": validated_at.isoformat(),
+        },
+    )
+    return {
+        "provider": "alpaca_api",
+        "provider_state": provider_state,
+        "account_verified": True,
+        "environment": env,
+        "validated_at": validated_at,
+        "account_summary": {
+            "account_id": summary["account_id"],
+            "account_number": summary.get("account_number"),
+            "status": summary.get("account_status"),
+            "currency": summary.get("currency"),
+            "equity": summary.get("equity"),
+            "buying_power": summary.get("buying_power"),
+        },
+        "trading_account": account,
+        "connection": connection,
+        "lifecycle": lifecycle,
+    }

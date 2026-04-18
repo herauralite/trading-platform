@@ -11,12 +11,13 @@ import uuid
 from sqlalchemy import text
 
 from app.core.database import engine
+from app.services.secrets_crypto import decrypt_secret_value, encrypt_secret_value
 
 SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
 DEFAULT_CONNECTOR_STATUS = "connected"
 ALLOWED_CONNECTOR_STATUSES = {"connected", "degraded", "disconnected", "sync_error"}
-ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying", "awaiting_alerts", "active", "bridge_required", "waiting_for_registration", "ready_for_account_attach", "beta_pending", "metadata_saved", "awaiting_secure_auth", "waiting_for_secure_auth_support"})
+ALLOWED_CONNECTOR_STATUSES.update({"sync_queued", "sync_running", "sync_retrying", "awaiting_alerts", "active", "bridge_required", "waiting_for_registration", "ready_for_account_attach", "beta_pending", "metadata_saved", "awaiting_secure_auth", "waiting_for_secure_auth_support", "configured", "validation_failed", "account_verified", "paper_connected", "live_connected"})
 SYNC_RUN_FINAL_STATUSES = {"succeeded", "failed"}
 SYNC_RUN_RETRY_DELAYS_SECONDS = [2, 5]
 SYNC_RUN_LEASE_SECONDS = 300
@@ -1104,8 +1105,34 @@ async def get_connector_config(
         return None
     data = dict(row)
     if include_secret:
+        data["secret_config"] = _decode_secret_config(data.get("secret_config") or {})
         return data
     return _sanitize_connector_config(data)
+
+
+def _encode_secret_config(secret_config: dict[str, Any]) -> dict[str, Any]:
+    encoded: dict[str, Any] = {}
+    for key, value in (secret_config or {}).items():
+        raw = str(value or "").strip()
+        if not raw:
+            continue
+        encoded[key] = {"encoding": "fernet_v1", "value": encrypt_secret_value(raw)}
+    return encoded
+
+
+def _decode_secret_config(secret_config: dict[str, Any]) -> dict[str, Any]:
+    decoded: dict[str, Any] = {}
+    for key, value in (secret_config or {}).items():
+        if isinstance(value, dict) and value.get("encoding") == "fernet_v1":
+            token = str(value.get("value") or "").strip()
+            if not token:
+                continue
+            decoded[key] = decrypt_secret_value(token)
+            continue
+        if isinstance(value, str):
+            # Legacy plaintext fallback for backwards compatibility; caller should rotate.
+            decoded[key] = value
+    return decoded
 
 
 async def upsert_connector_config(
@@ -1122,6 +1149,7 @@ async def upsert_connector_config(
         raise ValueError("user_id is required for connector config")
     normalized_connector = _normalize_connector(connector_type)
     now = datetime.now(timezone.utc)
+    encoded_secret = _encode_secret_config(secret_config or {})
     async with engine.begin() as conn:
         row = (await conn.execute(text("""
             INSERT INTO connector_configs (
@@ -1162,10 +1190,10 @@ async def upsert_connector_config(
             "connector_type": normalized_connector,
             "status": (status or "incomplete"),
             "non_secret_config": json.dumps(non_secret_config or {}),
-            "secret_config": json.dumps(secret_config or {}),
+            "secret_config": json.dumps(encoded_secret),
             "validation_error": validation_error,
             "configured_at": now if non_secret_config or secret_config else None,
-            "rotated_at": now if secret_config else None,
+            "rotated_at": now if encoded_secret else None,
         })).mappings().first()
     return dict(row)
 
