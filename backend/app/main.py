@@ -1624,7 +1624,14 @@ async def accounts_workspaces(
 ):
     resolved_uid = str(session_user_id).strip()
     workspaces = await list_account_workspaces(resolved_uid)
-    return {"workspaces": workspaces, "count": len(workspaces)}
+    return {
+        "workspaces": workspaces,
+        "count": len(workspaces),
+        "status_semantics": {
+            "connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+            "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+        },
+    }
 
 
 @app.get("/accounts/workspaces/{account_key}")
@@ -1636,7 +1643,13 @@ async def account_workspace_detail(
     workspace = await get_account_workspace(resolved_uid, account_key)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Account workspace not found for user")
-    return {"workspace": workspace}
+    return {
+        "workspace": workspace,
+        "status_semantics": {
+            "connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+            "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee",
+        },
+    }
 
 
 class ConnectorActionRequest(BaseModel):

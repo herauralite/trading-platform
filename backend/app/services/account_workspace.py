@@ -62,6 +62,11 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
     account_key = row.get("account_key") or compute_account_key(connector_type, user_id, external_account_id)
     display_label = row.get("display_label") or external_account_id
 
+    connector_connection_status = _normalize_connection_status(row.get("lifecycle_status"), row.get("lifecycle_is_connected"))
+    connector_sync_state = _normalize_sync_state(row.get("latest_sync_status"))
+
+    # NOTE: lifecycle/sync joins are currently connector-scoped (user_id + connector_type),
+    # so these status fields are connector rollups and not per-account guarantees.
     return {
         "account_key": account_key,
         "trading_account_id": row.get("trading_account_id"),
@@ -71,8 +76,11 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
         "broker_name": row.get("broker_name"),
         "broker_family": _normalize_broker_family(row.get("broker_name"), connector_type),
         "connector_type": connector_type,
-        "connection_status": _normalize_connection_status(row.get("lifecycle_status"), row.get("lifecycle_is_connected")),
-        "sync_state": _normalize_sync_state(row.get("latest_sync_status")),
+        "connection_status": connector_connection_status,
+        "sync_state": connector_sync_state,
+        "connector_connection_status": connector_connection_status,
+        "connector_sync_state": connector_sync_state,
+        "status_scope": "connector_rollup",
         "account_type": row.get("account_type"),
         "account_size": row.get("account_size"),
         "last_activity_at": row.get("last_activity_at"),
