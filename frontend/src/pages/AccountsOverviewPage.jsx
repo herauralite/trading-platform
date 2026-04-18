@@ -40,10 +40,17 @@ function AccountsOverviewPage({
         <div className="empty-state account-onboarding-empty-state">
           <h3>Connect your first trading account</h3>
           <p className="empty-state-copy">
-            Start here to turn on your live account workspace. You can connect using MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal.
+            Start here to activate your account workspace. Supported setup paths:
           </p>
+          <ul className="onboarding-path-list">
+            <li><strong>MT5</strong> for bridge-based MetaTrader 5 account onboarding.</li>
+            <li><strong>FundingPips Extension</strong> to connect through the browser extension flow.</li>
+            <li><strong>TradingView Webhook</strong> for signal-driven account automation.</li>
+            <li><strong>CSV Import</strong> to import historical trades.</li>
+            <li><strong>Manual Journal</strong> to add accounts and trades manually.</li>
+          </ul>
           <button type="button" className="primary-cta" onClick={onAddAccount}>Add your first account</button>
-          <p className="hint">Need connector setup details later? Use <strong>Connections</strong> for operational configuration.</p>
+          <p className="hint">Need operational setup and connector controls later? Use <strong>Connections</strong>.</p>
         </div>
       </section>
     )
