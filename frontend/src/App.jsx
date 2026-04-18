@@ -103,34 +103,27 @@ function App() {
 
   const accountWorkspaces = useMemo(
     () => allAccounts.map((account) => ({
-      accountKey: `${account.connector_type}:${account.external_account_id || account.id}`,
-      accountId: account.id,
-      externalAccountId: account.external_account_id,
-      displayLabel: account.display_label || account.external_account_id || `Account ${account.id}`,
-      connectorType: account.connector_type,
-      sourceLabel: sourceLabel(account.connector_type),
-      brokerName: account.broker_name || null,
+      account_key: `${account.connector_type}:${account.external_account_id || account.id}`,
+      trading_account_id: account.id,
+      external_account_id: account.external_account_id,
+      display_label: account.display_label || account.external_account_id || `Account ${account.id}`,
+      connector_type: account.connector_type,
+      source_label: sourceLabel(account.connector_type),
+      broker_name: account.broker_name || null,
+      connection_status: 'connected',
+      sync_state: 'idle',
+      account_type: account.account_type || null,
+      last_activity_at: account.last_activity_at || null,
+      last_sync_at: account.last_sync_at || null,
+      is_primary: Boolean(account.is_primary),
     })),
     [allAccounts],
   )
 
-  const unifiedAccountWorkspaces = useMemo(
-    () => (workspaceApiAccounts.length > 0
-      ? workspaceApiAccounts.map((account) => ({
-        accountKey: account.account_key,
-        accountId: account.trading_account_id,
-        externalAccountId: account.external_account_id,
-        displayLabel: account.display_label || account.external_account_id || account.account_key,
-        connectorType: account.connector_type,
-        sourceLabel: account.source_label,
-        brokerName: account.broker_name,
-      }))
-      : accountWorkspaces),
-    [workspaceApiAccounts, accountWorkspaces],
-  )
+  const unifiedAccountWorkspaces = useMemo(() => (workspaceApiAccounts.length > 0 ? workspaceApiAccounts : accountWorkspaces), [workspaceApiAccounts, accountWorkspaces])
 
   const selectedAccount = useMemo(
-    () => unifiedAccountWorkspaces.find((account) => account.accountKey === selectedAccountKey) || null,
+    () => unifiedAccountWorkspaces.find((account) => account.account_key === selectedAccountKey) || null,
     [unifiedAccountWorkspaces, selectedAccountKey],
   )
 
@@ -202,10 +195,12 @@ function App() {
 
   useEffect(() => {
     if (selectedAccountKey) {
-      const exists = unifiedAccountWorkspaces.some((account) => account.accountKey === selectedAccountKey)
+      const exists = unifiedAccountWorkspaces.some((account) => account.account_key === selectedAccountKey)
       if (exists) return
     }
-    setSelectedAccountKey(unifiedAccountWorkspaces[0]?.accountKey || '')
+    const primary = unifiedAccountWorkspaces.find((account) => account.is_primary)
+    const firstConnected = unifiedAccountWorkspaces.find((account) => account.connection_status === 'connected')
+    setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || unifiedAccountWorkspaces[0]?.account_key || '')
   }, [unifiedAccountWorkspaces, selectedAccountKey])
 
   useEffect(() => {
