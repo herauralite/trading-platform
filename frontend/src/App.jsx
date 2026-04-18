@@ -13,6 +13,8 @@ import {
   parseOidcCallbackPayload,
   parseStoredUser,
   persistOidcCorrelation,
+  normalizeTelegramAuthUser,
+  resolveTelegramAuthUser,
   SESSION_STORAGE_KEY,
   USER_STORAGE_KEY,
 } from './sessionAuth'
@@ -39,42 +41,7 @@ const normalizeHost = (value) => {
   return raw.replace(/^[a-z][a-z0-9+.-]*:\/\//, '').split('/')[0].split('?')[0].split('#')[0].split(':')[0].replace(/\.+$/, '')
 }
 
-const normalizeSessionUser = (user) => {
-  if (!user || typeof user !== 'object') return null
-  const telegramUserId = String(user.telegram_user_id || user.telegramUserId || '').trim()
-  if (!telegramUserId) return null
-  return {
-    ...user,
-    telegram_user_id: telegramUserId,
-    telegramUserId,
-    telegram_username: user.telegram_username || user.username || '',
-    username: user.username || user.telegram_username || '',
-    first_name: user.first_name || user.firstName || '',
-    firstName: user.firstName || user.first_name || '',
-    last_name: user.last_name || user.lastName || '',
-    lastName: user.lastName || user.last_name || '',
-    photo_url: user.photo_url || user.photoUrl || '',
-    photoUrl: user.photoUrl || user.photo_url || '',
-  }
-}
-
-const coerceWidgetUserToSessionShape = (user) => {
-  if (!user || typeof user !== 'object') return null
-  const telegramUserId = String(user.id || user.telegram_user_id || user.telegramUserId || '').trim()
-  if (!telegramUserId) return null
-  return {
-    telegram_user_id: telegramUserId,
-    telegramUserId,
-    telegram_username: user.username || user.telegram_username || '',
-    username: user.username || user.telegram_username || '',
-    first_name: user.first_name || user.firstName || '',
-    firstName: user.firstName || user.first_name || '',
-    last_name: user.last_name || user.lastName || '',
-    lastName: user.lastName || user.last_name || '',
-    photo_url: user.photo_url || user.photoUrl || '',
-    photoUrl: user.photoUrl || user.photo_url || '',
-  }
-}
+const normalizeSessionUser = (user) => normalizeTelegramAuthUser(user)
 
 function App() {
   const navigate = useNavigate()
@@ -395,9 +362,16 @@ function App() {
   async function signInWithTelegramWidget(authData) {
     try {
       const res = await axios.post(buildApiUrl('/auth/telegram'), authData)
-      const user = normalizeSessionUser(res.data?.user) || normalizeSessionUser(coerceWidgetUserToSessionShape(authData))
       const token = res.data?.access_token || ''
-      if (!token || !user?.telegram_user_id) throw new Error('Telegram auth returned no session token')
+      const user = await resolveTelegramAuthUser({
+        accessToken: token,
+        responseUser: res.data?.user,
+        widgetUser: authData,
+        fetchMeUser: async () => {
+          const meRes = await axios.get(buildApiUrl('/auth/me'), { headers: buildAuthHeaders(token) })
+          return meRes.data?.user || null
+        },
+      })
       commitSession(token, user)
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
       await loadConnectorData({ token, silent: true })
