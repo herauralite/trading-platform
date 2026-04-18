@@ -28,6 +28,7 @@ CONNECTION_STATUS_MAP = {
     "ready_for_account_attach": "ready_for_account_attach",
     "beta_pending": "beta_pending",
     "metadata_saved": "metadata_saved",
+    "awaiting_secure_auth": "awaiting_secure_auth",
     "waiting_for_secure_auth_support": "waiting_for_secure_auth_support",
 }
 
