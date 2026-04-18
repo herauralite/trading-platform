@@ -25,6 +25,13 @@ function renderMt5DiscoverySummary(pairing) {
   return pairing.message || 'Discovery status is available.'
 }
 
+function mt5ProviderState(pairing) {
+  if (!pairing) return 'bridge_required'
+  if (pairing.bridge_status === 'bridge_registered') return 'ready_for_account_attach'
+  if (pairing.bridge_status === 'waiting_for_bridge_registration') return 'waiting_for_registration'
+  return 'bridge_required'
+}
+
 function AddAccountFlowModal({
   isOpen,
   providers,
@@ -47,6 +54,7 @@ function AddAccountFlowModal({
   const [mt5PairingError, setMt5PairingError] = useState('')
   const [mt5IsChecking, setMt5IsChecking] = useState(false)
   const [mt5IsCreatingToken, setMt5IsCreatingToken] = useState(false)
+  const [copiedField, setCopiedField] = useState('')
 
   const selectedProvider = providers.find((provider) => provider.connectorType === selectedProviderType) || null
   const isMt5 = selectedProvider?.connectorType === 'mt5_bridge'
@@ -60,6 +68,7 @@ function AddAccountFlowModal({
     setMt5PairingError('')
     setMt5IsChecking(false)
     setMt5IsCreatingToken(false)
+    setCopiedField('')
   }, [isOpen, selectedProviderType])
 
   const canGoToMt5Confirm = useMemo(() => {
@@ -79,6 +88,7 @@ function AddAccountFlowModal({
     try {
       const payload = await onCheckMt5Pairing(draft)
       setMt5Pairing(payload)
+      setDraft((prev) => ({ ...prev, provider_state: mt5ProviderState(payload) }))
       setMt5RegistrationStatus(payload?.trusted_registration || null)
       setMt5Step(4)
     } catch (checkError) {
@@ -103,6 +113,7 @@ function AddAccountFlowModal({
       setMt5RegistrationStatus(payload?.registration || null)
       const pairing = await onCheckMt5Pairing(draft)
       setMt5Pairing(pairing)
+      setDraft((prev) => ({ ...prev, provider_state: mt5ProviderState(pairing) }))
       setMt5Step(4)
     } catch (createError) {
       setMt5PairingError(createError?.message || 'Could not create MT5 pairing token.')
@@ -117,6 +128,7 @@ function AddAccountFlowModal({
       const payload = await onLoadMt5RegistrationStatus()
       setMt5RegistrationStatus(payload?.registration || null)
       setMt5Pairing(payload?.pairing || null)
+      setDraft((prev) => ({ ...prev, provider_state: mt5ProviderState(payload?.pairing || null) }))
       setMt5Step(4)
     } catch (loadError) {
       setMt5PairingError(loadError?.message || 'Could not refresh MT5 bridge registration state.')
@@ -125,6 +137,17 @@ function AddAccountFlowModal({
 
   async function submitCurrentProvider() {
     await onSubmit(selectedProvider)
+  }
+
+  async function copyValue(value, key) {
+    if (!value) return
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedField(key)
+      window.setTimeout(() => setCopiedField(''), 1500)
+    } catch {
+      setCopiedField('')
+    }
   }
 
   return (
@@ -317,6 +340,67 @@ function AddAccountFlowModal({
               </>
             ) : null}
 
+            {selectedProvider.connectorType === 'tradingview_webhook' ? (
+              <>
+                <p className="hint">Create a TradingView webhook connection. Status stays <strong>Awaiting TradingView alerts</strong> until real alerts arrive.</p>
+                <div className="row">
+                  <input
+                    placeholder="Connection label"
+                    value={draft.display_label}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
+                    required
+                  />
+                  <input
+                    placeholder="Optional account alias"
+                    value={draft.account_alias || ''}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
+                  />
+                </div>
+                {draft.tradingview_webhook_url ? (
+                  <div className="meta-grid">
+                    <div className="meta-card">
+                      <span className="hint">Webhook URL</span>
+                      <strong className="mono">{draft.tradingview_webhook_url}</strong>
+                      <button type="button" className="secondary-button" onClick={() => void copyValue(draft.tradingview_webhook_url, 'webhook')}>Copy URL</button>
+                    </div>
+                    <div className="meta-card">
+                      <span className="hint">Secret hint</span>
+                      <strong className="mono">{draft.tradingview_secret_hint || '—'}</strong>
+                      <button type="button" className="secondary-button" onClick={() => void copyValue(draft.tradingview_secret_hint, 'secret')}>Copy hint</button>
+                    </div>
+                  </div>
+                ) : null}
+                {copiedField ? <p className="hint success-text">Copied.</p> : null}
+              </>
+            ) : null}
+
+            {['alpaca_api', 'oanda_api', 'binance_api'].includes(selectedProvider.connectorType) ? (
+              <>
+                <p className="hint">Register this provider for beta onboarding. We only save safe metadata in this slice.</p>
+                <div className="row">
+                  <input
+                    placeholder="Display name"
+                    value={draft.display_label}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
+                    required
+                  />
+                  <select
+                    value={draft.environment || 'paper'}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
+                  >
+                    <option value="paper">Paper</option>
+                    <option value="live">Live (metadata only)</option>
+                  </select>
+                  <input
+                    placeholder="Optional account alias"
+                    value={draft.account_alias || ''}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
+                  />
+                </div>
+                <p className="hint">End state: <strong>Waiting for secure auth support</strong>. No live broker connectivity is claimed yet.</p>
+              </>
+            ) : null}
+
             {selectedProvider.connectorType === 'csv_import' ? (
               <p className="hint">This sends you to the CSV import tools in Connections where you can paste/import rows.</p>
             ) : null}
@@ -328,7 +412,9 @@ function AddAccountFlowModal({
             {error ? <p className="error-text">{error}</p> : null}
             {!isMt5 ? (
               <div className="row">
-                <button type="submit" disabled={isSubmitting}>{isSubmitting ? 'Working…' : selectedProvider.ctaLabel}</button>
+                <button type="submit" disabled={isSubmitting}>
+                  {isSubmitting ? 'Working…' : (selectedProvider.connectorType === 'tradingview_webhook' && draft.tradingview_webhook_url ? 'Finish and return to Accounts' : selectedProvider.ctaLabel)}
+                </button>
               </div>
             ) : null}
           </form>

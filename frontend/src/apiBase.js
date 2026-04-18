@@ -1,6 +1,6 @@
 const BUILD_API_BASE = import.meta?.env?.VITE_API_BASE
 
-// API base precedence must match static auth surfaces: runtime config -> build-time -> Railway fallback.
+// API base precedence must match static auth surfaces: runtime config -> build-time -> production fallback.
 // Returning blank is only valid when same-origin proxy is intentionally configured in window.__TALI_CONFIG__.
 export function resolveApiBase() {
   return window.TaliApiBase.resolveApiBase({ buildEnvApiBase: BUILD_API_BASE })

@@ -6,7 +6,7 @@
   "permissions": ["activeTab", "scripting", "alarms", "storage"],
   "host_permissions": [
     "https://mtr-platform.fundingpips.com/*",
-    "https://trading-platform-production-0614.up.railway.app/*"
+    "https://api.talitrade.com/*"
   ],
   "externally_connectable": {
     "matches": [

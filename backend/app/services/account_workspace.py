@@ -21,6 +21,14 @@ CONNECTION_STATUS_MAP = {
     "degraded": "degraded",
     "disconnected": "disconnected",
     "sync_error": "sync_error",
+    "awaiting_alerts": "awaiting_alerts",
+    "active": "active",
+    "bridge_required": "bridge_required",
+    "waiting_for_registration": "waiting_for_registration",
+    "ready_for_account_attach": "ready_for_account_attach",
+    "beta_pending": "beta_pending",
+    "metadata_saved": "metadata_saved",
+    "waiting_for_secure_auth_support": "waiting_for_secure_auth_support",
 }
 
 
@@ -94,6 +102,7 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
         "last_activity_at": row.get("last_activity_at"),
         "last_sync_at": row.get("last_sync_at"),
         "is_primary": bool(row.get("is_primary")),
+        "provider_state": (row.get("metadata") or {}).get("provider_state"),
     }
 
 
@@ -146,6 +155,7 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                     ta.connector_type,
                     ta.account_type,
                     ta.account_size,
+                    ta.metadata,
                     GREATEST(
                         COALESCE(ls.last_snapshot_at, 'epoch'::timestamptz),
                         COALESCE(lt.last_trade_at, 'epoch'::timestamptz),
@@ -171,6 +181,7 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                     'fundingpips_extension'::TEXT AS connector_type,
                     pa.account_type AS account_type,
                     pa.account_size AS account_size,
+                    '{}'::jsonb AS metadata,
                     pa.created_at AS last_activity_at,
                     NULL::TIMESTAMPTZ AS last_sync_at,
                     FALSE AS is_primary
