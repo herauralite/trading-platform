@@ -6,7 +6,13 @@ function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
 }
 
-function AccountsOverviewPage({ accountWorkspaces, selectedAccount, onSelectAccount }) {
+function AccountsOverviewPage({
+  accountWorkspaces,
+  selectedAccount,
+  onSelectAccount,
+  onAddAccount,
+  recentlyAddedAccountLabel,
+}) {
   const summary = useMemo(() => {
     const total = accountWorkspaces.length
     const connected = countBy(accountWorkspaces, (account) => account.connection_status === 'connected')
@@ -25,12 +31,15 @@ function AccountsOverviewPage({ accountWorkspaces, selectedAccount, onSelectAcco
   if (accountWorkspaces.length === 0) {
     return (
       <section className="panel">
-        <h2>Accounts</h2>
+        <div className="row">
+          <h2>Accounts</h2>
+          <button type="button" onClick={onAddAccount}>Add Account</button>
+        </div>
         <p className="hint">Your account workspace appears here once a connector sync creates account records.</p>
         <div className="empty-state">
           <h3>No connected accounts yet</h3>
           <p>
-            Go to <strong>Connections</strong> to connect a broker source, then return here for an account-centric overview.
+            Click <strong>Add Account</strong> to connect a broker source. Connections remains available for advanced connector operations.
           </p>
         </div>
       </section>
@@ -39,11 +48,18 @@ function AccountsOverviewPage({ accountWorkspaces, selectedAccount, onSelectAcco
 
   return (
     <section className="panel">
-      <h2>Accounts</h2>
+      <div className="row">
+        <h2>Accounts</h2>
+        <button type="button" onClick={onAddAccount}>Add Account</button>
+      </div>
       <p className="hint">
         This is the main workspace for all connected trading accounts. Connector health is displayed using workspace rollup semantics.
       </p>
 
+
+      {recentlyAddedAccountLabel ? (
+        <p className="hint">Focused newly added account: <strong>{recentlyAddedAccountLabel}</strong></p>
+      ) : null}
       <div className="meta-grid accounts-summary-grid">
         <div className="meta-card summary-card">
           <span className="hint">All connected accounts</span>

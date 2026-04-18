@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
+import { NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import {
   buildAuthHeaders,
@@ -22,6 +22,8 @@ import { fetchAccountWorkspaces } from './accountWorkspaceService'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
+import AddAccountFlowModal from './components/AddAccountFlowModal'
+import { buildAddAccountProviders } from './addAccountFlow'
 import './App.css'
 
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
@@ -56,6 +58,8 @@ const normalizeSessionUser = (user) => {
 }
 
 function App() {
+  const navigate = useNavigate()
+  const location = useLocation()
   const [sessionToken, setSessionToken] = useState(localStorage.getItem(SESSION_STORAGE_KEY) || '')
   const [sessionUser, setSessionUser] = useState(normalizeSessionUser(parseStoredUser(localStorage.getItem(USER_STORAGE_KEY))))
   const [telegramConfig, setTelegramConfig] = useState(null)
@@ -78,6 +82,18 @@ function App() {
   const [syncHistory, setSyncHistory] = useState({})
   const [selectedAccountKey, setSelectedAccountKey] = useState('')
   const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
+  const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
+  const [selectedProviderType, setSelectedProviderType] = useState('mt5_bridge')
+  const [addAccountDraft, setAddAccountDraft] = useState({
+    external_account_id: '',
+    display_label: '',
+    bridge_url: '',
+    mt5_server: '',
+  })
+  const [isAddAccountSubmitting, setIsAddAccountSubmitting] = useState(false)
+  const [addAccountError, setAddAccountError] = useState('')
+  const [pendingAccountFocus, setPendingAccountFocus] = useState(null)
+  const [recentlyAddedAccountLabel, setRecentlyAddedAccountLabel] = useState('')
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -166,6 +182,11 @@ function App() {
     return Array.from(map.values())
   }, [catalog, connectors])
 
+  const addAccountProviders = useMemo(() => buildAddAccountProviders(catalog, sourceLabel), [catalog])
+
+  const addFlowIntent = useMemo(() => new URLSearchParams(location.search).get('addFlow') || '', [location.search])
+
+
   useEffect(() => {
     void loadTelegramAuthConfig()
     const oidc = parseOidcCallbackPayload(window.location.hash, {
@@ -211,6 +232,19 @@ function App() {
     const firstConnected = unifiedAccountWorkspaces.find((account) => account.connection_status === 'connected')
     setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || unifiedAccountWorkspaces[0]?.account_key || '')
   }, [unifiedAccountWorkspaces, selectedAccountKey])
+
+
+  useEffect(() => {
+    if (!pendingAccountFocus) return
+    const matched = unifiedAccountWorkspaces.find((account) => (
+      account.connector_type === pendingAccountFocus.connectorType
+      && String(account.external_account_id || '') === String(pendingAccountFocus.externalAccountId)
+    ))
+    if (!matched) return
+    setSelectedAccountKey(matched.account_key)
+    setRecentlyAddedAccountLabel(matched.display_label || matched.external_account_id || matched.account_key)
+    setPendingAccountFocus(null)
+  }, [pendingAccountFocus, unifiedAccountWorkspaces])
 
   useEffect(() => {
     if (!widgetScriptLoaded || signedIn) return
@@ -316,6 +350,7 @@ function App() {
     setConnectors([])
     setCatalog([])
     setWorkspaceApiAccounts([])
+    setRecentlyAddedAccountLabel('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
   }
@@ -445,8 +480,10 @@ function App() {
       await axios.post(buildApiUrl(`/connectors/${connectorType}/${action}`), payload, { headers: authHeaders })
       setStatus(`${sourceLabel(connectorType)} ${action} action completed`)
       await loadConnectorData({ silent: true })
+      return { ok: true }
     } catch (error) {
       setStatus(`${sourceLabel(connectorType)} ${action} failed: ${error.message}`)
+      throw error
     }
   }
 
@@ -483,6 +520,67 @@ function App() {
       await loadConnectorData({ silent: true })
     } catch (error) {
       setStatus(`${sourceLabel(connectorType)} config clear failed: ${error.message}`)
+    }
+  }
+
+
+
+  function openAddAccountFlow(defaultProviderType = 'mt5_bridge') {
+    setSelectedProviderType(defaultProviderType)
+    setAddAccountError('')
+    setIsAddAccountOpen(true)
+  }
+
+  function closeAddAccountFlow() {
+    setIsAddAccountOpen(false)
+    setAddAccountError('')
+  }
+
+  async function submitAddAccount(provider) {
+    const externalAccountId = (addAccountDraft.external_account_id || '').trim()
+    const displayLabel = (addAccountDraft.display_label || '').trim()
+
+    if ((provider.connectorType === 'mt5_bridge' || provider.connectorType === 'fundingpips_extension') && !externalAccountId) {
+      setAddAccountError('Account ID is required for this connector flow.')
+      return
+    }
+
+    setIsAddAccountSubmitting(true)
+    setAddAccountError('')
+
+    try {
+      if (provider.connectorType === 'csv_import') {
+        closeAddAccountFlow()
+        navigate('/app/connections?addFlow=csv')
+        return
+      }
+
+      if (provider.connectorType === 'manual') {
+        closeAddAccountFlow()
+        navigate('/app/connections?addFlow=manual')
+        return
+      }
+
+      const payload = {
+        external_account_id: externalAccountId,
+        display_label: displayLabel || provider.title,
+        broker_name: provider.connectorType,
+        connection_metadata: provider.connectorType === 'mt5_bridge'
+          ? {
+            bridge_url: (addAccountDraft.bridge_url || '').trim(),
+            mt5_server: (addAccountDraft.mt5_server || '').trim(),
+          }
+          : {},
+      }
+
+      await connectorAction(provider.connectorType, 'connect', payload)
+      setPendingAccountFocus({ connectorType: provider.connectorType, externalAccountId })
+      closeAddAccountFlow()
+      navigate('/app/accounts')
+    } catch (error) {
+      setAddAccountError(error?.message || 'Could not complete this add account flow.')
+    } finally {
+      setIsAddAccountSubmitting(false)
     }
   }
 
@@ -586,6 +684,8 @@ function App() {
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
+                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                 />
               )}
             />
@@ -619,11 +719,25 @@ function App() {
                   createManualAccount={createManualAccount}
                   createManualTrade={createManualTrade}
                   importCsvTrades={importCsvTrades}
+                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  addFlowIntent={addFlowIntent}
                 />
               )}
             />
             <Route path="*" element={<Navigate to="/app/accounts" replace />} />
           </Routes>
+          <AddAccountFlowModal
+            isOpen={isAddAccountOpen}
+            providers={addAccountProviders}
+            selectedProviderType={selectedProviderType}
+            setSelectedProviderType={setSelectedProviderType}
+            draft={addAccountDraft}
+            setDraft={setAddAccountDraft}
+            onClose={closeAddAccountFlow}
+            onSubmit={submitAddAccount}
+            isSubmitting={isAddAccountSubmitting}
+            error={addAccountError}
+          />
         </>
       )}
     </div>
