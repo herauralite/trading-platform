@@ -53,7 +53,11 @@ from app.services.account_workspace import (
 )
 from app.services.mt5_bridge import (
     check_mt5_pairing_state,
+    create_mt5_pairing_token,
+    get_user_bridge_registration_state,
     get_mt5_bridge_account_state,
+    heartbeat_mt5_trusted_bridge,
+    register_mt5_trusted_bridge,
     upsert_mt5_bridge_account,
 )
 from app.core.auth_session import (
@@ -1654,6 +1658,27 @@ class MT5PairingCheckRequest(BaseModel):
     pairing_token: str | None = None
 
 
+class MT5PairingTokenCreateRequest(BaseModel):
+    external_account_id: str | None = None
+    mt5_server: str | None = None
+    bridge_url: str | None = None
+    display_name: str | None = None
+
+
+class MT5BridgeRegisterRequest(BaseModel):
+    pairing_token: str
+    machine_label: str | None = None
+    display_name: str | None = None
+    bridge_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MT5BridgeHeartbeatRequest(BaseModel):
+    bridge_id: str
+    bridge_secret: str
+    status: str | None = "online"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 @app.get("/connectors/{connector_type}")
 async def connector_status_detail(
     connector_type: str,
@@ -1831,8 +1856,9 @@ async def mt5_pairing_check(
     payload: MT5PairingCheckRequest,
     session_user_id: str = Depends(get_required_telegram_user_id),
 ):
-    _ = str(session_user_id).strip()
+    resolved_uid = str(session_user_id).strip()
     pairing_state = await check_mt5_pairing_state(
+        user_id=resolved_uid,
         external_account_id=payload.external_account_id,
         bridge_url=payload.bridge_url,
         mt5_server=payload.mt5_server,
@@ -1840,6 +1866,70 @@ async def mt5_pairing_check(
         pairing_token=payload.pairing_token,
     )
     return {"ok": True, "pairing": pairing_state}
+
+
+@app.post("/connectors/mt5_bridge/pairing/token")
+async def mt5_pairing_token_create(
+    payload: MT5PairingTokenCreateRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    token_payload = await create_mt5_pairing_token(
+        user_id=resolved_uid,
+        external_account_id=payload.external_account_id,
+        mt5_server=payload.mt5_server,
+        bridge_url=payload.bridge_url,
+        display_name=payload.display_name,
+        metadata={"source": "user_pairing_request"},
+    )
+    registration_state = await get_user_bridge_registration_state(resolved_uid)
+    return {"ok": True, "pairing": token_payload, "registration": registration_state}
+
+
+@app.get("/connectors/mt5_bridge/registration/status")
+async def mt5_bridge_registration_status(
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    registration_state = await get_user_bridge_registration_state(resolved_uid)
+    pairing_state = await check_mt5_pairing_state(user_id=resolved_uid)
+    return {"ok": True, "registration": registration_state, "pairing": pairing_state}
+
+
+@app.post("/connectors/mt5_bridge/bridges/register")
+async def mt5_bridge_register(
+    payload: MT5BridgeRegisterRequest,
+    request: Request,
+):
+    try:
+        registered = await register_mt5_trusted_bridge(
+            pairing_token=payload.pairing_token,
+            machine_label=payload.machine_label,
+            display_name=payload.display_name,
+            bridge_metadata=payload.bridge_metadata,
+            remote_ip=request.client.host if request.client else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "bridge": registered}
+
+
+@app.post("/connectors/mt5_bridge/bridges/heartbeat")
+async def mt5_bridge_heartbeat(
+    payload: MT5BridgeHeartbeatRequest,
+    request: Request,
+):
+    try:
+        heartbeat = await heartbeat_mt5_trusted_bridge(
+            bridge_id=payload.bridge_id,
+            bridge_secret=payload.bridge_secret,
+            status=payload.status,
+            metadata=payload.metadata,
+            remote_ip=request.client.host if request.client else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "bridge": heartbeat}
 
 
 @app.post("/connectors/{connector_type}/sync")

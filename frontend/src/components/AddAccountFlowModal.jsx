@@ -18,11 +18,10 @@ function mt5StateTone(pairing) {
 }
 
 function renderMt5DiscoverySummary(pairing) {
-  if (!pairing) return 'Run a bridge/discovery check to continue.'
-  if (pairing.bridge_status === 'bridge_required') return 'Bridge URL required before discovery can run.'
-  if (pairing.bridge_status === 'bridge_registration_pending') return 'Bridge URL is captured, but worker registration is still pending.'
-  if (pairing.bridge_status === 'waiting_for_bridge_worker') return 'Bridge registration details exist. Waiting for trusted bridge worker linkage.'
-  if (pairing.discovery_status === 'account_id_provided') return 'Account ID is provided and can be saved for later bridge worker pairing.'
+  if (!pairing) return 'Create a pairing token to begin trusted MT5 bridge registration.'
+  if (pairing.pairing_state === 'no_registered_bridge') return 'No trusted bridge is registered yet. Start by creating a pairing token.'
+  if (pairing.pairing_state === 'pairing_token_created' || pairing.pairing_state === 'waiting_for_bridge_registration') return 'Pairing token created. Waiting for the MT5 bridge worker to register with that token.'
+  if (pairing.pairing_state === 'bridge_registered') return 'Trusted bridge is registered. This account is ready for future MT5 discovery integration.'
   return pairing.message || 'Discovery status is available.'
 }
 
@@ -36,13 +35,18 @@ function AddAccountFlowModal({
   onClose,
   onSubmit,
   onCheckMt5Pairing,
+  onCreateMt5PairingToken,
+  onLoadMt5RegistrationStatus,
   isSubmitting,
   error,
 }) {
   const [mt5Step, setMt5Step] = useState(1)
   const [mt5Pairing, setMt5Pairing] = useState(null)
+  const [mt5TokenInfo, setMt5TokenInfo] = useState(null)
+  const [mt5RegistrationStatus, setMt5RegistrationStatus] = useState(null)
   const [mt5PairingError, setMt5PairingError] = useState('')
   const [mt5IsChecking, setMt5IsChecking] = useState(false)
+  const [mt5IsCreatingToken, setMt5IsCreatingToken] = useState(false)
 
   const selectedProvider = providers.find((provider) => provider.connectorType === selectedProviderType) || null
   const isMt5 = selectedProvider?.connectorType === 'mt5_bridge'
@@ -51,8 +55,11 @@ function AddAccountFlowModal({
     if (!isOpen) return
     setMt5Step(1)
     setMt5Pairing(null)
+    setMt5TokenInfo(null)
+    setMt5RegistrationStatus(null)
     setMt5PairingError('')
     setMt5IsChecking(false)
+    setMt5IsCreatingToken(false)
   }, [isOpen, selectedProviderType])
 
   const canGoToMt5Confirm = useMemo(() => {
@@ -72,6 +79,7 @@ function AddAccountFlowModal({
     try {
       const payload = await onCheckMt5Pairing(draft)
       setMt5Pairing(payload)
+      setMt5RegistrationStatus(payload?.trusted_registration || null)
       setMt5Step(4)
     } catch (checkError) {
       setMt5Pairing(null)
@@ -79,6 +87,39 @@ function AddAccountFlowModal({
       setMt5Step(4)
     } finally {
       setMt5IsChecking(false)
+    }
+  }
+
+  async function createPairingToken() {
+    if (!canAttemptMt5Check(draft)) {
+      setMt5PairingError('Account ID is required before creating a pairing token.')
+      return
+    }
+    setMt5PairingError('')
+    setMt5IsCreatingToken(true)
+    try {
+      const payload = await onCreateMt5PairingToken(draft)
+      setMt5TokenInfo(payload?.pairing || null)
+      setMt5RegistrationStatus(payload?.registration || null)
+      const pairing = await onCheckMt5Pairing(draft)
+      setMt5Pairing(pairing)
+      setMt5Step(4)
+    } catch (createError) {
+      setMt5PairingError(createError?.message || 'Could not create MT5 pairing token.')
+    } finally {
+      setMt5IsCreatingToken(false)
+    }
+  }
+
+  async function refreshRegistrationStatus() {
+    setMt5PairingError('')
+    try {
+      const payload = await onLoadMt5RegistrationStatus()
+      setMt5RegistrationStatus(payload?.registration || null)
+      setMt5Pairing(payload?.pairing || null)
+      setMt5Step(4)
+    } catch (loadError) {
+      setMt5PairingError(loadError?.message || 'Could not refresh MT5 bridge registration state.')
     }
   }
 
@@ -136,9 +177,9 @@ function AddAccountFlowModal({
                   <div className="mt5-wizard-block">
                     <p className="hint">MT5 pairing links this app account to your MT5 bridge worker. Live bridge execution remains intentionally gated until bridge workers are active.</p>
                     <ul>
-                      <li>Enter account + bridge connection hints.</li>
-                      <li>Run bridge/discovery check.</li>
-                      <li>Confirm add account with truthful bridge state.</li>
+                      <li>Enter account + MT5 server details.</li>
+                      <li>Create a pairing token from backend.</li>
+                      <li>Wait for trusted bridge worker registration, then confirm add account.</li>
                     </ul>
                     <div className="row">
                       <button type="button" onClick={() => setMt5Step(2)}>Start MT5 pairing</button>
@@ -169,7 +210,7 @@ function AddAccountFlowModal({
                         onChange={(event) => setDraft((prev) => ({ ...prev, mt5_server: event.target.value }))}
                       />
                       <input
-                        placeholder="Bridge URL"
+                        placeholder="Bridge URL (optional metadata only)"
                         value={draft.bridge_url}
                         onChange={(event) => setDraft((prev) => ({ ...prev, bridge_url: event.target.value }))}
                       />
@@ -183,11 +224,11 @@ function AddAccountFlowModal({
 
                 {mt5Step === 3 ? (
                   <div className="mt5-wizard-block">
-                    <p className="hint">Validate pairing readiness and store bridge/account details without live network probing.</p>
+                    <p className="hint">Create a backend pairing token and keep this window open while your MT5 bridge worker registers itself.</p>
                     <div className="row">
                       <button type="button" className="secondary-button" onClick={() => setMt5Step(2)}>Back</button>
-                      <button type="button" onClick={() => void runMt5PairingCheck()} disabled={mt5IsChecking || !canAttemptMt5Check(draft)}>
-                        {mt5IsChecking ? 'Checking pairing state…' : 'Check pairing state'}
+                      <button type="button" onClick={() => void createPairingToken()} disabled={mt5IsCreatingToken || !canAttemptMt5Check(draft)}>
+                        {mt5IsCreatingToken ? 'Creating token…' : 'Create pairing token'}
                       </button>
                     </div>
                   </div>
@@ -199,6 +240,7 @@ function AddAccountFlowModal({
                     {mt5Pairing ? (
                       <div className="meta-grid">
                         <div className="meta-card"><span className="hint">Bridge state</span><strong>{mt5Pairing.bridge_status}</strong></div>
+                        <div className="meta-card"><span className="hint">Pairing state</span><strong>{mt5Pairing.pairing_state || 'unknown'}</strong></div>
                         <div className="meta-card"><span className="hint">Discovery state</span><strong>{mt5Pairing.discovery_status}</strong></div>
                         <div className="meta-card"><span className="hint">Implementation mode</span><strong>{mt5Pairing.implementation_mode || 'unknown'}</strong></div>
                         <div className="meta-card"><span className="hint">Add allowed</span><strong>{mt5Pairing.can_add_account ? 'yes' : 'no'}</strong></div>
@@ -212,12 +254,25 @@ function AddAccountFlowModal({
                         <div className="meta-card"><span className="hint">Pairing token linked</span><strong>{mt5Pairing.registration.pairing_token_provided ? 'yes' : 'no'}</strong></div>
                       </div>
                     ) : null}
+                    {mt5TokenInfo ? (
+                      <div className="meta-grid">
+                        <div className="meta-card"><span className="hint">Pairing token</span><strong className="mono">{mt5TokenInfo.pairing_token || '—'}</strong></div>
+                        <div className="meta-card"><span className="hint">Token expires</span><strong>{mt5TokenInfo.expires_at || '—'}</strong></div>
+                      </div>
+                    ) : null}
+                    {mt5RegistrationStatus?.bridges?.length ? (
+                      <div className="meta-grid">
+                        <div className="meta-card"><span className="hint">Registered bridges</span><strong>{mt5RegistrationStatus.bridges.length}</strong></div>
+                        <div className="meta-card"><span className="hint">Latest bridge</span><strong>{mt5RegistrationStatus.bridges[0]?.display_name || mt5RegistrationStatus.bridges[0]?.bridge_id || '—'}</strong></div>
+                      </div>
+                    ) : null}
                     {mt5PairingError ? <p className="error-text">{mt5PairingError}</p> : null}
                     <div className="row">
                       <button type="button" className="secondary-button" onClick={() => setMt5Step(2)}>Edit info</button>
                       <button type="button" className="secondary-button" onClick={() => void runMt5PairingCheck()} disabled={mt5IsChecking}>
-                        {mt5IsChecking ? 'Retrying…' : 'Retry discovery'}
+                        {mt5IsChecking ? 'Refreshing…' : 'Refresh pairing state'}
                       </button>
+                      <button type="button" className="secondary-button" onClick={() => void refreshRegistrationStatus()}>Load bridge status</button>
                       <button type="button" onClick={() => setMt5Step(5)} disabled={!canGoToMt5Confirm}>Continue</button>
                     </div>
                   </div>
@@ -225,7 +280,7 @@ function AddAccountFlowModal({
 
                 {mt5Step === 5 ? (
                   <div className="mt5-wizard-block">
-                    <p className="hint">Confirm add MT5 account. If bridge is not live yet, this account is added in bridge-required/pending mode.</p>
+                    <p className="hint">Confirm add MT5 account. If registration is still pending, the account remains in waiting mode until trusted bridge worker heartbeat is seen.</p>
                     <div className="meta-grid">
                       <div className="meta-card"><span className="hint">Account ID</span><strong>{draft.external_account_id || '—'}</strong></div>
                       <div className="meta-card"><span className="hint">Display label</span><strong>{draft.display_label || selectedProvider.title}</strong></div>
