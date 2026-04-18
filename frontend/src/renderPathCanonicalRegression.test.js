@@ -27,6 +27,9 @@ test('/app route family resolves through canonical React shell entrypoint', asyn
   assert.equal(appSource.includes('path="/app/connections"'), true)
   assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
   assert.equal(appSource.includes("className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes('<Routes>'), true)
+  assert.equal(appSource.includes('Sign in with Telegram'), true)
+  assert.equal(appSource.includes('TaliTrade Premium Workspace'), false)
   assert.equal(appSource.includes('TaliTrade Platform'), false)
   assert.deepEqual(redirects, [
     { source: '/accounts', destination: '/app/accounts', permanent: false },

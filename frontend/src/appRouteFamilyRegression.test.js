@@ -48,8 +48,13 @@ test('canonical route ownership keeps homepage at / and app shell on /app family
 
   assert.equal(appSource.includes('TaliTrade Platform'), false)
   assert.equal(appSource.includes('Primary login path: Telegram authenticated session.'), false)
-  assert.equal(appSource.includes('Preparing secure Telegram sign-in…'), true)
+  assert.equal(appSource.includes('Preparing secure Telegram sign-in…'), false)
+  assert.equal(appSource.includes('TaliTrade Premium Workspace'), false)
+  assert.equal(appSource.includes('Secure Telegram Sign-In'), false)
   assert.equal(appSource.includes("className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}"), true)
+  assert.equal(appSource.includes('{!signedIn ? ('), true)
+  assert.equal(appSource.includes('<Routes>'), true)
+  assert.equal(appSource.includes('signedIn && hasZeroConnectedAccounts'), true)
 
   assert.equal(appLandingSource.includes('Workspace Dashboard'), true)
   assert.equal(accountsSource.includes('<h2>Accounts</h2>'), true)
