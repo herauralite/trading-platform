@@ -32,6 +32,8 @@ test('react app keeps /app gate behavior and deep-link routes stable', async () 
   assert.equal(appSource.includes('<AppLandingPage'), true)
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
+  assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
+  assert.equal(appSource.includes('Add Account'), true)
   assert.equal(appSource.includes('<Route path="*" element={<Navigate to="/app/accounts" replace />} />'), true)
 })
 
@@ -63,7 +65,7 @@ test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/co
   const rewrites = Array.isArray(config.rewrites) ? config.rewrites : []
 
   assert.deepEqual(rewrites, [
-    { source: '/app', destination: '/app.html' },
-    { source: '/app/:path*', destination: '/app.html' },
+    { source: '/app', destination: '/index.html' },
+    { source: '/app/:path*', destination: '/index.html' },
   ])
 })
