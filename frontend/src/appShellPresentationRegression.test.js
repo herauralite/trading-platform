@@ -17,7 +17,7 @@ test('/app shell keeps canonical route tree mounted while using an in-shell Tele
   assert.equal(appSource.includes('Secure Telegram Sign-In'), false)
   assert.equal(appSource.includes('Preparing secure Telegram sign-in…'), false)
 
-  assert.equal(landingSource.includes('Workspace Dashboard'), true)
+  assert.equal(landingSource.includes('Account workspace overview'), true)
   assert.equal(accountsSource.includes('<h2>Accounts</h2>'), true)
-  assert.equal(connectionsSource.includes('<h2>Connections</h2>'), true)
+  assert.equal(connectionsSource.includes('Connector operations and sync controls'), true)
 })

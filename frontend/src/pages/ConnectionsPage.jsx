@@ -31,83 +31,64 @@ function ConnectionsPage({
   importCsvTrades,
   onAddAccount,
   addFlowIntent,
+  isWorkspaceLoading,
 }) {
   return (
     <>
-      <section className="panel">
-        <div className="row">
-          <h2>Connections</h2>
-          <button type="button" onClick={onAddAccount}>Add Account</button>
+      <section className="panel page-panel">
+        <div className="panel-header row">
+          <div>
+            <p className="kicker">Connections</p>
+            <h2>Connector operations and sync controls</h2>
+          </div>
+          <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
         </div>
         <p className="hint">
-          <strong>Connections</strong> is for operational integration setup and connector controls. For adding and managing trading accounts, start in <strong>Accounts</strong>.
+          Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management.
         </p>
-        <p>Available connectors: {catalog.map((entry) => entry.label).join(', ') || '—'}</p>
+        <p className="hint">Connector catalog: {catalog.map((entry) => entry.label).join(', ') || 'No connectors available yet.'}</p>
+
+        {isWorkspaceLoading ? (
+          <div className="skeleton-grid">
+            <div className="skeleton-card" />
+            <div className="skeleton-card" />
+          </div>
+        ) : null}
+
         {managedConnectors.map((connector) => (
-          <div key={connector.connector_type} className="card">
+          <div key={connector.connector_type} className="card connector-card">
             <div className="row">
               <strong>{sourceLabel(connector.connector_type)}</strong>
               <span className={`badge ${statusTone(connector.status)}`}>{connector.status}</span>
               {connector.integration_status ? <span className="pill">{connector.integration_status}</span> : null}
+              {connector.beta ? <span className="pill">beta</span> : null}
             </div>
             {connector.notes ? <p className="hint">{connector.notes}</p> : null}
             {connector.onboarding_copy ? <p className="hint">{connector.onboarding_copy}</p> : null}
             <div className="meta">
               State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
             </div>
-            {connector.provider_state ? (
-              <div className="meta">
-                Provider state: <strong>{connector.provider_state}</strong>
-              </div>
-            ) : null}
-            {connector.connector_type === 'tradingview_webhook' ? (
-              <div className="meta">
-                {connector.status === 'active'
-                  ? `Webhook active · Last alert received ${formatDate(connector.last_activity_at)}`
-                  : 'Awaiting first TradingView alert'}
-              </div>
-            ) : null}
             <div className="meta">
-              Sync state: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
+              Sync: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
             </div>
             <div className="meta">
               Config: {connectorConfigStateLabel(connector)} {connector.configured_secret_fields?.length ? `· secret fields: ${connector.configured_secret_fields.join(', ')}` : ''}
             </div>
             {connector.config_validation_error ? <p className="error-text">Config issue: {connector.config_validation_error}</p> : null}
             {connector.last_error ? <p className="error-text">Last error: {connector.last_error} ({formatDate(connector.last_error_at)})</p> : null}
-            <ul>
+
+            <ul className="connector-account-list">
               {connector.accounts.map((account) => (
                 <li key={`${connector.connector_type}-${account.id}`}>
                   <span>{account.display_label || account.external_account_id}</span>
-                  <span className="pill">{sourceLabel(connector.connector_type)}</span>
-                  <span className="pill">{account.broker_name || 'Unknown broker'}</span>
-                  {connector.connector_type === 'tradingview_webhook' ? (
-                    <span className="pill">
-                      {account.activation_state === 'active' ? 'Webhook active' : 'Awaiting first alert'}
-                    </span>
-                  ) : null}
+                  <span className="pill">{account.broker_name || 'Broker N/A'}</span>
+                  {account.last_sync_at ? <span className="hint">Last sync {formatDate(account.last_sync_at)}</span> : null}
                 </li>
               ))}
             </ul>
-            {connector.connector_type === 'tradingview_webhook' && (connector.recent_events || []).length > 0 ? (
-              <details>
-                <summary>Recent TradingView alerts ({connector.recent_events.length})</summary>
-                <ul>
-                  {connector.recent_events.map((event, index) => (
-                    <li key={`tv-event-${index}`}>
-                      <strong>{event.symbol || event.event_type || 'alert'}</strong>
-                      {event.timeframe ? ` · ${event.timeframe}` : ''}
-                      {event.title ? ` · ${event.title}` : ''}
-                      {event.message ? ` · ${event.message}` : ''}
-                      {' · '}
-                      {formatDate(event.received_at)}
-                    </li>
-                  ))}
-                </ul>
-              </details>
-            ) : null}
+
             <div className="row">
-              {!connector.supports_live_sync ? <span className="hint">Sync not supported</span> : null}
+              {!connector.supports_live_sync ? <span className="hint">Sync unavailable for this connector.</span> : null}
               <button
                 disabled={!signedIn || !connector.supports_live_sync}
                 onClick={() => connectorAction(connector.connector_type, 'sync')}
@@ -132,13 +113,15 @@ function ConnectionsPage({
               </button>
               <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'disconnect')}>Disconnect</button>
             </div>
+
             {isGuidedAddAccountConnector(connector.connector_type) ? (
-              <p className="hint">Use <strong>Add Account</strong> for this provider’s guided onboarding flow.</p>
+              <p className="hint">Use <strong>Add Account</strong> for this provider’s guided flow.</p>
             ) : null}
+
             {connector.account_count === 0 && !isGuidedAddAccountConnector(connector.connector_type) ? (
               <div className="row">
                 <input
-                  placeholder="Account id for connect"
+                  placeholder="Account ID"
                   value={connectorDrafts[connector.connector_type]?.external_account_id || ''}
                   onChange={(event) => setConnectorDrafts((prev) => ({
                     ...prev,
@@ -162,7 +145,7 @@ function ConnectionsPage({
                 {connector.connector_type === 'mt5_bridge' ? (
                   <>
                     <input
-                      placeholder="Bridge URL (optional for placeholder connect)"
+                      placeholder="Bridge URL"
                       value={connectorDrafts[connector.connector_type]?.bridge_url || ''}
                       onChange={(event) => setConnectorDrafts((prev) => ({
                         ...prev,
@@ -173,7 +156,7 @@ function ConnectionsPage({
                       }))}
                     />
                     <input
-                      placeholder="MT5 server name"
+                      placeholder="MT5 server"
                       value={connectorDrafts[connector.connector_type]?.mt5_server || ''}
                       onChange={(event) => setConnectorDrafts((prev) => ({
                         ...prev,
@@ -187,33 +170,26 @@ function ConnectionsPage({
                 ) : null}
               </div>
             ) : null}
+
             <details>
               <summary>Recent sync runs ({(syncHistory[connector.connector_type] || []).length})</summary>
               <ul>
-                {(syncHistory[connector.connector_type] || []).map((run) => (
-                  <li key={`run-${run.id}`}>
-                    {(() => {
-                      const diagnostics = formatSyncRunDiagnostics(run)
-                      return (
-                        <>
-                          #{run.id} · {run.status} · retries {run.retry_count}/{run.max_retries} · created {formatDate(run.created_at)}
-                          {diagnostics.resultCategory ? ` · category: ${diagnostics.resultCategory}` : ''}
-                          {diagnostics.summary ? ` · ${diagnostics.summary}` : ''}
-                          {run.error_detail ? ` · error: ${run.error_detail}` : ''}
-                          {diagnostics.errorCode ? ` · code: ${diagnostics.errorCode}` : ''}
-                          {diagnostics.errorCategory ? ` · failure: ${diagnostics.errorCategory}` : ''}
-                          {diagnostics.isTransient === true ? ' · transient' : ''}
-                          {diagnostics.isTransient === false ? ' · structural' : ''}
-                        </>
-                      )
-                    })()}
-                  </li>
-                ))}
+                {(syncHistory[connector.connector_type] || []).map((run) => {
+                  const diagnostics = formatSyncRunDiagnostics(run)
+                  return (
+                    <li key={`run-${run.id}`}>
+                      #{run.id} · {run.status} · retries {run.retry_count}/{run.max_retries} · created {formatDate(run.created_at)}
+                      {diagnostics.summary ? ` · ${diagnostics.summary}` : ''}
+                      {run.error_detail ? ` · error: ${run.error_detail}` : ''}
+                    </li>
+                  )
+                })}
               </ul>
             </details>
+
             {connector.supports_live_sync ? (
               <details>
-                <summary>Connector credentials/config</summary>
+                <summary>Connector credentials and config</summary>
                 <div className="row">
                   <input
                     placeholder="Healthcheck URL"
@@ -227,7 +203,7 @@ function ConnectionsPage({
                     }))}
                   />
                   <input
-                    placeholder="External account id"
+                    placeholder="External account ID"
                     value={(configDrafts[connector.connector_type] || {}).external_account_id || ''}
                     onChange={(event) => setConfigDrafts((prev) => ({
                       ...prev,
@@ -266,23 +242,23 @@ function ConnectionsPage({
                   <button disabled={!signedIn} onClick={() => saveConnectorConfig(connector.connector_type)}>Save config</button>
                   <button disabled={!signedIn} onClick={() => clearConnectorConfig(connector.connector_type)}>Clear config</button>
                 </div>
-                <p className="hint">Secrets are write-only in API responses. Saved tokens are never returned to the client.</p>
+                <p className="hint">Secrets are write-only and never returned by API responses.</p>
               </details>
             ) : null}
           </div>
         ))}
       </section>
 
-      <section className={`panel${addFlowIntent === "manual" ? " dev-panel" : ""}`}>
-        <h2>Manual Journal (authenticated)</h2>
-        {addFlowIntent === "manual" ? <p className="hint">Add Account routed you here for manual account setup.</p> : null}
+      <section className={`panel page-panel${addFlowIntent === 'manual' ? ' dev-panel' : ''}`}>
+        <h2>Manual Journal</h2>
+        {addFlowIntent === 'manual' ? <p className="hint">Add Account directed you here for manual setup.</p> : null}
         <div className="row">
-          <input placeholder="External account id" value={manualAccount.externalAccountId} onChange={(event) => setManualAccount({ ...manualAccount, externalAccountId: event.target.value })} />
+          <input placeholder="External account ID" value={manualAccount.externalAccountId} onChange={(event) => setManualAccount({ ...manualAccount, externalAccountId: event.target.value })} />
           <input placeholder="Display label" value={manualAccount.displayLabel} onChange={(event) => setManualAccount({ ...manualAccount, displayLabel: event.target.value })} />
           <button disabled={!signedIn} onClick={createManualAccount}>Create manual account</button>
         </div>
         <div className="row">
-          <input placeholder="Manual account id" value={manualTrade.externalAccountId} onChange={(event) => setManualTrade({ ...manualTrade, externalAccountId: event.target.value })} />
+          <input placeholder="Account ID" value={manualTrade.externalAccountId} onChange={(event) => setManualTrade({ ...manualTrade, externalAccountId: event.target.value })} />
           <input placeholder="Symbol" value={manualTrade.symbol} onChange={(event) => setManualTrade({ ...manualTrade, symbol: event.target.value })} />
           <select value={manualTrade.side} onChange={(event) => setManualTrade({ ...manualTrade, side: event.target.value })}>
             <option value="buy">buy</option>
@@ -293,12 +269,12 @@ function ConnectionsPage({
         </div>
       </section>
 
-      <section className={`panel${addFlowIntent === "csv" ? " dev-panel" : ""}`}>
-        <h2>CSV Import (authenticated)</h2>
-        {addFlowIntent === "csv" ? <p className="hint">Add Account routed you here for CSV import setup.</p> : null}
+      <section className={`panel page-panel${addFlowIntent === 'csv' ? ' dev-panel' : ''}`}>
+        <h2>CSV Import</h2>
+        {addFlowIntent === 'csv' ? <p className="hint">Add Account directed you here for CSV import.</p> : null}
         <div className="row">
-          <input value={csvAccount} onChange={(event) => setCsvAccount(event.target.value)} placeholder="CSV account id" />
-          <button disabled={!signedIn} onClick={importCsvTrades}>Import JSON rows as CSV trades</button>
+          <input value={csvAccount} onChange={(event) => setCsvAccount(event.target.value)} placeholder="CSV account ID" />
+          <button disabled={!signedIn} onClick={importCsvTrades}>Import rows</button>
         </div>
         <textarea rows={5} value={csvInput} onChange={(event) => setCsvInput(event.target.value)} />
       </section>
