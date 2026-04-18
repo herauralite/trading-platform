@@ -745,10 +745,15 @@ function App() {
       ) : (
         <>
           <section className="panel app-shell-top">
-            <nav className="app-nav">
-              <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
-              <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
-            </nav>
+            <div className="app-shell-nav-block">
+              <nav className="app-nav" aria-label="Primary app navigation">
+                <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
+                <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
+              </nav>
+              <p className="hint app-shell-nav-hint">
+                Accounts is your primary workspace. Connections remains available for connector operations and setup.
+              </p>
+            </div>
             <AccountSwitcher
               accounts={unifiedAccountWorkspaces}
               selectedAccountKey={selectedAccountKey}

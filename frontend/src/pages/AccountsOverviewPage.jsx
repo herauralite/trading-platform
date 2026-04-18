@@ -36,12 +36,14 @@ function AccountsOverviewPage({
           <h2>Accounts</h2>
           <button type="button" onClick={onAddAccount}>Add Account</button>
         </div>
-        <p className="hint">Your account workspace appears here once a connector sync creates account records.</p>
-        <div className="empty-state">
-          <h3>No connected accounts yet</h3>
-          <p>
-            Click <strong>Add Account</strong> to connect a broker source. Connections remains available for advanced connector operations.
+        <p className="hint">Accounts is your primary onboarding space after sign-in.</p>
+        <div className="empty-state account-onboarding-empty-state">
+          <h3>Connect your first trading account</h3>
+          <p className="empty-state-copy">
+            Start here to turn on your live account workspace. You can connect using MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal.
           </p>
+          <button type="button" className="primary-cta" onClick={onAddAccount}>Add your first account</button>
+          <p className="hint">Need connector setup details later? Use <strong>Connections</strong> for operational configuration.</p>
         </div>
       </section>
     )
