@@ -50,6 +50,43 @@ export function parseOidcCallbackPayload(hash, { expectedState = null, storedNon
 }
 
 
+
+export function normalizeTelegramAuthUser(user) {
+  if (!user || typeof user !== 'object') return null
+  const telegramUserId = String(user.telegram_user_id || user.telegramUserId || user.id || '').trim()
+  if (!telegramUserId) return null
+  return {
+    ...user,
+    telegram_user_id: telegramUserId,
+    telegramUserId,
+    telegram_username: user.telegram_username || user.username || '',
+    username: user.username || user.telegram_username || '',
+    first_name: user.first_name || user.firstName || '',
+    firstName: user.firstName || user.first_name || '',
+    last_name: user.last_name || user.lastName || '',
+    lastName: user.lastName || user.last_name || '',
+    photo_url: user.photo_url || user.photoUrl || '',
+    photoUrl: user.photoUrl || user.photo_url || '',
+  }
+}
+
+export async function resolveTelegramAuthUser({ accessToken, responseUser = null, widgetUser = null, fetchMeUser = null } = {}) {
+  if (!String(accessToken || '').trim()) {
+    throw new Error('missing_session_token')
+  }
+
+  let user = normalizeTelegramAuthUser(responseUser) || normalizeTelegramAuthUser(widgetUser)
+  if (user) return user
+
+  if (typeof fetchMeUser === 'function') {
+    const meUser = await fetchMeUser()
+    user = normalizeTelegramAuthUser(meUser)
+    if (user) return user
+  }
+
+  throw new Error('missing_or_invalid_user')
+}
+
 export function buildManualAccountPayload(form) {
   return {
     connector_type: 'manual',
