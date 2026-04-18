@@ -28,8 +28,8 @@ function normalizeWorkspace(workspace) {
     broker_name: workspace?.broker_name ?? null,
     broker_family: workspace?.broker_family || connectorType || 'unknown',
     connector_type: connectorType,
-    connection_status: workspace?.connection_status || DEFAULT_CONNECTION_STATUS,
-    sync_state: workspace?.sync_state || DEFAULT_SYNC_STATE,
+    connection_status: String(workspace?.connection_status || DEFAULT_CONNECTION_STATUS).toLowerCase(),
+    sync_state: String(workspace?.sync_state || DEFAULT_SYNC_STATE).toLowerCase(),
     account_type: workspace?.account_type ?? null,
     account_size: workspace?.account_size ?? null,
     last_activity_at: workspace?.last_activity_at ?? null,
@@ -42,5 +42,11 @@ function normalizeWorkspace(workspace) {
 export async function fetchAccountWorkspaces(token) {
   const res = await axios.get(buildApiUrl('/accounts/workspaces'), { headers: buildAuthHeaders(token) })
   const workspaces = Array.isArray(res?.data?.workspaces) ? res.data.workspaces : []
-  return workspaces.map(normalizeWorkspace)
+  return workspaces
+    .map(normalizeWorkspace)
+    .sort((a, b) => {
+      if (a.is_primary && !b.is_primary) return -1
+      if (!a.is_primary && b.is_primary) return 1
+      return String(a.display_label || '').localeCompare(String(b.display_label || ''))
+    })
 }

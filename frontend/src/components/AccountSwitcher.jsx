@@ -1,3 +1,10 @@
+function accountOptionLabel(account) {
+  const name = account.display_label || account.external_account_id || account.account_key
+  const broker = account.broker_name || account.source_label || 'Unknown broker'
+  const primarySuffix = account.is_primary ? ' · Primary' : ''
+  return `${name} (${broker})${primarySuffix}`
+}
+
 function AccountSwitcher({
   accounts,
   selectedAccountKey,
@@ -16,8 +23,8 @@ function AccountSwitcher({
       >
         {!hasAccounts ? <option value="">No accounts yet</option> : null}
         {accounts.map((account) => (
-          <option key={account.accountKey} value={account.accountKey}>
-            {account.displayLabel} ({account.sourceLabel})
+          <option key={account.account_key} value={account.account_key}>
+            {accountOptionLabel(account)}
           </option>
         ))}
       </select>

@@ -70,6 +70,10 @@
   gap: 8px;
 }
 
+.account-switcher select {
+  min-width: 260px;
+}
+
 .dev-panel {
   border-color: #f59e0b;
   background: #fffbeb;
@@ -106,6 +110,10 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
   gap: 8px;
+}
+
+.accounts-summary-grid {
+  margin-bottom: 14px;
 }
 
 .meta-card {
@@ -147,6 +155,66 @@
   border-radius: 999px;
   padding: 2px 8px;
   background: #e2e8f0;
+}
+
+.primary-pill {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.empty-state {
+  background: linear-gradient(160deg, #ffffff, #eef2ff);
+  border: 1px dashed #c7d2fe;
+  border-radius: 12px;
+  padding: 18px;
+  margin-top: 14px;
+}
+
+.selected-account-panel {
+  margin-top: 8px;
+  margin-bottom: 16px;
+}
+
+.accounts-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+}
+
+.account-card {
+  border: 1px solid #dbe2ee;
+  border-radius: 12px;
+  background: linear-gradient(170deg, #ffffff, #f8fafc);
+  padding: 12px;
+}
+
+.account-card.selected {
+  border-color: #0f172a;
+  box-shadow: 0 0 0 1px #0f172a;
+}
+
+.account-card-top {
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.account-card h3 {
+  margin: 0;
+}
+
+.account-card-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 12px 0;
+}
+
+.account-card-grid .meta-card {
+  min-height: 76px;
 }
 .error-text {
   font-size: 13px;
