@@ -33,6 +33,18 @@ function ConnectionsPage({
   addFlowIntent,
   isWorkspaceLoading,
 }) {
+  const connectionMethods = [
+    { key: 'mt5_bridge', title: 'MT5 bridge', description: 'Pair bridge worker + account metadata, then run sync.' },
+    { key: 'fundingpips_extension', title: 'FundingPips extension', description: 'Attach extension-backed account and hydrate workspace records.' },
+    { key: 'tradingview_webhook', title: 'TradingView webhook', description: 'Create webhook endpoint and ingest alert-driven trade events.' },
+    { key: 'csv_import', title: 'CSV import', description: 'Upload historical trade rows for backfilled account context.' },
+    { key: 'manual', title: 'Manual journal', description: 'Create manual accounts and add trades directly from app UI.' },
+  ]
+
+  function findConnector(methodKey) {
+    return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
+  }
+
   return (
     <>
       <section className="panel page-panel">
@@ -46,6 +58,29 @@ function ConnectionsPage({
         <p className="hint">
           Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management.
         </p>
+        {!signedIn ? (
+          <div className="card">
+            <strong>Signed out: setup actions are disabled.</strong>
+            <p className="hint">Sign in with Telegram in the shell gate to connect providers, run sync jobs, import CSV rows, or write manual journal entries.</p>
+          </div>
+        ) : null}
+        <div className="meta-grid">
+          {connectionMethods.map((method) => {
+            const connector = findConnector(method.key)
+            return (
+              <div className="meta-card summary-card" key={method.key}>
+                <div className="row">
+                  <strong>{method.title}</strong>
+                  <span className={`badge ${statusTone(connector?.status || 'disconnected')}`}>
+                    {connector?.status || 'disconnected'}
+                  </span>
+                </div>
+                <p className="hint">{method.description}</p>
+                <p className="hint">Next action: {signedIn ? (connector?.is_connected ? 'Review sync/config below.' : 'Use Add Account to start setup.') : 'Sign in to begin setup.'}</p>
+              </div>
+            )
+          })}
+        </div>
         <p className="hint">Connector catalog: {catalog.map((entry) => entry.label).join(', ') || 'No connectors available yet.'}</p>
 
         {isWorkspaceLoading ? (

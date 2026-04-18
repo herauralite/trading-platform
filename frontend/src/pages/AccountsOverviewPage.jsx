@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import AccountStatusBadge from '../components/AccountStatusBadge'
 import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
-import { deriveAccountConnectionState } from '../accountConnectionState'
+import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from '../accountConnectionState'
 
 function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
@@ -19,9 +19,12 @@ function AccountsOverviewPage({
 }) {
   const summary = useMemo(() => {
     const connectionState = deriveAccountConnectionState(accountWorkspaces)
+    const usableAccounts = accountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account))
+    const pendingAccounts = accountWorkspaces.filter((account) => !isCurrentlyConnectedAccount(account) && isPendingOnlyAccount(account))
+    const staleAccounts = accountWorkspaces.filter((account) => !isCurrentlyConnectedAccount(account) && !isPendingOnlyAccount(account))
     const attention = countBy(accountWorkspaces, (account) => account.connection_status === 'sync_error' || account.sync_state === 'failed')
     const syncing = countBy(accountWorkspaces, (account) => ['queued', 'running', 'retrying'].includes(account.sync_state))
-    const primary = accountWorkspaces.find((account) => account.is_primary) || null
+    const primary = usableAccounts.find((account) => account.is_primary) || null
     return {
       total: connectionState.totalCount,
       connected: connectionState.connectedUsableCount,
@@ -31,6 +34,9 @@ function AccountsOverviewPage({
       syncing,
       primary,
       hasZeroConnectedAccounts: connectionState.hasZeroConnectedAccounts,
+      usableAccounts,
+      pendingAccounts,
+      staleAccounts,
     }
   }, [accountWorkspaces])
 
@@ -161,7 +167,7 @@ function AccountsOverviewPage({
       </div>
 
       <div className="accounts-grid">
-        {accountWorkspaces.map((account) => (
+        {summary.usableAccounts.map((account) => (
           <AccountWorkspaceCard
             key={account.account_key}
             account={account}
@@ -170,6 +176,37 @@ function AccountsOverviewPage({
           />
         ))}
       </div>
+      {summary.pendingAccounts.length > 0 ? (
+        <div className="card">
+          <h3>Pending setup accounts</h3>
+          <p className="hint">These accounts exist but still require connector setup or sync completion before becoming fully usable.</p>
+          <div className="accounts-grid">
+            {summary.pendingAccounts.map((account) => (
+              <AccountWorkspaceCard
+                key={account.account_key}
+                account={account}
+                isSelected={selectedAccount?.account_key === account.account_key}
+                onSelect={onSelectAccount}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {summary.staleAccounts.length > 0 ? (
+        <div className="card">
+          <h3>Historical / disconnected records</h3>
+          <p className="hint">These rows are shown for audit context and are intentionally not treated as active account presence.</p>
+          <ul className="connector-account-list">
+            {summary.staleAccounts.map((account) => (
+              <li key={`stale-${account.account_key}`}>
+                <span>{account.display_label || account.external_account_id || account.account_key}</span>
+                <span className="pill">{account.connection_status || 'disconnected'}</span>
+                <span className="hint">Last sync {formatDate(account.last_sync_at)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </section>
   )
 }

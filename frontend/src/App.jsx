@@ -21,7 +21,7 @@ import {
 import { buildConnectorConfigDraft } from './connectorConfig'
 import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
 import { fetchAccountWorkspaces } from './accountWorkspaceService'
-import { deriveAccountConnectionState, isCurrentlyConnectedAccount } from './accountConnectionState'
+import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from './accountConnectionState'
 import { deriveAppOnboardingState } from './onboardingState'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
@@ -68,6 +68,7 @@ function App() {
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false)
+  const [workspaceLoadError, setWorkspaceLoadError] = useState('')
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const [widgetStatus, setWidgetStatus] = useState('')
   const [widgetDiagnostics, setWidgetDiagnostics] = useState([])
@@ -105,6 +106,7 @@ function App() {
   const [addAccountError, setAddAccountError] = useState('')
   const [pendingAccountFocus, setPendingAccountFocus] = useState(null)
   const [recentlyAddedAccountLabel, setRecentlyAddedAccountLabel] = useState('')
+  const [authActionPrompt, setAuthActionPrompt] = useState('')
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -222,6 +224,20 @@ function App() {
     fallbackAccounts: accountWorkspaces,
   }), [signedIn, workspaceApiHydrated, workspaceApiAccounts, accountWorkspaces])
   const hasZeroConnectedAccounts = onboardingState.hasZeroUsableAccounts
+  const switcherAccounts = useMemo(
+    () => unifiedAccountWorkspaces.filter((account) => (
+      isCurrentlyConnectedAccount(account) || isPendingOnlyAccount(account)
+    )),
+    [unifiedAccountWorkspaces],
+  )
+  const shellSyncingCount = useMemo(
+    () => managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state)).length,
+    [managedConnectors],
+  )
+  const shellNeedsAttentionCount = useMemo(
+    () => managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error').length,
+    [managedConnectors],
+  )
 
 
   useEffect(() => {
@@ -265,9 +281,10 @@ function App() {
       const exists = unifiedAccountWorkspaces.some((account) => account.account_key === selectedAccountKey)
       if (exists) return
     }
-    const primary = unifiedAccountWorkspaces.find((account) => account.is_primary)
+    const primary = unifiedAccountWorkspaces.find((account) => account.is_primary && isCurrentlyConnectedAccount(account))
     const firstConnected = unifiedAccountWorkspaces.find((account) => isCurrentlyConnectedAccount(account))
-    setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || unifiedAccountWorkspaces[0]?.account_key || '')
+    const firstPending = unifiedAccountWorkspaces.find((account) => !isCurrentlyConnectedAccount(account) && ['queued', 'running', 'retrying'].includes(String(account.sync_state || '').toLowerCase()))
+    setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || firstPending?.account_key || '')
   }, [unifiedAccountWorkspaces, selectedAccountKey])
 
 
@@ -451,6 +468,7 @@ function App() {
 
   async function loadConnectorData({ token = sessionToken, silent = false } = {}) {
     setIsWorkspaceLoading(true)
+    setWorkspaceLoadError('')
     try {
       const [catalogRes, overviewRes] = await Promise.all([
         axios.get(buildApiUrl('/connectors/catalog')),
@@ -505,6 +523,7 @@ function App() {
         setStatus('Your session expired. Please sign in with Telegram again.')
         return
       }
+      setWorkspaceLoadError(`Could not hydrate workspace data: ${error?.message || 'unknown error'}`)
       setStatus(`Failed to load connectors: ${error.message}`)
     } finally {
       setIsWorkspaceLoading(false)
@@ -595,9 +614,11 @@ function App() {
 
   function openAddAccountFlow(defaultProviderType = 'mt5_bridge') {
     if (!signedIn) {
+      setAuthActionPrompt('Sign in with Telegram to open Add Account and run account actions.')
       setStatus('Sign in with Telegram to add or connect trading accounts.')
       return
     }
+    setAuthActionPrompt('')
     setSelectedProviderType(defaultProviderType)
     setAddAccountError('')
     setIsAddAccountOpen(true)
@@ -748,7 +769,7 @@ function App() {
     <div className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}>
       <header className="app-header-shell">
         <div className="app-brand-row">
-          <div className="brand-avatar">T</div>
+          <div className="brand-avatar">{signedIn ? (sessionUser?.first_name?.[0] || sessionUser?.telegram_username?.[0] || 'T') : 'T'}</div>
           <div>
             <h1>TaliTrade</h1>
             <p className="hint">{signedIn ? 'Connected workspace' : 'Waiting for Telegram sign-in'}</p>
@@ -762,6 +783,18 @@ function App() {
           {signedIn ? <button onClick={clearSession} type="button">Sign out</button> : null}
         </div>
       </header>
+      <section className="panel app-shell-health-strip">
+        <div className="row">
+          <span className={`badge ${signedIn ? 'status-connected' : 'status-disconnected'}`}>{signedIn ? 'Authenticated' : 'Signed out'}</span>
+          <span className="pill">Usable accounts: {accountConnectionState.connectedUsableCount}</span>
+          <span className="pill">Pending setup: {accountConnectionState.pendingOnlyCount}</span>
+          <span className="pill">Syncing: {shellSyncingCount}</span>
+          <span className="pill">Needs attention: {shellNeedsAttentionCount}</span>
+          {selectedAccount ? <span className="pill">Active: {selectedAccount.display_label || selectedAccount.external_account_id}</span> : null}
+        </div>
+        <p className="hint">{status}</p>
+        {workspaceLoadError ? <p className="error-text">{workspaceLoadError}</p> : null}
+      </section>
 
       <section className="panel app-shell-top">
         <div className="app-shell-nav-block">
@@ -781,12 +814,21 @@ function App() {
             + Add Account
           </button>
           <AccountSwitcher
-            accounts={unifiedAccountWorkspaces}
+            accounts={switcherAccounts}
             selectedAccountKey={selectedAccountKey}
             onSelectAccount={setSelectedAccountKey}
           />
         </div>
       </section>
+      {!signedIn && authActionPrompt ? (
+        <section className="panel app-shell-auth-prompt" aria-live="polite">
+          <div className="row">
+            <strong>Telegram sign-in required</strong>
+            <button type="button" className="secondary-button" onClick={() => setAuthActionPrompt('')}>Dismiss</button>
+          </div>
+          <p className="hint">{authActionPrompt}</p>
+        </section>
+      ) : null}
       {!signedIn ? (
         <section className="panel auth-shell-gate" aria-live="polite">
           <h2>Sign in with Telegram</h2>
@@ -855,6 +897,7 @@ function App() {
                   syncHistory={syncHistory}
                   formatDate={formatDate}
                   isWorkspaceLoading={isWorkspaceLoading}
+                  workspaceLoadError={workspaceLoadError}
                 />
               )}
             />
