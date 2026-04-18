@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import axios from 'axios'
 import {
   buildAuthHeaders,
@@ -15,9 +16,12 @@ import {
   SESSION_STORAGE_KEY,
   USER_STORAGE_KEY,
 } from './sessionAuth'
-import { formatSyncRunDiagnostics } from './syncRunDiagnostics'
-import { buildConnectorConfigDraft, connectorConfigStateLabel } from './connectorConfig'
+import { buildConnectorConfigDraft } from './connectorConfig'
 import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
+import AccountSwitcher from './components/AccountSwitcher'
+import AccountsOverviewPage from './pages/AccountsOverviewPage'
+import ConnectionsPage from './pages/ConnectionsPage'
+import './App.css'
 
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
 const CANONICAL_HOST = 'www.talitrade.com'
@@ -32,8 +36,6 @@ const normalizeHost = (value) => {
 
 const normalizeSessionUser = (user) => {
   if (!user || typeof user !== 'object') return null
-  // Keep both field shapes for compatibility across widget/OIDC/login callbacks and stored sessions.
-  // Future auth changes must preserve BOTH keys: telegramUserId and telegram_user_id.
   const telegramUserId = String(user.telegram_user_id || user.telegramUserId || '').trim()
   if (!telegramUserId) return null
   return {
@@ -72,6 +74,7 @@ function App() {
   const [connectorDrafts, setConnectorDrafts] = useState({})
   const [configDrafts, setConfigDrafts] = useState({})
   const [syncHistory, setSyncHistory] = useState({})
+  const [selectedAccountKey, setSelectedAccountKey] = useState('')
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -83,10 +86,36 @@ function App() {
   const canonicalHost = normalizeHost(telegramConfig?.canonicalLoginDomain || telegramConfig?.loginDomain || CANONICAL_HOST)
   const isCanonicalHost = Boolean(currentHost && canonicalHost && currentHost === canonicalHost)
 
+  function sourceLabel(connectorType) {
+    if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
+    if (connectorType === 'csv_import') return 'CSV Import'
+    if (connectorType === 'manual') return 'Manual Journal'
+    return connectorType
+  }
+
   const allAccounts = useMemo(
     () => connectors.flatMap((connector) => connector.accounts.map((account) => ({ ...account, connector_type: connector.connector_type }))),
-    [connectors]
+    [connectors],
   )
+
+  const accountWorkspaces = useMemo(
+    () => allAccounts.map((account) => ({
+      accountKey: `${account.connector_type}:${account.external_account_id || account.id}`,
+      accountId: account.id,
+      externalAccountId: account.external_account_id,
+      displayLabel: account.display_label || account.external_account_id || `Account ${account.id}`,
+      connectorType: account.connector_type,
+      sourceLabel: sourceLabel(account.connector_type),
+      brokerName: account.broker_name || null,
+    })),
+    [allAccounts],
+  )
+
+  const selectedAccount = useMemo(
+    () => accountWorkspaces.find((account) => account.accountKey === selectedAccountKey) || null,
+    [accountWorkspaces, selectedAccountKey],
+  )
+
   const managedConnectors = useMemo(() => {
     const map = new Map(connectors.map((connector) => [connector.connector_type, connector]))
     for (const entry of catalog) {
@@ -153,20 +182,32 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const sourceLabel = (connectorType) => {
-    if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
-    if (connectorType === 'csv_import') return 'CSV Import'
-    if (connectorType === 'manual') return 'Manual Journal'
-    return connectorType
-  }
+  useEffect(() => {
+    if (selectedAccountKey) {
+      const exists = accountWorkspaces.some((account) => account.accountKey === selectedAccountKey)
+      if (exists) return
+    }
+    setSelectedAccountKey(accountWorkspaces[0]?.accountKey || '')
+  }, [accountWorkspaces, selectedAccountKey])
+
+  useEffect(() => {
+    if (!widgetScriptLoaded || signedIn) return
+    const timer = window.setTimeout(() => {
+      const rendered = Boolean(widgetWrapRef.current?.querySelector('iframe, .telegram-login, div[id^="telegram-login"]'))
+      if (!rendered) {
+        setWidgetStatus('Telegram sign-in did not finish loading. Confirm you are on www.talitrade.com and disable browser blockers, then retry.')
+      }
+    }, 3000)
+    return () => window.clearTimeout(timer)
+  }, [widgetScriptLoaded, signedIn])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
-  const statusTone = (status) => {
-    if (status === 'connected') return 'status-connected'
-    if (status === 'sync_running' || status === 'sync_queued' || status === 'sync_retrying') return 'status-degraded'
-    if (status === 'degraded') return 'status-degraded'
-    if (status === 'sync_error') return 'status-error'
+  const statusTone = (connectorStatus) => {
+    if (connectorStatus === 'connected') return 'status-connected'
+    if (connectorStatus === 'sync_running' || connectorStatus === 'sync_queued' || connectorStatus === 'sync_retrying') return 'status-degraded'
+    if (connectorStatus === 'degraded') return 'status-degraded'
+    if (connectorStatus === 'sync_error') return 'status-error'
     return 'status-disconnected'
   }
 
@@ -194,22 +235,22 @@ function App() {
     } catch (error) {
       setTelegramConfig(null)
       setConfigLoadFailed(true)
-      const status = error?.response?.status
-      const reason = status === 404
+      const responseStatus = error?.response?.status
+      const reason = responseStatus === 404
         ? 'http_404'
-        : status === 500
+        : responseStatus === 500
           ? 'http_500'
-        : status
-          ? `http_${status}`
-          : error instanceof SyntaxError
-            ? 'invalid_json'
-            : (typeof navigator !== 'undefined' && navigator.onLine === false)
-              ? 'transport_offline'
-              : 'cors_rejected_or_transport'
+          : responseStatus
+            ? `http_${responseStatus}`
+            : error instanceof SyntaxError
+              ? 'invalid_json'
+              : (typeof navigator !== 'undefined' && navigator.onLine === false)
+                ? 'transport_offline'
+                : 'cors_rejected_or_transport'
       const diagnostics = formatTelegramConfigDiagnostics({
         resolvedApiBase: resolvedBase,
         configUrl: requestUrl,
-        configFetchStatus: status || 'request_failed',
+        configFetchStatus: responseStatus || 'request_failed',
         configFetchContentType: error?.response?.headers?.['content-type'] || 'missing',
         configFetchErrorName: error?.name || 'unknown',
         configFetchErrorMessage: String(error?.message || '').slice(0, 180) || 'n/a',
@@ -221,18 +262,6 @@ function App() {
     }
   }
 
-
-  useEffect(() => {
-    if (!widgetScriptLoaded || signedIn) return
-    const timer = window.setTimeout(() => {
-      const rendered = Boolean(widgetWrapRef.current?.querySelector('iframe, .telegram-login, div[id^="telegram-login"]'))
-      if (!rendered) {
-        setWidgetStatus('Telegram sign-in did not finish loading. Confirm you are on www.talitrade.com and disable browser blockers, then retry.')
-      }
-    }, 3000)
-    return () => window.clearTimeout(timer)
-  }, [widgetScriptLoaded, signedIn])
-
   async function bootstrapSession(token) {
     setIsBootstrapping(true)
     try {
@@ -242,17 +271,15 @@ function App() {
       commitSession(token, user)
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
       await loadConnectorData({ token, silent: true })
-    } catch (e) {
+    } catch (error) {
       clearSession()
-      setStatus(`Session expired or invalid. Please sign in again. (${e.message})`)
+      setStatus(`Session expired or invalid. Please sign in again. (${error.message})`)
     } finally {
       setIsBootstrapping(false)
     }
   }
 
   function commitSession(token, user) {
-    // Guardrail: auth success must normalize Telegram user ids into both camelCase and snake_case fields
-    // so gate checks and persisted session hydration remain compatible.
     const normalizedUser = normalizeSessionUser(user)
     if (!normalizedUser) throw new Error('Invalid user payload for session commit')
     setSessionToken(token)
@@ -279,7 +306,7 @@ function App() {
       commitSession(token, user)
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
       await loadConnectorData({ token, silent: true })
-    } catch (e) {
+    } catch {
       setStatus('Telegram sign-in failed. Please retry.')
     }
   }
@@ -294,7 +321,7 @@ function App() {
       commitSession(token, user)
       setStatus(`Signed in as @${user.telegram_username || user.telegram_user_id}`)
       await loadConnectorData({ token, silent: true })
-    } catch (e) {
+    } catch {
       setStatus('Telegram sign-in failed. Please retry.')
     } finally {
       clearOidcCorrelation(localStorage)
@@ -306,7 +333,7 @@ function App() {
     try {
       const [catalogRes, overviewRes] = await Promise.all([
         axios.get(buildApiUrl('/connectors/catalog')),
-        axios.get(buildApiUrl('/connectors/overview'), { headers: buildAuthHeaders(token) })
+        axios.get(buildApiUrl('/connectors/overview'), { headers: buildAuthHeaders(token) }),
       ])
       setCatalog(catalogRes.data.connectors || [])
       const overviewConnectors = overviewRes.data.connectors || []
@@ -314,43 +341,37 @@ function App() {
       const configEntries = await Promise.all(
         overviewConnectors.map(async (connector) => {
           try {
-            const configRes = await axios.get(
-              buildApiUrl(`/connectors/${connector.connector_type}/config`),
-              { headers: buildAuthHeaders(token) }
-            )
+            const configRes = await axios.get(buildApiUrl(`/connectors/${connector.connector_type}/config`), { headers: buildAuthHeaders(token) })
             return [connector.connector_type, buildConnectorConfigDraft(configRes.data || {})]
           } catch {
             return [connector.connector_type, buildConnectorConfigDraft()]
           }
-        })
+        }),
       )
       setConfigDrafts((prev) => ({ ...prev, ...Object.fromEntries(configEntries) }))
       if (overviewConnectors.length > 0) {
         const historyEntries = await Promise.all(
           overviewConnectors.map(async (connector) => {
             try {
-              const historyRes = await axios.get(
-                buildApiUrl(`/connectors/${connector.connector_type}/sync-runs?limit=5`),
-                { headers: buildAuthHeaders(token) }
-              )
+              const historyRes = await axios.get(buildApiUrl(`/connectors/${connector.connector_type}/sync-runs?limit=5`), { headers: buildAuthHeaders(token) })
               return [connector.connector_type, historyRes.data?.runs || []]
             } catch {
               return [connector.connector_type, []]
             }
-          })
+          }),
         )
         setSyncHistory(Object.fromEntries(historyEntries))
       } else {
         setSyncHistory({})
       }
       if (!silent) setStatus(`Loaded ${overviewRes.data.count || 0} connected source(s) for your authenticated session`)
-    } catch (e) {
-      if (e?.response?.status === 401) {
+    } catch (error) {
+      if (error?.response?.status === 401) {
         clearSession()
         setStatus('Your session expired. Please sign in with Telegram again.')
         return
       }
-      setStatus(`Failed to load connectors: ${e.message}`)
+      setStatus(`Failed to load connectors: ${error.message}`)
     }
   }
 
@@ -360,8 +381,8 @@ function App() {
       setStatus('Manual account created for authenticated user')
       setManualTrade((prev) => ({ ...prev, externalAccountId: manualAccount.externalAccountId }))
       await loadConnectorData()
-    } catch (e) {
-      setStatus(`Manual account failed: ${e.message}`)
+    } catch (error) {
+      setStatus(`Manual account failed: ${error.message}`)
     }
   }
 
@@ -370,8 +391,8 @@ function App() {
       await axios.post(buildApiUrl('/ingest/trades'), buildManualTradePayload(manualTrade), { headers: authHeaders })
       setStatus('Manual trade recorded for authenticated user')
       await loadConnectorData()
-    } catch (e) {
-      setStatus(`Manual trade failed: ${e.message}`)
+    } catch (error) {
+      setStatus(`Manual trade failed: ${error.message}`)
     }
   }
 
@@ -381,8 +402,8 @@ function App() {
       await axios.post(buildApiUrl('/ingest/csv/trades'), buildCsvImportPayload(csvAccount, rows), { headers: authHeaders })
       setStatus(`Imported ${rows.length} CSV trade row(s) into authenticated workspace`)
       await loadConnectorData()
-    } catch (e) {
-      setStatus(`CSV import failed: ${e.message}`)
+    } catch (error) {
+      setStatus(`CSV import failed: ${error.message}`)
     }
   }
 
@@ -391,8 +412,8 @@ function App() {
       await axios.post(buildApiUrl(`/connectors/${connectorType}/${action}`), payload, { headers: authHeaders })
       setStatus(`${sourceLabel(connectorType)} ${action} action completed`)
       await loadConnectorData({ silent: true })
-    } catch (e) {
-      setStatus(`${sourceLabel(connectorType)} ${action} failed: ${e.message}`)
+    } catch (error) {
+      setStatus(`${sourceLabel(connectorType)} ${action} failed: ${error.message}`)
     }
   }
 
@@ -413,8 +434,8 @@ function App() {
         [connectorType]: { ...prev[connectorType], api_token: '', hasSecret: true },
       }))
       await loadConnectorData({ silent: true })
-    } catch (e) {
-      setStatus(`${sourceLabel(connectorType)} config save failed: ${e.message}`)
+    } catch (error) {
+      setStatus(`${sourceLabel(connectorType)} config save failed: ${error.message}`)
     }
   }
 
@@ -427,11 +448,10 @@ function App() {
         [connectorType]: buildConnectorConfigDraft(),
       }))
       await loadConnectorData({ silent: true })
-    } catch (e) {
-      setStatus(`${sourceLabel(connectorType)} config clear failed: ${e.message}`)
+    } catch (error) {
+      setStatus(`${sourceLabel(connectorType)} config clear failed: ${error.message}`)
     }
   }
-
 
   const startOidcFlow = () => {
     const cfg = telegramConfig
@@ -456,261 +476,123 @@ function App() {
 
   return (
     <div className="app">
-      <h1>TaliTrade Platform Console</h1>
-      <p>Status: {status}</p>
-
-      <section className="panel">
-        <h2>Session</h2>
-        {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
+      <header className="app-header panel">
+        <div>
+          <h1>TaliTrade Platform</h1>
+          <p>Status: {status}</p>
+        </div>
         <div className="row">
           <span>Signed in:</span>
           <strong>{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'No'}</strong>
+          {signedIn ? <button onClick={() => loadConnectorData()}>Refresh</button> : null}
           {signedIn ? <button onClick={clearSession}>Sign out</button> : null}
         </div>
+      </header>
 
-        {!signedIn ? (
-          <>
-            <p>Primary login path: Telegram authenticated session.</p>
-            {telegramConfig?.oidcEnabled ? (
-              <button onClick={startOidcFlow}>Sign in with Telegram</button>
-            ) : (
-              <div ref={widgetWrapRef}>
-                {!isCanonicalHost ? (
-                  <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
-                ) : (
-                  <>
-                    {isConfigLoading ? <p className="hint">Preparing secure Telegram sign-in…</p> : null}
-                    <script
-                      async
-                      src="https://telegram.org/js/telegram-widget.js?22"
-                      data-telegram-login={telegramConfig?.botUsername || 'TaliTradeBot'}
-                      data-size="large"
-                      data-userpic="false"
-                      data-request-access="write"
-                      data-onauth="onTelegramAuth(user)"
-                      onLoad={() => setWidgetScriptLoaded(true)}
-                      onError={() => setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')}
-                    />
-                    <p className="hint">Telegram widget mode enabled.</p>
-                  </>
-                )}
-                {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
-                {configLoadFailed ? (
-                  <button onClick={() => loadTelegramAuthConfig()} type="button">
-                    Retry Telegram setup
-                  </button>
-                ) : null}
-                {authDebugEnabled && widgetDiagnostics.length ? (
-                  <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
-                ) : null}
-              </div>
-            )}
-          </>
-        ) : (
-          <button onClick={() => loadConnectorData()}>Refresh connectors</button>
-        )}
-      </section>
+      {!signedIn ? (
+        <section className="panel">
+          <h2>Session</h2>
+          {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
+          <p>Primary login path: Telegram authenticated session.</p>
+          {telegramConfig?.oidcEnabled ? (
+            <button onClick={startOidcFlow}>Sign in with Telegram</button>
+          ) : (
+            <div ref={widgetWrapRef}>
+              {!isCanonicalHost ? (
+                <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
+              ) : (
+                <>
+                  {isConfigLoading ? <p className="hint">Preparing secure Telegram sign-in…</p> : null}
+                  <script
+                    async
+                    src="https://telegram.org/js/telegram-widget.js?22"
+                    data-telegram-login={telegramConfig?.botUsername || 'TaliTradeBot'}
+                    data-size="large"
+                    data-userpic="false"
+                    data-request-access="write"
+                    data-onauth="onTelegramAuth(user)"
+                    onLoad={() => setWidgetScriptLoaded(true)}
+                    onError={() => setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')}
+                  />
+                  <p className="hint">Telegram widget mode enabled.</p>
+                </>
+              )}
+              {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
+              {configLoadFailed ? (
+                <button onClick={() => loadTelegramAuthConfig()} type="button">
+                  Retry Telegram setup
+                </button>
+              ) : null}
+              {authDebugEnabled && widgetDiagnostics.length ? (
+                <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
+              ) : null}
+            </div>
+          )}
+        </section>
+      ) : (
+        <>
+          <section className="panel app-shell-top">
+            <nav className="app-nav">
+              <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
+              <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
+            </nav>
+            <AccountSwitcher
+              accounts={accountWorkspaces}
+              selectedAccountKey={selectedAccountKey}
+              onSelectAccount={setSelectedAccountKey}
+            />
+          </section>
 
-
-      <section className="panel">
-        <h2>Connector Management</h2>
-        <p>Available connectors: {catalog.map((c) => c.label).join(', ') || '—'}</p>
-        {managedConnectors.map((connector) => (
-          <div key={connector.connector_type} className="card">
-            <div className="row">
-              <strong>{sourceLabel(connector.connector_type)}</strong>
-              <span className={`badge ${statusTone(connector.status)}`}>{connector.status}</span>
-            </div>
-            <div className="meta">
-              State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
-            </div>
-            <div className="meta">
-              Sync state: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
-            </div>
-            <div className="meta">
-              Config: {connectorConfigStateLabel(connector)} {connector.configured_secret_fields?.length ? `· secret fields: ${connector.configured_secret_fields.join(', ')}` : ''}
-            </div>
-            {connector.config_validation_error ? <p className="error-text">Config issue: {connector.config_validation_error}</p> : null}
-            {connector.last_error ? <p className="error-text">Last error: {connector.last_error} ({formatDate(connector.last_error_at)})</p> : null}
-            <ul>
-              {connector.accounts.map((account) => (
-                <li key={`${connector.connector_type}-${account.id}`}>
-                  <span>{account.display_label || account.external_account_id}</span>
-                  <span className="pill">{sourceLabel(connector.connector_type)}</span>
-                  <span className="pill">{account.broker_name || 'Unknown broker'}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="row">
-              {!connector.supports_live_sync ? <span className="hint">Sync not supported</span> : null}
-              <button
-                disabled={!signedIn || !connector.supports_live_sync}
-                onClick={() => connectorAction(connector.connector_type, 'sync')}
-              >
-                Sync
-              </button>
-              <button disabled={!signedIn || connector.account_count > 0} onClick={() => connectorAction(connector.connector_type, 'connect', {
-                external_account_id: connectorDrafts[connector.connector_type]?.external_account_id || `${connector.connector_type}-account`,
-                display_label: connectorDrafts[connector.connector_type]?.display_label || sourceLabel(connector.connector_type),
-                broker_name: connector.connector_type,
-              })}>
-                Connect
-              </button>
-              <button disabled={!signedIn} onClick={() => connectorAction(connector.connector_type, 'disconnect')}>Disconnect</button>
-            </div>
-            {connector.account_count === 0 ? (
-              <div className="row">
-                <input
-                  placeholder="Account id for connect"
-                  value={connectorDrafts[connector.connector_type]?.external_account_id || ''}
-                  onChange={(e) => setConnectorDrafts((prev) => ({
-                    ...prev,
-                    [connector.connector_type]: {
-                      ...prev[connector.connector_type],
-                      external_account_id: e.target.value,
-                    }
-                  }))}
+          <Routes>
+            <Route path="/" element={<Navigate to="/app/accounts" replace />} />
+            <Route path="/app" element={<Navigate to="/app/accounts" replace />} />
+            <Route
+              path="/app/accounts"
+              element={(
+                <AccountsOverviewPage
+                  accountWorkspaces={accountWorkspaces}
+                  selectedAccount={selectedAccount}
+                  onSelectAccount={setSelectedAccountKey}
                 />
-                <input
-                  placeholder="Display label"
-                  value={connectorDrafts[connector.connector_type]?.display_label || ''}
-                  onChange={(e) => setConnectorDrafts((prev) => ({
-                    ...prev,
-                    [connector.connector_type]: {
-                      ...prev[connector.connector_type],
-                      display_label: e.target.value,
-                    }
-                  }))}
+              )}
+            />
+            <Route
+              path="/app/connections"
+              element={(
+                <ConnectionsPage
+                  catalog={catalog}
+                  managedConnectors={managedConnectors}
+                  syncHistory={syncHistory}
+                  configDrafts={configDrafts}
+                  connectorDrafts={connectorDrafts}
+                  signedIn={signedIn}
+                  manualAccount={manualAccount}
+                  manualTrade={manualTrade}
+                  csvAccount={csvAccount}
+                  csvInput={csvInput}
+                  sourceLabel={sourceLabel}
+                  statusTone={statusTone}
+                  formatDate={formatDate}
+                  syncStateLabel={syncStateLabel}
+                  setConnectorDrafts={setConnectorDrafts}
+                  setConfigDrafts={setConfigDrafts}
+                  setManualAccount={setManualAccount}
+                  setManualTrade={setManualTrade}
+                  setCsvAccount={setCsvAccount}
+                  setCsvInput={setCsvInput}
+                  connectorAction={connectorAction}
+                  saveConnectorConfig={saveConnectorConfig}
+                  clearConnectorConfig={clearConnectorConfig}
+                  createManualAccount={createManualAccount}
+                  createManualTrade={createManualTrade}
+                  importCsvTrades={importCsvTrades}
                 />
-              </div>
-            ) : null}
-            <details>
-              <summary>Recent sync runs ({(syncHistory[connector.connector_type] || []).length})</summary>
-              <ul>
-                {(syncHistory[connector.connector_type] || []).map((run) => (
-                  <li key={`run-${run.id}`}>
-                    {(() => {
-                      const diag = formatSyncRunDiagnostics(run)
-                      return (
-                        <>
-                          #{run.id} · {run.status} · retries {run.retry_count}/{run.max_retries} · created {formatDate(run.created_at)}
-                          {diag.resultCategory ? ` · category: ${diag.resultCategory}` : ''}
-                          {diag.summary ? ` · ${diag.summary}` : ''}
-                          {run.error_detail ? ` · error: ${run.error_detail}` : ''}
-                          {diag.errorCode ? ` · code: ${diag.errorCode}` : ''}
-                          {diag.errorCategory ? ` · failure: ${diag.errorCategory}` : ''}
-                          {diag.isTransient === true ? ' · transient' : ''}
-                          {diag.isTransient === false ? ' · structural' : ''}
-                        </>
-                      )
-                    })()}
-                  </li>
-                ))}
-              </ul>
-            </details>
-            {connector.supports_live_sync ? (
-              <details>
-                <summary>Connector credentials/config</summary>
-                <div className="row">
-                  <input
-                    placeholder="Healthcheck URL"
-                    value={(configDrafts[connector.connector_type] || {}).healthcheck_url || ''}
-                    onChange={(e) => setConfigDrafts((prev) => ({
-                      ...prev,
-                      [connector.connector_type]: {
-                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
-                        healthcheck_url: e.target.value,
-                      },
-                    }))}
-                  />
-                  <input
-                    placeholder="External account id"
-                    value={(configDrafts[connector.connector_type] || {}).external_account_id || ''}
-                    onChange={(e) => setConfigDrafts((prev) => ({
-                      ...prev,
-                      [connector.connector_type]: {
-                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
-                        external_account_id: e.target.value,
-                      },
-                    }))}
-                  />
-                  <input
-                    type="number"
-                    placeholder="Timeout seconds"
-                    value={(configDrafts[connector.connector_type] || {}).timeout_seconds || 8}
-                    onChange={(e) => setConfigDrafts((prev) => ({
-                      ...prev,
-                      [connector.connector_type]: {
-                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
-                        timeout_seconds: e.target.value,
-                      },
-                    }))}
-                  />
-                </div>
-                <div className="row">
-                  <input
-                    type="password"
-                    placeholder={(configDrafts[connector.connector_type] || {}).hasSecret ? 'API token saved (enter to rotate)' : 'API token'}
-                    value={(configDrafts[connector.connector_type] || {}).api_token || ''}
-                    onChange={(e) => setConfigDrafts((prev) => ({
-                      ...prev,
-                      [connector.connector_type]: {
-                        ...(prev[connector.connector_type] || buildConnectorConfigDraft()),
-                        api_token: e.target.value,
-                      },
-                    }))}
-                  />
-                  <button disabled={!signedIn} onClick={() => saveConnectorConfig(connector.connector_type)}>Save config</button>
-                  <button disabled={!signedIn} onClick={() => clearConnectorConfig(connector.connector_type)}>Clear config</button>
-                </div>
-                <p className="hint">Secrets are write-only in API responses. Saved tokens are never returned to the client.</p>
-              </details>
-            ) : null}
-          </div>
-        ))}
-      </section>
-
-      <section className="panel">
-        <h2>Manual Journal (authenticated)</h2>
-        <div className="row">
-          <input placeholder="External account id" value={manualAccount.externalAccountId} onChange={(e) => setManualAccount({ ...manualAccount, externalAccountId: e.target.value })} />
-          <input placeholder="Display label" value={manualAccount.displayLabel} onChange={(e) => setManualAccount({ ...manualAccount, displayLabel: e.target.value })} />
-          <button disabled={!signedIn} onClick={createManualAccount}>Create manual account</button>
-        </div>
-        <div className="row">
-          <input placeholder="Manual account id" value={manualTrade.externalAccountId} onChange={(e) => setManualTrade({ ...manualTrade, externalAccountId: e.target.value })} />
-          <input placeholder="Symbol" value={manualTrade.symbol} onChange={(e) => setManualTrade({ ...manualTrade, symbol: e.target.value })} />
-          <select value={manualTrade.side} onChange={(e) => setManualTrade({ ...manualTrade, side: e.target.value })}>
-            <option value="buy">buy</option>
-            <option value="sell">sell</option>
-          </select>
-          <input type="number" placeholder="PnL" value={manualTrade.pnl} onChange={(e) => setManualTrade({ ...manualTrade, pnl: e.target.value })} />
-          <button disabled={!signedIn} onClick={createManualTrade}>Record trade</button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <h2>CSV Import (authenticated)</h2>
-        <div className="row">
-          <input value={csvAccount} onChange={(e) => setCsvAccount(e.target.value)} placeholder="CSV account id" />
-          <button disabled={!signedIn} onClick={importCsvTrades}>Import JSON rows as CSV trades</button>
-        </div>
-        <textarea rows={5} value={csvInput} onChange={(e) => setCsvInput(e.target.value)} />
-      </section>
-
-      <section className="panel">
-        <h2>All Accounts (source-aware)</h2>
-        <ul>
-          {allAccounts.map((account) => (
-            <li key={`${account.connector_type}-${account.id}`}>
-              {account.display_label || account.external_account_id}
-              {' · '}
-              <span className="pill">{sourceLabel(account.connector_type)}</span>
-              <span className="pill">{account.broker_name || 'Unknown broker'}</span>
-            </li>
-          ))}
-        </ul>
-      </section>
+              )}
+            />
+            <Route path="*" element={<Navigate to="/app/accounts" replace />} />
+          </Routes>
+        </>
+      )}
     </div>
   )
 }
