@@ -847,7 +847,9 @@ footer{
     <h3 id="homepageAuthTitle" style="margin-top:14px;font-size:25px;line-height:1.1;letter-spacing:-.04em;color:#f8fbff;">Continue to platform</h3>
     <p id="homepageAuthCopy" style="margin-top:10px;font-size:14px;line-height:1.6;color:rgba(232,240,255,0.74);">Sign in with Telegram to continue.</p>
     <div id="homepageAuthError" style="display:none;margin-top:12px;padding:11px 12px;border-radius:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);font-size:12px;line-height:1.5;color:#fca5a5;"></div>
+    <pre id="homepageAuthDiag" style="display:none;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(45,174,255,0.1);border:1px solid rgba(45,174,255,0.28);font-size:11px;line-height:1.45;color:#bae6fd;white-space:pre-wrap;text-align:left;"></pre>
     <div id="homepageAuthWidgetWrap" style="margin-top:16px;display:flex;justify-content:center;min-height:48px;align-items:center;"></div>
+    <button id="homepageAuthRetryBtn" onclick="retryHomepageAuthSetup()" style="display:none;margin-top:14px;width:100%;padding:11px 14px;border-radius:10px;border:1px solid rgba(45,174,255,0.4);background:rgba(45,174,255,0.12);color:#bae6fd;font-size:13px;font-weight:700;cursor:pointer;">Retry Telegram setup</button>
     <div style="margin-top:12px;font-size:12px;color:rgba(148,163,184,0.85);text-align:center;">Once hosting sends traffic to <b>www.talitrade.com</b>, sign-in and app entry will work consistently.</div>
   </div>
 </div>
@@ -870,6 +872,20 @@ footer{
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script>
 <script src="/tali-api-base.js"></script><script>
 const AUTH_DIAGNOSTICS = [];
+const AUTH_DEBUG_QUERY_KEY = 'debugAuth';
+const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth';
+let homepageDebugMode = false;
+let homepageConfigFailed = false;
+
+function isHomepageAuthDebugMode() {
+  try {
+    const qp = new URLSearchParams(window.location.search);
+    if (qp.get(AUTH_DEBUG_QUERY_KEY) === '1') return true;
+    return localStorage.getItem(AUTH_DEBUG_STORAGE_KEY) === '1' || localStorage.getItem(AUTH_DEBUG_QUERY_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
 
 function getBaseApiUrl() {
   // Do not bypass TaliApiBase resolution here: it enforces runtime -> build-time -> production fallback order.
@@ -890,12 +906,16 @@ function classifyAuthConfigFailure(error, status) {
 function pushHomepageAuthDiag(message) {
   if (!message) return;
   AUTH_DIAGNOSTICS.push(`[${new Date().toISOString()}] ${message}`);
-  if (AUTH_DIAGNOSTICS.length > 6) AUTH_DIAGNOSTICS.shift();
-  const err = document.getElementById('homepageAuthError');
-  if (!err) return;
-  const existing = err.textContent ? `${err.textContent}\n\n` : '';
-  err.textContent = `${existing}Diagnostics:\n${AUTH_DIAGNOSTICS.join('\n')}`;
-  err.style.whiteSpace = 'pre-line';
+  if (AUTH_DIAGNOSTICS.length > 8) AUTH_DIAGNOSTICS.shift();
+  const diagEl = document.getElementById('homepageAuthDiag');
+  if (!diagEl) return;
+  if (!homepageDebugMode) {
+    diagEl.textContent = '';
+    diagEl.style.display = 'none';
+    return;
+  }
+  diagEl.textContent = AUTH_DIAGNOSTICS.join('\n');
+  diagEl.style.display = AUTH_DIAGNOSTICS.length ? 'block' : 'none';
 }
 const DEMO_CANONICAL_HOST = 'www.talitrade.com';
 let DEMO_LOGIN_DOMAIN = DEMO_CANONICAL_HOST;
@@ -941,6 +961,7 @@ async function hydrateDemoTelegramConfig() {
     DEMO_LOGIN_DOMAIN = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || DEMO_CANONICAL_HOST) || DEMO_CANONICAL_HOST;
     pushHomepageAuthDiag(`config_loaded bot=${DEMO_BOT_USERNAME} login_domain=${DEMO_LOGIN_DOMAIN}`);
     demoTelegramConfigFailed = false;
+    homepageConfigFailed = false;
   } catch (error) {
     pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(error)}`);
     window.TaliApiBase.formatTelegramConfigDiagnostics({
@@ -952,6 +973,7 @@ async function hydrateDemoTelegramConfig() {
       configFetchErrorMessage: String(error?.message || '').slice(0, 120) || 'n/a',
     }).forEach(pushHomepageAuthDiag);
     demoTelegramConfigFailed = true;
+    homepageConfigFailed = true;
   } finally {
     // no timeout abort: allow slower cold starts during auth bootstrap
   }
@@ -1005,6 +1027,8 @@ function setHomepageAuthError(message) {
   if (!err) return;
   err.textContent = message || '';
   err.style.display = message ? 'block' : 'none';
+  const retryBtn = document.getElementById('homepageAuthRetryBtn');
+  if (retryBtn) retryBtn.style.display = message && homepageConfigFailed ? 'block' : 'none';
 }
 
 function getHomepageAuthCopy(intent) {
@@ -1014,6 +1038,7 @@ function getHomepageAuthCopy(intent) {
 }
 
 function openHomepageAuthGate(intent = 'cta', options = {}) {
+  homepageDebugMode = isHomepageAuthDebugMode();
   homepageAuthIntent = intent;
   homepageAuthPendingPnl = typeof options.pnl === 'number' ? options.pnl : window._demoPnlToSave || 0;
   const modal = document.getElementById('homepageAuthGate');
@@ -1037,6 +1062,17 @@ function closeHomepageAuthGate() {
   modal.classList.remove('open');
   document.body.style.overflow = '';
   AUTH_DIAGNOSTICS.length = 0;
+  const diagEl = document.getElementById('homepageAuthDiag');
+  if (diagEl) {
+    diagEl.textContent = '';
+    diagEl.style.display = 'none';
+  }
+}
+
+function retryHomepageAuthSetup() {
+  homepageAuthWidgetLoaded = false;
+  homepageConfigFailed = false;
+  ensureHomepageAuthWidget();
 }
 
 function requireHomepageAuth(e, intent = 'platform_entry') {
@@ -1088,7 +1124,7 @@ async function ensureHomepageAuthWidget(){
   const wrap = document.getElementById('homepageAuthWidgetWrap');
   if(!wrap) return;
   if (homepageAuthWidgetLoaded) return;
-  wrap.innerHTML = '<div style="font-size:12px;color:rgba(148,163,184,0.86);">Loading Telegram sign-in…</div>';
+  wrap.innerHTML = '<div style="font-size:12px;color:rgba(148,163,184,0.86);">Preparing secure Telegram sign-in…</div>';
   await hydrateDemoTelegramConfig();
   const currentHost = normalizeLoginHost(window.location.hostname);
   const canonicalHost = normalizeLoginHost(DEMO_CANONICAL_HOST);
@@ -1099,12 +1135,13 @@ async function ensureHomepageAuthWidget(){
     return;
   }
   if (loginDomain && loginDomain !== canonicalHost) {
-    setHomepageAuthError(`Telegram login misconfigured: login domain is ${loginDomain}, expected ${canonicalHost}.`);
+    setHomepageAuthError('Telegram sign-in domain mismatch. Please use www.talitrade.com.');
     wrap.innerHTML = '';
     return;
   }
   if (demoTelegramConfigFailed) {
-    setHomepageAuthError('Could not load Telegram login config. Please retry.');
+    homepageConfigFailed = true;
+    setHomepageAuthError('We could not load Telegram sign-in settings. Please retry.');
     wrap.innerHTML = '';
     return;
   }
@@ -1132,7 +1169,7 @@ async function ensureHomepageAuthWidget(){
     }, 3000);
   };
   s.onerror = function(){
-    setHomepageAuthError('Could not load Telegram sign-in. Please disable blockers and retry.');
+    setHomepageAuthError('Telegram sign-in could not be loaded. Disable blockers and retry.');
     pushHomepageAuthDiag('widget_script_loaded=false');
   };
   wrap.appendChild(s);
