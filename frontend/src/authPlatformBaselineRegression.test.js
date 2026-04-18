@@ -68,4 +68,8 @@ test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/co
     { source: '/app', destination: '/app.html' },
     { source: '/app/:path*', destination: '/app.html' },
   ])
+  assert.deepEqual(config.redirects, [
+    { source: '/accounts', destination: '/app/accounts', permanent: false },
+    { source: '/connections', destination: '/app/connections', permanent: false },
+  ])
 })
