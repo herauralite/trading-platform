@@ -15,6 +15,7 @@ function AccountsOverviewPage({
   onAddAccount,
   recentlyAddedAccountLabel,
   formatDate,
+  isWorkspaceLoading,
 }) {
   const summary = useMemo(() => {
     const connectionState = deriveAccountConnectionState(accountWorkspaces)
@@ -35,79 +36,88 @@ function AccountsOverviewPage({
 
   if (!signedIn) {
     return (
-      <section className="panel">
-        <div className="row">
+      <section className="panel page-panel">
+        <div className="panel-header row">
           <h2>Accounts</h2>
           <button type="button" disabled onClick={onAddAccount}>Add Account</button>
         </div>
         <p className="hint">
-          This page is ready. Sign in with Telegram in the app shell to load your account workspace and enable Add Account.
+          Sign in with Telegram from the app shell to manage account cards, active account selection, and provider-linked workspace data.
         </p>
+      </section>
+    )
+  }
+
+  if (isWorkspaceLoading) {
+    return (
+      <section className="panel page-panel">
+        <div className="panel-header row">
+          <h2>Accounts</h2>
+          <button type="button" disabled>Add Account</button>
+        </div>
+        <div className="skeleton-grid">
+          <div className="skeleton-card" />
+          <div className="skeleton-card" />
+          <div className="skeleton-card" />
+        </div>
       </section>
     )
   }
 
   if (summary.hasZeroConnectedAccounts) {
     return (
-      <section className="panel">
-        <div className="row">
+      <section className="panel page-panel">
+        <div className="panel-header row">
           <h2>Accounts</h2>
-          <button type="button" onClick={onAddAccount}>Add Account</button>
+          <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
         </div>
-        <p className="hint">Accounts is your primary onboarding space after sign-in.</p>
         <div className="empty-state account-onboarding-empty-state">
           <h3>Connect your first trading account</h3>
           <p className="empty-state-copy">
-            Start here to activate your account workspace. Supported setup paths:
+            Start onboarding here, then complete connector-specific setup and sync controls in Connections.
           </p>
           <ul className="onboarding-path-list">
-            <li><strong>MT5</strong> for bridge-based MetaTrader 5 account onboarding.</li>
-            <li><strong>FundingPips Extension</strong> to connect through the browser extension flow.</li>
-            <li><strong>TradingView Webhook</strong> for signal-driven account automation.</li>
-            <li><strong>CSV Import</strong> to import historical trades.</li>
-            <li><strong>Manual Journal</strong> to add accounts and trades manually.</li>
+            <li><strong>MT5 Bridge</strong> onboarding</li>
+            <li><strong>FundingPips Extension</strong> attach flow</li>
+            <li><strong>TradingView Webhook</strong> signal intake</li>
+            <li><strong>CSV Import</strong> account history import</li>
+            <li><strong>Manual Journal</strong> account + trade recording</li>
           </ul>
           <button type="button" className="primary-cta" onClick={onAddAccount}>Add your first account</button>
-          {summary.total > 0 ? (
-            <p className="hint">
-              Existing workspace rows: {summary.total} (pending-only: {summary.pendingOnly}, inactive/stale: {summary.staleInactive}).
-              Onboarding stays visible until at least one account is currently connected.
-            </p>
-          ) : null}
-          <p className="hint">Need operational setup and connector controls later? Use <strong>Connections</strong>.</p>
+          <p className="hint">Inventory detected: {summary.total} rows · pending-only: {summary.pendingOnly} · stale/inactive: {summary.staleInactive}.</p>
         </div>
       </section>
     )
   }
 
   return (
-    <section className="panel">
-      <div className="row">
-        <h2>Accounts</h2>
-        <button type="button" onClick={onAddAccount}>Add Account</button>
+    <section className="panel page-panel">
+      <div className="panel-header row">
+        <div>
+          <p className="kicker">Accounts</p>
+          <h2>Manage connected accounts</h2>
+        </div>
+        <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
       </div>
-      <p className="hint">
-        This is the main workspace for all connected trading accounts. Connector health is displayed using workspace rollup semantics.
-      </p>
-
+      <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
 
       {recentlyAddedAccountLabel ? (
         <div className="card add-success-banner">
-          <strong>Account added successfully.</strong>
-          <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>. You can manage connector/bridge details in Connections.</p>
+          <strong>Account added.</strong>
+          <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>.</p>
         </div>
       ) : null}
       <div className="meta-grid accounts-summary-grid">
         <div className="meta-card summary-card">
-          <span className="hint">All workspace accounts</span>
+          <span className="hint">All accounts</span>
           <strong>{summary.total}</strong>
         </div>
         <div className="meta-card summary-card">
-          <span className="hint">Healthy connections</span>
+          <span className="hint">Healthy</span>
           <strong>{summary.connected}</strong>
         </div>
         <div className="meta-card summary-card">
-          <span className="hint">Currently syncing</span>
+          <span className="hint">Syncing</span>
           <strong>{summary.syncing}</strong>
         </div>
         <div className="meta-card summary-card">
@@ -130,37 +140,16 @@ function AccountsOverviewPage({
             </p>
             <div className="row">
               <span className="pill">{selectedAccount.source_label}</span>
-              <span className="pill">{selectedAccount.broker_name || 'Unknown broker'}</span>
+              <span className="pill">{selectedAccount.broker_name || 'Broker not yet available'}</span>
               <span className="hint">Connection</span>
               <AccountStatusBadge value={selectedAccount.connection_status} />
-              {selectedAccount.provider_state ? <span className="pill">{selectedAccount.provider_state}</span> : null}
               <span className="hint">Sync</span>
               <AccountStatusBadge variant="sync" value={selectedAccount.sync_state} />
             </div>
-            {selectedAccount.connector_type === 'tradingview_webhook' ? (
-              <div className="meta tradingview-activity-preview">
-                <p className="hint">
-                  {selectedAccount.connection_status === 'active'
-                    ? `Webhook active · Last alert received ${formatDate(selectedAccount.tradingview_last_event_at || selectedAccount.last_activity_at)}`
-                    : 'Awaiting first TradingView alert'}
-                </p>
-                {(selectedAccount.recent_events || []).length > 0 ? (
-                  <ul>
-                    {selectedAccount.recent_events.slice(0, 3).map((event, index) => (
-                      <li key={`${selectedAccount.account_key}-event-${index}`}>
-                        <strong>{event.symbol || event.event_type || 'alert'}</strong>
-                        {event.timeframe ? ` · ${event.timeframe}` : ''}
-                        {' · '}
-                        {formatDate(event.received_at)}
-                      </li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-            ) : null}
+            <p className="hint">Last activity: {formatDate(selectedAccount.last_activity_at)} · Last sync: {formatDate(selectedAccount.last_sync_at)}</p>
           </>
         ) : (
-          <p className="hint">Select an account to establish workspace context for future account-specific views.</p>
+          <p className="hint">Select an account to establish workspace focus.</p>
         )}
         {summary.primary ? (
           <p className="hint">
