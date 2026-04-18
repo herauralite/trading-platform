@@ -95,6 +95,8 @@ function App() {
     account_alias: '',
     tradingview_webhook_url: '',
     tradingview_secret_hint: '',
+    alpaca_api_key: '',
+    alpaca_api_secret: '',
   })
   const [isAddAccountSubmitting, setIsAddAccountSubmitting] = useState(false)
   const [addAccountError, setAddAccountError] = useState('')
@@ -115,7 +117,7 @@ function App() {
     if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
     if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
     if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
-    if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
+    if (connectorType === 'alpaca_api') return 'Alpaca API'
     if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
     if (connectorType === 'binance_api') return 'Binance API (Beta)'
     if (connectorType === 'csv_import') return 'CSV Import'
@@ -279,9 +281,11 @@ function App() {
     if (connectorStatus === 'connected') return 'status-connected'
     if (connectorStatus === 'active') return 'status-connected'
     if (connectorStatus === 'ready_for_account_attach') return 'status-connected'
+    if (connectorStatus === 'account_verified' || connectorStatus === 'paper_connected' || connectorStatus === 'live_connected' || connectorStatus === 'configured') return 'status-connected'
     if (connectorStatus === 'sync_running' || connectorStatus === 'sync_queued' || connectorStatus === 'sync_retrying') return 'status-degraded'
     if (connectorStatus === 'awaiting_alerts' || connectorStatus === 'bridge_required' || connectorStatus === 'waiting_for_registration' || connectorStatus === 'beta_pending' || connectorStatus === 'metadata_saved' || connectorStatus === 'awaiting_secure_auth' || connectorStatus === 'waiting_for_secure_auth_support') return 'status-degraded'
     if (connectorStatus === 'degraded') return 'status-degraded'
+    if (connectorStatus === 'validation_failed') return 'status-error'
     if (connectorStatus === 'sync_error') return 'status-error'
     return 'status-disconnected'
   }
@@ -614,6 +618,28 @@ function App() {
           },
           { headers: authHeaders },
         )
+        closeAddAccountFlow()
+        await loadConnectorData({ silent: true })
+        navigate('/app/accounts')
+        return
+      }
+      if (provider.connectorType === 'alpaca_api') {
+        const response = await axios.post(
+          buildApiUrl('/providers/public-api/alpaca_api/connect'),
+          {
+            display_label: displayLabel || provider.title,
+            environment: addAccountDraft.environment || 'paper',
+            account_alias: (addAccountDraft.account_alias || '').trim() || null,
+            api_key: (addAccountDraft.alpaca_api_key || '').trim(),
+            api_secret: (addAccountDraft.alpaca_api_secret || '').trim(),
+          },
+          { headers: authHeaders },
+        )
+        const alpacaExternalAccountId = String(response?.data?.trading_account?.external_account_id || '').trim()
+        if (alpacaExternalAccountId) {
+          setPendingAccountFocus({ connectorType: 'alpaca_api', externalAccountId: alpacaExternalAccountId })
+        }
+        setAddAccountDraft((prev) => ({ ...prev, alpaca_api_key: '', alpaca_api_secret: '' }))
         closeAddAccountFlow()
         await loadConnectorData({ silent: true })
         navigate('/app/accounts')

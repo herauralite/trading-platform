@@ -65,19 +65,22 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
     "alpaca_api": {
         "label": "Alpaca API",
         "category": "public_api",
-        "auth_mode": "api_keys_beta_shell",
-        "status": "coming_soon",
+        "auth_mode": "api_keys_read_only",
+        "status": "beta",
         "supports_live_sync": False,
         "requires_bridge": False,
         "beta": True,
-        "integration_status": "beta_pending_secure_auth",
+        "integration_status": "read_only_account_sync",
         "connection_layer": "public_api_connector",
-        "supported_capabilities": ["beta_metadata_registration"],
-        "onboarding_copy": "Register metadata now; secure credential support is coming soon.",
+        "supported_capabilities": ["credential_validation", "read_only_account_sync"],
+        "onboarding_copy": "Connect Alpaca API keys in read-only mode to validate and sync account identity.",
         "connection_state_labels": {
-            "beta_pending": "Beta pending",
-            "metadata_saved": "Metadata saved",
-            "awaiting_secure_auth": "Awaiting secure auth",
+            "configured": "Configured",
+            "validation_failed": "Validation failed",
+            "connected": "Connected",
+            "account_verified": "Account verified",
+            "paper_connected": "Paper account connected",
+            "live_connected": "Live account connected",
         },
     },
     "oanda_api": {
@@ -160,6 +163,11 @@ CONNECTOR_CONFIG_SPEC: dict[str, dict[str, Any]] = {
         "non_secret_fields": ["bridge_url", "external_account_id", "mt5_server", "bridge_timeout_seconds"],
         "secret_fields": ["bridge_api_key"],
         "supports_external_sync": True,
+    },
+    "alpaca_api": {
+        "non_secret_fields": ["environment"],
+        "secret_fields": ["api_key", "api_secret"],
+        "supports_external_sync": False,
     },
 }
 
