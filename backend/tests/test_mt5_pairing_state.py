@@ -11,6 +11,7 @@ def test_mt5_pairing_requires_bridge_without_url():
         mt5_server='',
     ))
     assert result['bridge_status'] == 'bridge_required'
+    assert result['pairing_state'] == 'no_registered_bridge'
     assert result['discovery_status'] == 'bridge_required'
     assert result['can_add_account'] is False
 
@@ -32,7 +33,7 @@ def test_mt5_pairing_is_safe_non_probing_even_with_user_bridge_url(monkeypatch):
 
     assert called['network'] is False
     assert result['implementation_mode'] == 'safe_non_probing_pairing'
-    assert result['bridge_status'] == 'bridge_registration_pending'
+    assert result['bridge_status'] == 'pairing_token_required'
     assert result['discovery_status'] == 'account_id_provided'
     assert result['can_add_account'] is True
 
@@ -45,6 +46,7 @@ def test_mt5_pairing_waits_for_trusted_worker_linkage():
         bridge_id='bridge-123',
     ))
 
-    assert result['bridge_status'] == 'waiting_for_bridge_worker'
+    assert result['bridge_status'] == 'waiting_for_bridge_registration'
+    assert result['pairing_state'] == 'pairing_token_created'
     assert result['registration']['bridge_id_provided'] is True
     assert result['registration']['bridge_url_provided'] is True

@@ -85,6 +85,9 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
         "status_scope": "connector_rollup",
         "bridge_status": row.get("bridge_status"),
         "bridge_profile": row.get("bridge_profile"),
+        "trusted_bridge_id": row.get("trusted_bridge_id"),
+        "trusted_bridge_display_name": row.get("trusted_bridge_display_name"),
+        "trusted_bridge_last_heartbeat_at": row.get("trusted_bridge_last_heartbeat_at"),
         "bridge_last_sync_at": row.get("bridge_last_sync_at"),
         "account_type": row.get("account_type"),
         "account_size": row.get("account_size"),
@@ -121,6 +124,16 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                 FROM connector_sync_runs
                 WHERE user_id = :uid
                 ORDER BY connector_type, created_at DESC
+            ),
+            latest_mt5_bridge AS (
+                SELECT DISTINCT ON (user_id)
+                    user_id,
+                    bridge_id,
+                    display_name,
+                    last_heartbeat_at
+                FROM mt5_trusted_bridges
+                WHERE user_id = :uid
+                ORDER BY user_id, updated_at DESC
             ),
             canonical_accounts AS (
                 SELECT
@@ -183,7 +196,10 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                 lsr.status AS latest_sync_status,
                 mba.bridge_status AS bridge_status,
                 mba.bridge_url AS bridge_profile,
-                mba.last_bridge_sync_at AS bridge_last_sync_at
+                mba.last_bridge_sync_at AS bridge_last_sync_at,
+                lmb.bridge_id AS trusted_bridge_id,
+                lmb.display_name AS trusted_bridge_display_name,
+                lmb.last_heartbeat_at AS trusted_bridge_last_heartbeat_at
             FROM merged_accounts ma
             LEFT JOIN connector_lifecycle lc
               ON lc.user_id = :uid AND lc.connector_type = ma.connector_type
@@ -191,6 +207,8 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
               ON lsr.connector_type = ma.connector_type
             LEFT JOIN mt5_bridge_accounts mba
               ON mba.user_id = :uid AND mba.trading_account_id = ma.trading_account_id
+            LEFT JOIN latest_mt5_bridge lmb
+              ON lmb.user_id = :uid AND ma.connector_type = 'mt5_bridge'
             ORDER BY ma.last_activity_at DESC NULLS LAST, ma.external_account_id
         """), {"uid": telegram_user_id})
         rows = [dict(row) for row in result.mappings().all()]
