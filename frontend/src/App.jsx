@@ -758,6 +758,7 @@ function App() {
                   onSelectAccount={setSelectedAccountKey}
                   onAddAccount={() => openAddAccountFlow('mt5_bridge')}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
+                  formatDate={formatDate}
                 />
               )}
             />

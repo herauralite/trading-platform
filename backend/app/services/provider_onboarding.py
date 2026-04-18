@@ -10,6 +10,7 @@ from sqlalchemy import text
 
 from app.core.database import engine
 from app.services.connector_ingest import upsert_connector_lifecycle, upsert_trading_account
+from app.services.tradingview_events import normalize_tradingview_event
 
 TRADINGVIEW_CONNECTOR = "tradingview_webhook"
 PUBLIC_API_BETA_CONNECTORS = {"alpaca_api", "oanda_api", "binance_api"}
@@ -80,37 +81,93 @@ async def create_tradingview_connection(*, user_id: str, display_label: str, acc
 
 
 async def ingest_tradingview_event(*, token: str, payload: dict[str, Any]) -> dict[str, Any]:
-    token_hash = _token_hash(str(token or "").strip())
-    if not token_hash:
+    raw_token = str(token or "").strip()
+    if not raw_token:
         raise ValueError("invalid_token")
+    token_hash = _token_hash(raw_token)
 
     now = datetime.now(timezone.utc)
     async with engine.begin() as conn:
         row = (await conn.execute(text("""
-            SELECT *
+            SELECT tvc.id,
+                   tvc.user_id,
+                   tvc.trading_account_id,
+                   tvc.activation_state,
+                   ta.account_key
             FROM tradingview_webhook_connections
-            WHERE webhook_token_hash = :token_hash
+            JOIN trading_accounts ta ON ta.id = tvc.trading_account_id
+            WHERE tvc.webhook_token_hash = :token_hash
             LIMIT 1
         """), {"token_hash": token_hash})).mappings().first()
         if row is None:
             raise ValueError("not_found")
 
+        normalized_event = normalize_tradingview_event(
+            user_id=row["user_id"],
+            trading_account_id=row["trading_account_id"],
+            account_key=row.get("account_key"),
+            connection_id=row["id"],
+            payload=payload,
+            received_at=now,
+        )
+
         await conn.execute(text("""
             UPDATE tradingview_webhook_connections
             SET activation_state = 'active',
                 last_event_at = :now,
-                last_event_payload = CAST(:payload AS jsonb),
+                last_event_payload = CAST(:last_event_payload AS jsonb),
                 updated_at = :now,
-                metadata = metadata || '{"onboarding_state":"active"}'::jsonb
+                metadata = metadata
+                  || '{"onboarding_state":"active"}'::jsonb
+                  || jsonb_build_object('last_event_type', :event_type)
             WHERE id = :id
-        """), {"id": row["id"], "now": now, "payload": json.dumps(payload or {})})
+        """), {
+            "id": row["id"],
+            "now": now,
+            "event_type": normalized_event["event_type"],
+            "last_event_payload": json.dumps({
+                "event_type": normalized_event["event_type"],
+                "symbol": normalized_event["symbol"],
+                "timeframe": normalized_event["timeframe"],
+                "title": normalized_event["title"],
+                "message": normalized_event["message"],
+                "received_at": normalized_event["received_at"].isoformat(),
+            }),
+        })
 
         await conn.execute(text("""
             UPDATE trading_accounts
-            SET metadata = metadata || '{"provider_state":"active"}'::jsonb,
+            SET metadata = metadata
+                || '{"provider_state":"active","onboarding_state":"active"}'::jsonb
+                || jsonb_build_object('last_event_at', :now),
                 updated_at = :now
             WHERE id = :account_id
         """), {"account_id": row["trading_account_id"], "now": now})
+
+        await conn.execute(text("""
+            INSERT INTO connector_events (
+                trading_account_id, user_id, connector_type, event_type, event_payload, event_time
+            ) VALUES (
+                :trading_account_id, :user_id, :connector_type, :event_type, CAST(:event_payload AS jsonb), :event_time
+            )
+        """), {
+            "trading_account_id": normalized_event["trading_account_id"],
+            "user_id": normalized_event["user_id"],
+            "connector_type": normalized_event["connector_type"],
+            "event_type": normalized_event["event_type"],
+            "event_payload": json.dumps({
+                "external_connection_id": normalized_event["external_connection_id"],
+                "account_key": normalized_event["account_key"],
+                "symbol": normalized_event["symbol"],
+                "timeframe": normalized_event["timeframe"],
+                "title": normalized_event["title"],
+                "message": normalized_event["message"],
+                "raw_payload_json": normalized_event["raw_payload_json"],
+                "validity_status": "valid",
+                "received_at": normalized_event["received_at"].isoformat(),
+            }),
+            "event_time": normalized_event["received_at"],
+        })
 
     await upsert_connector_lifecycle(
         user_id=row["user_id"],
@@ -121,7 +178,13 @@ async def ingest_tradingview_event(*, token: str, payload: dict[str, Any]) -> di
         metadata={"provider_state": "active", "onboarding_state": "active"},
     )
 
-    return {"ok": True, "connection_id": row["id"], "state": "active", "event_at": now.isoformat()}
+    return {
+        "ok": True,
+        "connection_id": row["id"],
+        "state": "active",
+        "event_at": now.isoformat(),
+        "event_type": normalized_event["event_type"],
+    }
 
 
 async def create_public_api_beta_connection(
