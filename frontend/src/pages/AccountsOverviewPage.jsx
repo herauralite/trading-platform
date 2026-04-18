@@ -45,7 +45,7 @@ function AccountsOverviewPage({
       <section className="panel page-panel">
         <div className="panel-header row">
           <h2>Accounts</h2>
-          <button type="button" disabled onClick={onAddAccount}>Add Account</button>
+          <button type="button" disabled onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <p className="hint">
           Sign in with Telegram from the app shell to manage account cards, active account selection, and provider-linked workspace data.
@@ -75,7 +75,7 @@ function AccountsOverviewPage({
       <section className="panel page-panel">
         <div className="panel-header row">
           <h2>Accounts</h2>
-          <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
+          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <div className="empty-state account-onboarding-empty-state">
           <h3>Connect your first trading account</h3>
@@ -89,7 +89,7 @@ function AccountsOverviewPage({
             <li><strong>CSV Import</strong> account history import</li>
             <li><strong>Manual Journal</strong> account + trade recording</li>
           </ul>
-          <button type="button" className="primary-cta" onClick={onAddAccount}>Add your first account</button>
+          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add your first account</button>
           <p className="hint">Inventory detected: {summary.total} rows · pending-only: {summary.pendingOnly} · stale/inactive: {summary.staleInactive}.</p>
         </div>
       </section>
@@ -103,7 +103,7 @@ function AccountsOverviewPage({
           <p className="kicker">Accounts</p>
           <h2>Manage connected accounts</h2>
         </div>
-        <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
+        <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
       </div>
       <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
 
