@@ -24,6 +24,7 @@ import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
 import { buildAddAccountProviders } from './addAccountFlow'
+import { checkMt5PairingState } from './mt5PairingService'
 import './App.css'
 
 const DEFAULT_STATUS = 'Sign in with Telegram to load your connected trading sources.'
@@ -584,6 +585,10 @@ function App() {
     }
   }
 
+  async function checkMt5Pairing(draft) {
+    return checkMt5PairingState(sessionToken, draft)
+  }
+
   const startOidcFlow = () => {
     const cfg = telegramConfig
     if (!cfg?.oidcAuthorizeUrl || !cfg?.oidcClientId) {
@@ -735,6 +740,7 @@ function App() {
             setDraft={setAddAccountDraft}
             onClose={closeAddAccountFlow}
             onSubmit={submitAddAccount}
+            onCheckMt5Pairing={checkMt5Pairing}
             isSubmitting={isAddAccountSubmitting}
             error={addAccountError}
           />
