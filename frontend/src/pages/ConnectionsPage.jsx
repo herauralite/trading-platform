@@ -53,7 +53,7 @@ function ConnectionsPage({
             <p className="kicker">Connections</p>
             <h2>Connector operations and sync controls</h2>
           </div>
-          <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
+          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <p className="hint">
           Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management.
@@ -77,6 +77,14 @@ function ConnectionsPage({
                 </div>
                 <p className="hint">{method.description}</p>
                 <p className="hint">Next action: {signedIn ? (connector?.is_connected ? 'Review sync/config below.' : 'Use Add Account to start setup.') : 'Sign in to begin setup.'}</p>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={!signedIn}
+                  onClick={() => onAddAccount(method.key)}
+                >
+                  {signedIn ? `Start ${method.title}` : 'Sign in to start'}
+                </button>
               </div>
             )
           })}
@@ -150,7 +158,12 @@ function ConnectionsPage({
             </div>
 
             {isGuidedAddAccountConnector(connector.connector_type) ? (
-              <p className="hint">Use <strong>Add Account</strong> for this provider’s guided flow.</p>
+              <div className="row">
+                <p className="hint">Use <strong>Add Account</strong> for this provider’s guided flow.</p>
+                <button type="button" className="secondary-button" disabled={!signedIn} onClick={() => onAddAccount(connector.connector_type)}>
+                  Open guided flow
+                </button>
+              </div>
             ) : null}
 
             {connector.account_count === 0 && !isGuidedAddAccountConnector(connector.connector_type) ? (

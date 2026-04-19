@@ -74,7 +74,7 @@ function AppLandingPage({
             <p className="kicker">Onboarding</p>
             <h2>Add your first live workspace account</h2>
           </div>
-          <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
+          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <p className="hint">
           Choose a provider, link an account, then use Connections for sync operations and connector-level controls.
@@ -87,6 +87,10 @@ function AppLandingPage({
           <li><strong>Manual Journal</strong> for custom account/trade entry</li>
           <li><strong>Public API connectors</strong> (Alpaca, OANDA, Binance beta paths)</li>
         </ul>
+        <div className="row app-onboarding-links">
+          <NavLink className="app-nav-link" to="/app/accounts">Go to Accounts (primary)</NavLink>
+          <NavLink className="app-nav-link" to="/app/connections">Go to Connections (operations)</NavLink>
+        </div>
         <p className="hint">
           Current workspace inventory: {accountConnectionState.totalCount} total · {accountConnectionState.pendingOnlyCount} pending-only · {accountConnectionState.staleInactiveCount} inactive/stale.
         </p>
@@ -101,7 +105,7 @@ function AppLandingPage({
           <p className="kicker">Dashboard</p>
           <h2>Account workspace overview</h2>
         </div>
-        <button type="button" className="primary-cta" onClick={onAddAccount}>Add Account</button>
+        <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
       </div>
 
       <div className="meta-grid accounts-summary-grid">

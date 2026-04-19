@@ -810,6 +810,9 @@ function App() {
             type="button"
             className="app-nav-link add-account-nav-link"
             onClick={() => openAddAccountFlow('mt5_bridge')}
+            disabled={!signedIn}
+            aria-disabled={!signedIn}
+            title={signedIn ? 'Add and connect an account' : 'Sign in with Telegram to add an account'}
           >
             + Add Account
           </button>
@@ -891,7 +894,7 @@ function App() {
                   signedIn={signedIn}
                   hasZeroConnectedAccounts={hasZeroConnectedAccounts}
                   accountConnectionState={accountConnectionState}
-                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  onAddAccount={openAddAccountFlow}
                   selectedAccount={selectedAccount}
                   managedConnectors={managedConnectors}
                   syncHistory={syncHistory}
@@ -909,7 +912,7 @@ function App() {
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
-                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  onAddAccount={openAddAccountFlow}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}
                   isWorkspaceLoading={isWorkspaceLoading}
@@ -946,7 +949,7 @@ function App() {
                   createManualAccount={createManualAccount}
                   createManualTrade={createManualTrade}
                   importCsvTrades={importCsvTrades}
-                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  onAddAccount={openAddAccountFlow}
                   addFlowIntent={addFlowIntent}
                   isWorkspaceLoading={isWorkspaceLoading}
                 />
