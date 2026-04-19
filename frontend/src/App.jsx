@@ -29,7 +29,11 @@ import ConnectionsPage from './pages/ConnectionsPage'
 import AppLandingPage from './pages/AppLandingPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
 import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS } from './addAccountFlow'
-import { buildAlpacaConnectPayload, clearSensitiveAddAccountDraft } from './alpacaConnectFlow'
+import {
+  buildAlpacaConnectPayload,
+  clearSensitiveAddAccountDraft,
+  resolveAlpacaConnectResult,
+} from './alpacaConnectFlow'
 import { checkMt5PairingState, createMt5PairingToken, fetchMt5BridgeRegistrationStatus } from './mt5PairingService'
 import './App.css'
 
@@ -105,6 +109,7 @@ function App() {
   })
   const [isAddAccountSubmitting, setIsAddAccountSubmitting] = useState(false)
   const [addAccountError, setAddAccountError] = useState('')
+  const [addAccountSuccessMessage, setAddAccountSuccessMessage] = useState('')
   const [pendingAccountFocus, setPendingAccountFocus] = useState(null)
   const [recentlyAddedAccountLabel, setRecentlyAddedAccountLabel] = useState('')
   const [authActionPrompt, setAuthActionPrompt] = useState('')
@@ -293,7 +298,10 @@ function App() {
     if (!pendingAccountFocus) return
     const matched = unifiedAccountWorkspaces.find((account) => (
       account.connector_type === pendingAccountFocus.connectorType
-      && String(account.external_account_id || '') === String(pendingAccountFocus.externalAccountId)
+      && (
+        (pendingAccountFocus.tradingAccountId != null && Number(account.trading_account_id) === Number(pendingAccountFocus.tradingAccountId))
+        || (pendingAccountFocus.externalAccountId && String(account.external_account_id || '') === String(pendingAccountFocus.externalAccountId))
+      )
     ))
     if (!matched) return
     setSelectedAccountKey(matched.account_key)
@@ -482,10 +490,10 @@ function App() {
         try {
           const workspaceRows = await fetchAccountWorkspaces(token)
           setWorkspaceApiAccounts(workspaceRows)
+          setWorkspaceApiHydrated(true)
         } catch {
           setWorkspaceApiAccounts([])
-        } finally {
-          setWorkspaceApiHydrated(true)
+          setWorkspaceApiHydrated(false)
         }
       } else {
         setWorkspaceApiAccounts([])
@@ -622,12 +630,14 @@ function App() {
     setAuthActionPrompt('')
     setSelectedProviderType(defaultProviderType)
     setAddAccountError('')
+    setAddAccountSuccessMessage('')
     setIsAddAccountOpen(true)
   }
 
   function closeAddAccountFlow() {
     setIsAddAccountOpen(false)
     setAddAccountError('')
+    setAddAccountSuccessMessage('')
   }
 
   async function submitAddAccount(provider) {
@@ -641,6 +651,7 @@ function App() {
 
     setIsAddAccountSubmitting(true)
     setAddAccountError('')
+    setAddAccountSuccessMessage('')
 
     try {
       if (provider.connectorType === 'csv_import') {
@@ -692,10 +703,14 @@ function App() {
             alpacaPayload,
             { headers: authHeaders },
           )
-          const providerStatus = String(connectResponse?.data?.status || '').toLowerCase()
-          if (!['paper_connected', 'live_connected'].includes(providerStatus)) {
-            throw new Error(connectResponse?.data?.validation_error || 'Alpaca credentials could not be verified.')
-          }
+          const { providerStatus, accountId, displayLabel: connectedLabel } = resolveAlpacaConnectResult(connectResponse?.data || {})
+          setPendingAccountFocus({
+            connectorType: 'alpaca_api',
+            externalAccountId: '',
+            tradingAccountId: accountId,
+            displayLabel: connectedLabel || displayLabel || provider.title,
+          })
+          setAddAccountSuccessMessage(`Alpaca ${providerStatus.replace('_', ' ')}. Refreshing workspace…`)
           setStatus(`Alpaca ${providerStatus.replace('_', ' ')}.`)
         } else {
           await axios.post(
@@ -708,8 +723,11 @@ function App() {
             { headers: authHeaders },
           )
         }
-        closeAddAccountFlow()
         await loadConnectorData({ silent: true })
+        if (provider.connectorType === 'alpaca_api') {
+          await new Promise((resolve) => window.setTimeout(resolve, 900))
+        }
+        closeAddAccountFlow()
         navigate('/app/accounts')
         return
       }
@@ -979,6 +997,7 @@ function App() {
         onLoadMt5RegistrationStatus={loadMt5RegistrationStatus}
         isSubmitting={isAddAccountSubmitting}
         error={addAccountError}
+        successMessage={addAccountSuccessMessage}
       />
     </div>
   )
