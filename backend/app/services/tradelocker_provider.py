@@ -156,7 +156,12 @@ class TradeLockerClient:
         payload = {"email": email, "password": password}
         if server:
             payload["server"] = server
-        raw = await self._request(method="POST", path="/auth/jwt/token", json_body=payload, allow_401=True)
+        try:
+            raw = await self._request(method="POST", path="/auth/jwt/token", json_body=payload, allow_401=True)
+        except TradeLockerAuthError as exc:
+            if str(exc) == "unauthorized":
+                raise TradeLockerAuthError("invalid_credentials") from exc
+            raise
         data_root = _as_dict(raw, error_code="invalid_login_payload")
         data = _unwrap_data(data_root)
         if not isinstance(data, dict):
