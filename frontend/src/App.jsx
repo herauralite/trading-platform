@@ -23,18 +23,12 @@ import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './
 import { fetchAccountWorkspaces } from './accountWorkspaceService'
 import { deriveAccountConnectionState, isCurrentlyConnectedAccount } from './accountConnectionState'
 import { deriveAppOnboardingState } from './onboardingState'
-import { resolvePreferredDetailAccountKey } from './workspaceAccountSelection'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
 import AppLandingPage from './pages/AppLandingPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
 import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS } from './addAccountFlow'
-import {
-  buildAlpacaConnectPayload,
-  clearSensitiveAddAccountDraft,
-  resolveAlpacaConnectResult,
-} from './alpacaConnectFlow'
 import { checkMt5PairingState, createMt5PairingToken, fetchMt5BridgeRegistrationStatus } from './mt5PairingService'
 import './App.css'
 
@@ -44,8 +38,6 @@ const AUTH_DEBUG_QUERY_KEY = 'debugAuth'
 const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth'
 const USE_ACCOUNT_WORKSPACES_API = import.meta.env.VITE_APP_USE_ACCOUNT_WORKSPACES !== '0'
 const FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY = 'tali_first_run_add_account_prompt_seen'
-const ACTIVE_ACCOUNT_STORAGE_KEY = 'tali_active_account_key'
-const DETAIL_ACCOUNT_STORAGE_KEY = 'tali_detail_account_key'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -67,66 +59,6 @@ function hasWorkspaceIdentity(account) {
   )
 }
 
-function normalizeWorkspaceAccount(account, fallbackConnectorType = 'manual') {
-  const connectorType = String(account?.connector_type || fallbackConnectorType || 'manual').trim().toLowerCase()
-  const tradingAccountId = account?.trading_account_id ?? account?.id ?? null
-  const externalAccountId = account?.external_account_id ?? null
-  const accountKey = String(
-    account?.account_key
-    || (connectorType && (externalAccountId || tradingAccountId) ? `${connectorType}:${externalAccountId || tradingAccountId}` : ''),
-  ).trim()
-  if (!accountKey) return null
-  return {
-    ...account,
-    account_key: accountKey,
-    trading_account_id: tradingAccountId,
-    external_account_id: externalAccountId,
-    display_label: account?.display_label || externalAccountId || `Account ${tradingAccountId ?? accountKey}`,
-    connector_type: connectorType,
-    source_label: account?.source_label || connectorType,
-    connection_status: String(account?.connection_status || 'disconnected').toLowerCase(),
-    sync_state: String(account?.sync_state || 'idle').toLowerCase(),
-    broker_name: account?.broker_name || null,
-    account_type: account?.account_type || null,
-    last_activity_at: account?.last_activity_at || null,
-    last_sync_at: account?.last_sync_at || null,
-    is_primary: Boolean(account?.is_primary),
-    provider_state: account?.provider_state || null,
-    environment: account?.environment || null,
-    account_summary: account?.account_summary && typeof account.account_summary === 'object' ? account.account_summary : null,
-    last_validated_at: account?.last_validated_at || null,
-  }
-}
-
-function dedupeAccountWorkspaces(accounts = []) {
-  const map = new Map()
-  for (const account of accounts) {
-    const normalized = normalizeWorkspaceAccount(account)
-    if (!normalized?.account_key) continue
-    const existing = map.get(normalized.account_key)
-    if (!existing) {
-      map.set(normalized.account_key, normalized)
-      continue
-    }
-    const normalizedIsUsable = isCurrentlyConnectedAccount(normalized)
-    const existingIsUsable = isCurrentlyConnectedAccount(existing)
-    if (normalizedIsUsable && !existingIsUsable) {
-      map.set(normalized.account_key, { ...existing, ...normalized })
-      continue
-    }
-    const normalizedSyncTs = new Date(normalized.last_sync_at || normalized.last_activity_at || 0).getTime()
-    const existingSyncTs = new Date(existing.last_sync_at || existing.last_activity_at || 0).getTime()
-    if (normalizedSyncTs >= existingSyncTs) {
-      map.set(normalized.account_key, { ...existing, ...normalized })
-    }
-  }
-  return Array.from(map.values()).sort((a, b) => {
-    if (a.is_primary && !b.is_primary) return -1
-    if (!a.is_primary && b.is_primary) return 1
-    return String(a.display_label || '').localeCompare(String(b.display_label || ''))
-  })
-}
-
 function App() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -135,8 +67,6 @@ function App() {
   const [telegramConfig, setTelegramConfig] = useState(null)
   const [catalog, setCatalog] = useState([])
   const [connectors, setConnectors] = useState([])
-  const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false)
-  const [workspaceLoadError, setWorkspaceLoadError] = useState('')
   const [status, setStatus] = useState(DEFAULT_STATUS)
   const [widgetStatus, setWidgetStatus] = useState('')
   const [widgetDiagnostics, setWidgetDiagnostics] = useState([])
@@ -152,13 +82,11 @@ function App() {
   const [connectorDrafts, setConnectorDrafts] = useState({})
   const [configDrafts, setConfigDrafts] = useState({})
   const [syncHistory, setSyncHistory] = useState({})
-  const [selectedAccountKey, setSelectedAccountKey] = useState(() => localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY) || '')
-  const [detailAccountKey, setDetailAccountKey] = useState(() => localStorage.getItem(DETAIL_ACCOUNT_STORAGE_KEY) || '')
+  const [selectedAccountKey, setSelectedAccountKey] = useState('')
   const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
   const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
   const [selectedProviderType, setSelectedProviderType] = useState('mt5_bridge')
-  const [addAccountReturnPath, setAddAccountReturnPath] = useState('/app/accounts')
   const [addAccountDraft, setAddAccountDraft] = useState({
     external_account_id: '',
     display_label: '',
@@ -174,11 +102,8 @@ function App() {
   })
   const [isAddAccountSubmitting, setIsAddAccountSubmitting] = useState(false)
   const [addAccountError, setAddAccountError] = useState('')
-  const [addAccountSuccessMessage, setAddAccountSuccessMessage] = useState('')
   const [pendingAccountFocus, setPendingAccountFocus] = useState(null)
   const [recentlyAddedAccountLabel, setRecentlyAddedAccountLabel] = useState('')
-  const [authActionPrompt, setAuthActionPrompt] = useState('')
-  const routeRefreshGuardRef = useRef('')
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -194,7 +119,7 @@ function App() {
     if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
     if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
     if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
-    if (connectorType === 'alpaca_api') return 'Alpaca API'
+    if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
     if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
     if (connectorType === 'binance_api') return 'Binance API (Beta)'
     if (connectorType === 'csv_import') return 'CSV Import'
@@ -231,8 +156,8 @@ function App() {
   )
 
   const unifiedAccountWorkspaces = useMemo(() => {
-    if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return dedupeAccountWorkspaces(workspaceApiAccounts)
-    return dedupeAccountWorkspaces(accountWorkspaces)
+    if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return workspaceApiAccounts
+    return accountWorkspaces
   }, [workspaceApiAccounts, accountWorkspaces, workspaceApiHydrated])
 
   const selectedAccount = useMemo(
@@ -288,10 +213,6 @@ function App() {
 
   const addFlowIntent = useMemo(() => new URLSearchParams(location.search).get('addFlow') || '', [location.search])
   const accountConnectionState = useMemo(() => deriveAccountConnectionState(unifiedAccountWorkspaces), [unifiedAccountWorkspaces])
-  const usableAccountWorkspaces = useMemo(
-    () => unifiedAccountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account)),
-    [unifiedAccountWorkspaces],
-  )
   const onboardingState = useMemo(() => deriveAppOnboardingState({
     signedIn,
     useWorkspaceApi: USE_ACCOUNT_WORKSPACES_API,
@@ -300,18 +221,6 @@ function App() {
     fallbackAccounts: accountWorkspaces,
   }), [signedIn, workspaceApiHydrated, workspaceApiAccounts, accountWorkspaces])
   const hasZeroConnectedAccounts = onboardingState.hasZeroUsableAccounts
-  const switcherAccounts = useMemo(
-    () => unifiedAccountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account)),
-    [unifiedAccountWorkspaces],
-  )
-  const shellSyncingCount = useMemo(
-    () => managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state)).length,
-    [managedConnectors],
-  )
-  const shellNeedsAttentionCount = useMemo(
-    () => managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error').length,
-    [managedConnectors],
-  )
 
 
   useEffect(() => {
@@ -352,54 +261,23 @@ function App() {
 
   useEffect(() => {
     if (selectedAccountKey) {
-      const existingSelected = unifiedAccountWorkspaces.find((account) => account.account_key === selectedAccountKey)
-      if (existingSelected && isCurrentlyConnectedAccount(existingSelected)) return
+      const exists = unifiedAccountWorkspaces.some((account) => account.account_key === selectedAccountKey)
+      if (exists) return
     }
-    const primaryUsable = usableAccountWorkspaces.find((account) => account.is_primary)
-    const fallbackUsable = usableAccountWorkspaces[0] || null
-    setSelectedAccountKey(primaryUsable?.account_key || fallbackUsable?.account_key || '')
-  }, [unifiedAccountWorkspaces, usableAccountWorkspaces, selectedAccountKey])
-
-  useEffect(() => {
-    const resolvedDetailKey = resolvePreferredDetailAccountKey(unifiedAccountWorkspaces, {
-      currentDetailAccountKey: detailAccountKey,
-      selectedActiveAccountKey: selectedAccountKey,
-    })
-    if (resolvedDetailKey === detailAccountKey) return
-    setDetailAccountKey(resolvedDetailKey)
-  }, [detailAccountKey, selectedAccountKey, unifiedAccountWorkspaces])
-
-  useEffect(() => {
-    if (!signedIn) return
-    if (!selectedAccountKey) {
-      localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)
-      return
-    }
-    localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, selectedAccountKey)
-  }, [signedIn, selectedAccountKey])
-
-  useEffect(() => {
-    if (!signedIn) return
-    if (!detailAccountKey) {
-      localStorage.removeItem(DETAIL_ACCOUNT_STORAGE_KEY)
-      return
-    }
-    localStorage.setItem(DETAIL_ACCOUNT_STORAGE_KEY, detailAccountKey)
-  }, [detailAccountKey, signedIn])
+    const primary = unifiedAccountWorkspaces.find((account) => account.is_primary)
+    const firstConnected = unifiedAccountWorkspaces.find((account) => isCurrentlyConnectedAccount(account))
+    setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || unifiedAccountWorkspaces[0]?.account_key || '')
+  }, [unifiedAccountWorkspaces, selectedAccountKey])
 
 
   useEffect(() => {
     if (!pendingAccountFocus) return
     const matched = unifiedAccountWorkspaces.find((account) => (
       account.connector_type === pendingAccountFocus.connectorType
-      && (
-        (pendingAccountFocus.tradingAccountId != null && Number(account.trading_account_id) === Number(pendingAccountFocus.tradingAccountId))
-        || (pendingAccountFocus.externalAccountId && String(account.external_account_id || '') === String(pendingAccountFocus.externalAccountId))
-      )
+      && String(account.external_account_id || '') === String(pendingAccountFocus.externalAccountId)
     ))
     if (!matched) return
-    if (isCurrentlyConnectedAccount(matched)) setSelectedAccountKey(matched.account_key)
-    setDetailAccountKey(matched.account_key)
+    setSelectedAccountKey(matched.account_key)
     setRecentlyAddedAccountLabel(matched.display_label || matched.external_account_id || matched.account_key)
     setPendingAccountFocus(null)
   }, [pendingAccountFocus, unifiedAccountWorkspaces])
@@ -416,62 +294,13 @@ function App() {
   }, [widgetScriptLoaded, signedIn])
 
   useEffect(() => {
-    if (signedIn) return
-    if (telegramConfig?.oidcEnabled) return
-    if (!isCanonicalHost) return
-    const mountNode = widgetWrapRef.current
-    if (!mountNode) return
-
-    const botUsername = telegramConfig?.botUsername || 'TaliTradeBot'
-    mountNode.innerHTML = ''
-    setWidgetScriptLoaded(false)
-    setWidgetStatus('')
-
-    const script = document.createElement('script')
-    script.async = true
-    script.src = 'https://telegram.org/js/telegram-widget.js?22'
-    script.setAttribute('data-telegram-login', botUsername)
-    script.setAttribute('data-size', 'large')
-    script.setAttribute('data-userpic', 'false')
-    script.setAttribute('data-request-access', 'write')
-    script.setAttribute('data-onauth', 'onTelegramAuth(user)')
-    script.onload = () => {
-      setWidgetScriptLoaded(true)
-      setWidgetStatus('')
-    }
-    script.onerror = () => {
-      setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')
-    }
-    mountNode.appendChild(script)
-
-    return () => {
-      script.onload = null
-      script.onerror = null
-      if (mountNode.contains(script)) {
-        mountNode.removeChild(script)
-      }
-    }
-  }, [signedIn, telegramConfig?.oidcEnabled, telegramConfig?.botUsername, isCanonicalHost])
-
-  useEffect(() => {
-    if (!signedIn) return
     if (!hasZeroConnectedAccounts) return
     if (location.pathname !== '/app' && location.pathname !== '/app/accounts') return
     if (isAddAccountOpen) return
     if (sessionStorage.getItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY) === '1') return
     sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
     openAddAccountFlow('mt5_bridge')
-  }, [signedIn, hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
-
-  useEffect(() => {
-    if (!signedIn) return
-    if (!['/app', '/app/accounts', '/app/connections'].includes(location.pathname)) return
-    const refreshKey = `${location.pathname}:${sessionToken}`
-    if (routeRefreshGuardRef.current === refreshKey) return
-    routeRefreshGuardRef.current = refreshKey
-    void loadConnectorData({ silent: true })
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [signedIn, sessionToken, location.pathname])
+  }, [hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
@@ -508,7 +337,7 @@ function App() {
       })
       setWidgetDiagnostics(diagnostics)
       setTelegramConfig(res.data || null)
-      setWidgetStatus('')
+      setWidgetStatus('Telegram sign-in is ready.')
     } catch (error) {
       setTelegramConfig(null)
       setConfigLoadFailed(true)
@@ -572,14 +401,9 @@ function App() {
     setCatalog([])
     setWorkspaceApiAccounts([])
     setWorkspaceApiHydrated(false)
-    setIsWorkspaceLoading(false)
     setRecentlyAddedAccountLabel('')
-    setSelectedAccountKey('')
-    setDetailAccountKey('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
-    localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)
-    localStorage.removeItem(DETAIL_ACCOUNT_STORAGE_KEY)
     sessionStorage.removeItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY)
   }
 
@@ -623,8 +447,6 @@ function App() {
   }
 
   async function loadConnectorData({ token = sessionToken, silent = false } = {}) {
-    setIsWorkspaceLoading(true)
-    setWorkspaceLoadError('')
     try {
       const [catalogRes, overviewRes] = await Promise.all([
         axios.get(buildApiUrl('/connectors/catalog')),
@@ -637,10 +459,10 @@ function App() {
         try {
           const workspaceRows = await fetchAccountWorkspaces(token)
           setWorkspaceApiAccounts(workspaceRows)
-          setWorkspaceApiHydrated(true)
         } catch {
           setWorkspaceApiAccounts([])
-          setWorkspaceApiHydrated(false)
+        } finally {
+          setWorkspaceApiHydrated(true)
         }
       } else {
         setWorkspaceApiAccounts([])
@@ -679,10 +501,7 @@ function App() {
         setStatus('Your session expired. Please sign in with Telegram again.')
         return
       }
-      setWorkspaceLoadError(`Could not hydrate workspace data: ${error?.message || 'unknown error'}`)
       setStatus(`Failed to load connectors: ${error.message}`)
-    } finally {
-      setIsWorkspaceLoading(false)
     }
   }
 
@@ -769,27 +588,14 @@ function App() {
 
 
   function openAddAccountFlow(defaultProviderType = 'mt5_bridge') {
-    if (!signedIn) {
-      setAuthActionPrompt('Sign in with Telegram to open Add Account and run account actions.')
-      setStatus('Sign in with Telegram to add or connect trading accounts.')
-      return
-    }
-    setAuthActionPrompt('')
     setSelectedProviderType(defaultProviderType)
-    if (location.pathname === '/app/connections') {
-      setAddAccountReturnPath(`${location.pathname}${location.search || ''}`)
-    } else {
-      setAddAccountReturnPath('/app/accounts')
-    }
     setAddAccountError('')
-    setAddAccountSuccessMessage('')
     setIsAddAccountOpen(true)
   }
 
   function closeAddAccountFlow() {
     setIsAddAccountOpen(false)
     setAddAccountError('')
-    setAddAccountSuccessMessage('')
   }
 
   async function submitAddAccount(provider) {
@@ -803,7 +609,6 @@ function App() {
 
     setIsAddAccountSubmitting(true)
     setAddAccountError('')
-    setAddAccountSuccessMessage('')
 
     try {
       if (provider.connectorType === 'csv_import') {
@@ -839,31 +644,21 @@ function App() {
           return
         }
         closeAddAccountFlow()
-        navigate(addAccountReturnPath || '/app/accounts')
+        navigate('/app/accounts')
         return
       }
       if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
         if (provider.connectorType === 'alpaca_api') {
-          const alpacaPayload = buildAlpacaConnectPayload({
-            label: displayLabel || provider.title,
-            environment: addAccountDraft.environment || 'paper',
-            apiKey: addAccountDraft.api_key,
-            apiSecret: addAccountDraft.api_secret,
-          })
-          const connectResponse = await axios.post(
+          await axios.post(
             buildApiUrl('/providers/public-api/alpaca_api/connect'),
-            alpacaPayload,
+            {
+              label: displayLabel || provider.title,
+              environment: addAccountDraft.environment || 'paper',
+              api_key: (addAccountDraft.api_key || '').trim(),
+              api_secret: (addAccountDraft.api_secret || '').trim(),
+            },
             { headers: authHeaders },
           )
-          const { providerStatus, accountId, displayLabel: connectedLabel } = resolveAlpacaConnectResult(connectResponse?.data || {})
-          setPendingAccountFocus({
-            connectorType: 'alpaca_api',
-            externalAccountId: '',
-            tradingAccountId: accountId,
-            displayLabel: connectedLabel || displayLabel || provider.title,
-          })
-          setAddAccountSuccessMessage(`Alpaca ${providerStatus.replace('_', ' ')}. Refreshing workspace…`)
-          setStatus(`Alpaca ${providerStatus.replace('_', ' ')}.`)
         } else {
           await axios.post(
             buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
@@ -875,12 +670,9 @@ function App() {
             { headers: authHeaders },
           )
         }
-        await loadConnectorData({ silent: true })
-        if (provider.connectorType === 'alpaca_api') {
-          await new Promise((resolve) => window.setTimeout(resolve, 900))
-        }
         closeAddAccountFlow()
-        navigate(addAccountReturnPath || '/app/accounts')
+        await loadConnectorData({ silent: true })
+        navigate('/app/accounts')
         return
       }
 
@@ -900,12 +692,11 @@ function App() {
       await connectorAction(provider.connectorType, 'connect', payload)
       setPendingAccountFocus({ connectorType: provider.connectorType, externalAccountId })
       closeAddAccountFlow()
-      navigate(addAccountReturnPath || '/app/accounts')
+      navigate('/app/accounts')
     } catch (error) {
-      const apiDetail = error?.response?.data?.detail
-      setAddAccountError(apiDetail || error?.message || 'Could not complete this add account flow.')
+      setAddAccountError(error?.message || 'Could not complete this add account flow.')
     } finally {
-      setAddAccountDraft((prev) => clearSensitiveAddAccountDraft(prev))
+      setAddAccountDraft((prev) => ({ ...prev, api_key: '', api_secret: '' }))
       setIsAddAccountSubmitting(false)
     }
   }
@@ -944,153 +735,110 @@ function App() {
   }
 
   return (
-    <div className={`app ${signedIn ? 'app-authenticated' : 'app-unauthenticated'}`}>
-      <header className="app-header-shell">
-        <div className="app-brand-row">
-          <div className="brand-avatar">{signedIn ? (sessionUser?.first_name?.[0] || sessionUser?.telegram_username?.[0] || 'T') : 'T'}</div>
-          <div>
-            <p className="kicker shell-kicker">Premium workspace</p>
-            <h1>TaliTrade</h1>
-            <p className="hint">{signedIn ? 'Connected workspace' : 'Waiting for Telegram sign-in'}</p>
-          </div>
+    <div className="app">
+      <header className="app-header panel">
+        <div>
+          <h1>TaliTrade Platform</h1>
+          <p>Status: {status}</p>
         </div>
-        <div className="app-header-actions">
-          <div className="app-identity-chip">
-            <span className="header-profile">{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'Guest'}</span>
-            <span className="header-clock">{new Date().toLocaleTimeString()}</span>
-          </div>
-          {signedIn ? <button onClick={() => loadConnectorData()} type="button" className="secondary-button">Refresh</button> : null}
-          {signedIn ? <button onClick={clearSession} type="button" className="secondary-button">Sign out</button> : null}
+        <div className="row">
+          <span>Signed in:</span>
+          <strong>{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'No'}</strong>
+          {signedIn ? <button onClick={() => loadConnectorData()}>Refresh</button> : null}
+          {signedIn ? <button onClick={clearSession}>Sign out</button> : null}
         </div>
       </header>
-      <section className="panel app-shell-health-strip">
-        <div className="row">
-          <span className={`badge ${signedIn ? 'status-connected' : 'status-disconnected'}`}>{signedIn ? 'Authenticated' : 'Signed out'}</span>
-          <span className="pill">Usable accounts: {accountConnectionState.connectedUsableCount}</span>
-          <span className="pill">Pending setup: {accountConnectionState.pendingOnlyCount}</span>
-          <span className="pill">Syncing: {shellSyncingCount}</span>
-          <span className="pill">Needs attention: {shellNeedsAttentionCount}</span>
-          {selectedAccount ? (
-            <>
-              <span className="pill">Active account: {selectedAccount.display_label || selectedAccount.external_account_id || selectedAccount.account_key}</span>
-              <span className="pill">Provider: {selectedAccount.source_label || selectedAccount.connector_type || 'unknown'}</span>
-              <span className="pill">Connection: {selectedAccount.connection_status || 'disconnected'}</span>
-              <span className="pill">Sync: {selectedAccount.sync_state || 'idle'}</span>
-            </>
-          ) : (
-            <span className="pill">No active usable account selected</span>
-          )}
-        </div>
-        <p className="hint">{status}</p>
-        {workspaceLoadError ? <p className="error-text">{workspaceLoadError}</p> : null}
-      </section>
 
-      <section className="panel app-shell-top">
-        <div className="app-shell-nav-block">
-          <p className="kicker">Workspace navigation</p>
-          <nav className="app-nav" aria-label="Primary app navigation">
-            <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app">Dashboard</NavLink>
-            <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
-            <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
-          </nav>
-        </div>
-        <div className="row app-shell-actions">
-          <button
-            type="button"
-            className="app-nav-link add-account-nav-link"
-            onClick={() => openAddAccountFlow('mt5_bridge')}
-            disabled={!signedIn}
-            aria-disabled={!signedIn}
-            title={signedIn ? 'Add and connect an account' : 'Sign in with Telegram to add an account'}
-          >
-            + Add Account
-          </button>
-          <AccountSwitcher
-            accounts={switcherAccounts}
-            selectedAccountKey={selectedAccountKey}
-            onSelectAccount={setSelectedAccountKey}
-          />
-        </div>
-      </section>
-      {!signedIn && authActionPrompt ? (
-        <section className="panel app-shell-auth-prompt" aria-live="polite">
-          <div className="row">
-            <strong>Telegram sign-in required</strong>
-            <button type="button" className="secondary-button" onClick={() => setAuthActionPrompt('')}>Dismiss</button>
-          </div>
-          <p className="hint">{authActionPrompt}</p>
-        </section>
-      ) : null}
       {!signedIn ? (
-        <section className="panel auth-shell-gate" aria-live="polite">
-          <div className="auth-gate-content">
-            <div className="auth-gate-copy">
-              <p className="kicker">Session gate</p>
-              <h2>Secure Telegram sign-in for your workspace</h2>
-              {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-              <p>Authenticate to unlock the account workspace, live sync operations, and connector controls. This in-shell gate keeps you in the product flow.</p>
-              <ul className="auth-gate-feature-list">
-                <li>Account-aware dashboard context</li>
-                <li>Provider onboarding and Add Account flows</li>
-                <li>Connector sync controls and diagnostics</li>
-              </ul>
-            </div>
-            <div className="auth-gate-widget-wrap">
-              {telegramConfig?.oidcEnabled ? (
-                <button className="primary-cta" onClick={startOidcFlow}>Continue with Telegram</button>
+        <section className="panel">
+          <h2>Session</h2>
+          {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
+          <p>Primary login path: Telegram authenticated session.</p>
+          {telegramConfig?.oidcEnabled ? (
+            <button onClick={startOidcFlow}>Sign in with Telegram</button>
+          ) : (
+            <div ref={widgetWrapRef}>
+              {!isCanonicalHost ? (
+                <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
               ) : (
-                <div ref={widgetWrapRef}>
-                  {!isCanonicalHost ? (
-                    <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
-                  ) : (
-                    isConfigLoading ? <p className="hint">Loading Telegram sign-in…</p> : null
-                  )}
-                  {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
-                  {configLoadFailed ? (
-                    <button onClick={() => loadTelegramAuthConfig()} type="button">
-                      Retry Telegram setup
-                    </button>
-                  ) : null}
-                  {authDebugEnabled && widgetDiagnostics.length ? (
-                    <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
-                  ) : null}
-                </div>
+                <>
+                  {isConfigLoading ? <p className="hint">Preparing secure Telegram sign-in…</p> : null}
+                  <script
+                    async
+                    src="https://telegram.org/js/telegram-widget.js?22"
+                    data-telegram-login={telegramConfig?.botUsername || 'TaliTradeBot'}
+                    data-size="large"
+                    data-userpic="false"
+                    data-request-access="write"
+                    data-onauth="onTelegramAuth(user)"
+                    onLoad={() => setWidgetScriptLoaded(true)}
+                    onError={() => setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')}
+                  />
+                  <p className="hint">Telegram widget mode enabled.</p>
+                </>
               )}
+              {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
+              {configLoadFailed ? (
+                <button onClick={() => loadTelegramAuthConfig()} type="button">
+                  Retry Telegram setup
+                </button>
+              ) : null}
+              {authDebugEnabled && widgetDiagnostics.length ? (
+                <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
+              ) : null}
             </div>
-          </div>
+          )}
         </section>
-      ) : null}
+      ) : (
+        <>
+          <section className="panel app-shell-top">
+            <div className="app-shell-nav-block">
+              <nav className="app-nav" aria-label="Primary app navigation">
+                <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
+                <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/connections">Connections</NavLink>
+                <button
+                  type="button"
+                  className="app-nav-link add-account-nav-link"
+                  onClick={() => openAddAccountFlow('mt5_bridge')}
+                >
+                  Add Account
+                </button>
+              </nav>
+              <p className="hint app-shell-nav-hint">
+                <strong>Accounts</strong> is where you add and manage trading accounts. <strong>Connections</strong> is for integration setup and connector operations.
+              </p>
+            </div>
+            <div className="row app-shell-actions">
+              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add Account</button>
+              <AccountSwitcher
+                accounts={unifiedAccountWorkspaces}
+                selectedAccountKey={selectedAccountKey}
+                onSelectAccount={setSelectedAccountKey}
+              />
+            </div>
+          </section>
 
-      {signedIn && hasZeroConnectedAccounts ? (
-        <section className="panel first-run-shell-cta" aria-live="polite">
-          <div className="row">
-            <h2>Start your account workspace</h2>
-            <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
-          </div>
-          <p className="hint">
-            Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
-          </p>
-        </section>
-      ) : null}
+          {hasZeroConnectedAccounts ? (
+            <section className="panel first-run-shell-cta" aria-live="polite">
+              <div className="row">
+                <h2>Get started by adding your first account</h2>
+                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
+              </div>
+              <p className="hint">
+                Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
+              </p>
+            </section>
+          ) : null}
 
-      <Routes>
+          <Routes>
             <Route path="/" element={<Navigate to="/app" replace />} />
             <Route
               path="/app"
               element={(
                 <AppLandingPage
-                  signedIn={signedIn}
                   hasZeroConnectedAccounts={hasZeroConnectedAccounts}
                   accountConnectionState={accountConnectionState}
-                  onAddAccount={openAddAccountFlow}
-                  selectedAccount={selectedAccount}
-                  accountWorkspaces={unifiedAccountWorkspaces}
-                  managedConnectors={managedConnectors}
-                  syncHistory={syncHistory}
-                  formatDate={formatDate}
-                  isWorkspaceLoading={isWorkspaceLoading}
-                  workspaceLoadError={workspaceLoadError}
-                  onRefreshWorkspace={() => loadConnectorData({ silent: true })}
+                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
                 />
               )}
             />
@@ -1098,17 +846,12 @@ function App() {
               path="/app/accounts"
               element={(
                 <AccountsOverviewPage
-                  signedIn={signedIn}
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
-                  detailAccountKey={detailAccountKey}
-                  onDetailAccountChange={setDetailAccountKey}
-                  onAddAccount={openAddAccountFlow}
+                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}
-                  isWorkspaceLoading={isWorkspaceLoading}
-                  onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
               )}
             />
@@ -1142,33 +885,30 @@ function App() {
                   createManualAccount={createManualAccount}
                   createManualTrade={createManualTrade}
                   importCsvTrades={importCsvTrades}
-                  onAddAccount={openAddAccountFlow}
+                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
                   addFlowIntent={addFlowIntent}
-                  selectedAccount={selectedAccount}
-                  accountWorkspaces={unifiedAccountWorkspaces}
-                  isWorkspaceLoading={isWorkspaceLoading}
-                  onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
               )}
             />
             <Route path="*" element={<Navigate to="/app/accounts" replace />} />
-      </Routes>
-      <AddAccountFlowModal
-        isOpen={isAddAccountOpen}
-        providers={addAccountProviders}
-        selectedProviderType={selectedProviderType}
-        setSelectedProviderType={setSelectedProviderType}
-        draft={addAccountDraft}
-        setDraft={setAddAccountDraft}
-        onClose={closeAddAccountFlow}
-        onSubmit={submitAddAccount}
-        onCheckMt5Pairing={checkMt5Pairing}
-        onCreateMt5PairingToken={createPairingToken}
-        onLoadMt5RegistrationStatus={loadMt5RegistrationStatus}
-        isSubmitting={isAddAccountSubmitting}
-        error={addAccountError}
-        successMessage={addAccountSuccessMessage}
-      />
+          </Routes>
+          <AddAccountFlowModal
+            isOpen={isAddAccountOpen}
+            providers={addAccountProviders}
+            selectedProviderType={selectedProviderType}
+            setSelectedProviderType={setSelectedProviderType}
+            draft={addAccountDraft}
+            setDraft={setAddAccountDraft}
+            onClose={closeAddAccountFlow}
+            onSubmit={submitAddAccount}
+            onCheckMt5Pairing={checkMt5Pairing}
+            onCreateMt5PairingToken={createPairingToken}
+            onLoadMt5RegistrationStatus={loadMt5RegistrationStatus}
+            isSubmitting={isAddAccountSubmitting}
+            error={addAccountError}
+          />
+        </>
+      )}
     </div>
   )
 }

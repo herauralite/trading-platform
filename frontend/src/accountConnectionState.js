@@ -3,7 +3,6 @@ const USABLE_CONNECTION_STATUSES = new Set([
   'active',
   'paper_connected',
   'live_connected',
-  'account_verified',
   'degraded',
   'sync_error',
 ])

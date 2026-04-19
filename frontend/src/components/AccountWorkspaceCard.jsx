@@ -8,39 +8,18 @@ function formatTimestamp(value) {
   return date.toLocaleString()
 }
 
-function accountStateHelper(accountState) {
-  if (accountState === 'usable') return 'This account is usable now and can become your active workspace focus.'
-  if (accountState === 'pending') return 'Setup is still in progress. Finish provider setup before this can be active.'
-  return 'Historical/disconnected record. Reconnect or resync provider before this can be active.'
-}
-
-function AccountWorkspaceCard({ account, isSelected, onSelect, onOpenDetails, accountState = 'stale' }) {
+function AccountWorkspaceCard({ account, isSelected, onSelect }) {
   const connectionMeta = connectionStatusMeta(account.connection_status)
   const displayName = account.display_label || account.external_account_id || account.account_key
-  const stateLabel = accountState === 'usable'
-    ? 'Usable'
-    : accountState === 'pending'
-      ? 'Pending-only'
-      : 'Stale / inactive'
-
-  const canSetActive = accountState === 'usable' && !isSelected
-  const buttonLabel = isSelected
-    ? 'Current Active Account'
-    : accountState === 'usable'
-      ? 'Set Active Account'
-      : accountState === 'pending'
-        ? 'Pending setup (not active yet)'
-        : 'Inactive record (not active)'
 
   return (
-    <article className={`account-card account-card-${accountState}${isSelected ? ' selected selected-focused' : ''}`}>
+    <article className={`account-card${isSelected ? ' selected' : ''}`}>
       <div className="row account-card-top">
         <div>
           <h3>{displayName}</h3>
           <p className="hint mono">{account.account_key}</p>
         </div>
         <div className="row">
-          <span className="pill">{stateLabel}</span>
           {account.is_primary ? <span className="pill primary-pill">Primary</span> : null}
           {isSelected ? <span className="pill">Active Context</span> : null}
         </div>
@@ -49,19 +28,10 @@ function AccountWorkspaceCard({ account, isSelected, onSelect, onOpenDetails, ac
       <div className="row">
         <span className="pill">{account.source_label}</span>
         <span className="pill">{account.broker_name || 'Unknown broker'}</span>
-        {account.environment ? <span className="pill">{String(account.environment).toUpperCase()}</span> : null}
         {account.account_type ? <span className="pill">{account.account_type}</span> : null}
       </div>
 
       <div className="account-card-grid">
-        <div className="meta-card">
-          <span className="hint">External account ID</span>
-          <strong className="mono">{account.external_account_id || '—'}</strong>
-        </div>
-        <div className="meta-card">
-          <span className="hint">Trading account ID</span>
-          <strong className="mono">{account.trading_account_id ?? '—'}</strong>
-        </div>
         <div className="meta-card">
           <span className="hint">Connection status</span>
           <AccountStatusBadge value={account.connection_status} />
@@ -80,47 +50,11 @@ function AccountWorkspaceCard({ account, isSelected, onSelect, onOpenDetails, ac
           <span className="hint">Last activity</span>
           <strong>{formatTimestamp(account.last_activity_at)}</strong>
         </div>
-        {account.account_summary?.equity != null ? (
-          <div className="meta-card">
-            <span className="hint">Equity</span>
-            <strong>{account.account_summary.equity}</strong>
-          </div>
-        ) : null}
-        {account.account_summary?.buying_power != null ? (
-          <div className="meta-card">
-            <span className="hint">Buying power</span>
-            <strong>{account.account_summary.buying_power}</strong>
-          </div>
-        ) : null}
-        {account.account_summary?.cash != null ? (
-          <div className="meta-card">
-            <span className="hint">Cash</span>
-            <strong>{account.account_summary.cash}</strong>
-          </div>
-        ) : null}
-        {account.account_summary?.portfolio_value != null ? (
-          <div className="meta-card">
-            <span className="hint">Portfolio value</span>
-            <strong>{account.account_summary.portfolio_value}</strong>
-          </div>
-        ) : null}
       </div>
-      <p className="hint">Validation: {account.last_validated_at ? 'verified' : 'pending'} · Last validated: {formatTimestamp(account.last_validated_at)}</p>
-      <p className="hint">{accountStateHelper(accountState)}</p>
 
-      <div className="row">
-        <button type="button" className="secondary-button" onClick={() => onOpenDetails?.(account.account_key)}>
-          View details
-        </button>
-        <button
-          type="button"
-          className={canSetActive ? 'primary-cta' : 'secondary-button'}
-          disabled={!canSetActive}
-          onClick={() => onSelect(account.account_key)}
-        >
-          {buttonLabel}
-        </button>
-      </div>
+      <button type="button" onClick={() => onSelect(account.account_key)}>
+        {isSelected ? 'Selected' : 'Open account context'}
+      </button>
     </article>
   )
 }

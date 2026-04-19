@@ -37,8 +37,8 @@ const PROVIDER_DEFAULTS = {
     title: 'Alpaca API',
     shortLabel: 'Alpaca',
     flowType: 'alpaca_connect',
-    badge: 'Read-only',
-    description: 'Connect read-only Alpaca API credentials and validate your account server-side.',
+    badge: 'Beta',
+    description: 'Connect read-only Alpaca API credentials to validate account access.',
     ctaLabel: 'Connect Alpaca',
   },
   oanda_api: {

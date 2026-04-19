@@ -1,36 +1,25 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import AccountStatusBadge from '../components/AccountStatusBadge'
 import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
-import AccountDetailPanel from '../components/AccountDetailPanel'
-import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from '../accountConnectionState'
-import { classifyWorkspaceAccountState, resolvePreferredDetailAccountKey } from '../workspaceAccountSelection'
-import { buildConnectionsIntentPath } from '../accountConnectionIntent'
+import { deriveAccountConnectionState } from '../accountConnectionState'
 
 function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
 }
 
 function AccountsOverviewPage({
-  signedIn,
   accountWorkspaces,
   selectedAccount,
   onSelectAccount,
-  detailAccountKey,
-  onDetailAccountChange,
   onAddAccount,
   recentlyAddedAccountLabel,
   formatDate,
-  isWorkspaceLoading,
-  onRefreshWorkspace,
 }) {
   const summary = useMemo(() => {
     const connectionState = deriveAccountConnectionState(accountWorkspaces)
-    const usableAccounts = accountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account))
-    const pendingAccounts = accountWorkspaces.filter((account) => !isCurrentlyConnectedAccount(account) && isPendingOnlyAccount(account))
-    const staleAccounts = accountWorkspaces.filter((account) => !isCurrentlyConnectedAccount(account) && !isPendingOnlyAccount(account))
     const attention = countBy(accountWorkspaces, (account) => account.connection_status === 'sync_error' || account.sync_state === 'failed')
     const syncing = countBy(accountWorkspaces, (account) => ['queued', 'running', 'retrying'].includes(account.sync_state))
-    const primary = usableAccounts.find((account) => account.is_primary) || null
+    const primary = accountWorkspaces.find((account) => account.is_primary) || null
     return {
       total: connectionState.totalCount,
       connected: connectionState.connectedUsableCount,
@@ -40,158 +29,70 @@ function AccountsOverviewPage({
       syncing,
       primary,
       hasZeroConnectedAccounts: connectionState.hasZeroConnectedAccounts,
-      usableAccounts,
-      pendingAccounts,
-      staleAccounts,
     }
   }, [accountWorkspaces])
 
-  const detailAccount = useMemo(
-    () => accountWorkspaces.find((account) => account.account_key === detailAccountKey) || null,
-    [accountWorkspaces, detailAccountKey],
-  )
-
-  useEffect(() => {
-    const resolved = resolvePreferredDetailAccountKey(accountWorkspaces, {
-      currentDetailAccountKey: detailAccountKey,
-      selectedActiveAccountKey: selectedAccount?.account_key || '',
-    })
-    if (resolved === detailAccountKey) return
-    onDetailAccountChange(resolved)
-  }, [accountWorkspaces, detailAccountKey, onDetailAccountChange, selectedAccount])
-
-  if (!signedIn) {
-    return (
-      <section className="panel page-panel premium-workspace-panel accounts-page">
-        <div className="panel-header row">
-          <div>
-            <p className="kicker">Accounts</p>
-            <h2>Accounts</h2>
-          </div>
-          <button type="button" disabled onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
-        </div>
-        <p className="hint">
-          Sign in with Telegram from the app shell to manage account cards, active account selection, and provider-linked workspace data.
-        </p>
-      </section>
-    )
-  }
-
-  if (isWorkspaceLoading) {
-    return (
-      <section className="panel page-panel premium-workspace-panel accounts-page">
-        <div className="panel-header row">
-          <h2>Accounts</h2>
-          <button type="button" disabled>Add Account</button>
-        </div>
-        <div className="skeleton-grid">
-          <div className="skeleton-card" />
-          <div className="skeleton-card" />
-          <div className="skeleton-card" />
-        </div>
-      </section>
-    )
-  }
-
   if (summary.hasZeroConnectedAccounts) {
-    const hasPendingOnly = summary.pendingAccounts.length > 0 && summary.staleAccounts.length === 0
-    const hasStaleOnly = summary.pendingAccounts.length === 0 && summary.staleAccounts.length > 0
     return (
-      <section className="panel page-panel premium-workspace-panel accounts-page">
-        <div className="panel-header row">
+      <section className="panel">
+        <div className="row">
           <h2>Accounts</h2>
-          <div className="row">
-            <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh</button>
-            <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
-          </div>
+          <button type="button" onClick={onAddAccount}>Add Account</button>
         </div>
+        <p className="hint">Accounts is your primary onboarding space after sign-in.</p>
         <div className="empty-state account-onboarding-empty-state">
           <h3>Connect your first trading account</h3>
           <p className="empty-state-copy">
-            Accounts is the primary place to attach providers and shape your real workspace identity.
+            Start here to activate your account workspace. Supported setup paths:
           </p>
           <ul className="onboarding-path-list">
-            <li><strong>MT5 Bridge</strong> onboarding</li>
-            <li><strong>FundingPips Extension</strong> attach flow</li>
-            <li><strong>TradingView Webhook</strong> signal intake</li>
-            <li><strong>CSV Import</strong> account history import</li>
-            <li><strong>Manual Journal</strong> account + trade recording</li>
+            <li><strong>MT5</strong> for bridge-based MetaTrader 5 account onboarding.</li>
+            <li><strong>FundingPips Extension</strong> to connect through the browser extension flow.</li>
+            <li><strong>TradingView Webhook</strong> for signal-driven account automation.</li>
+            <li><strong>CSV Import</strong> to import historical trades.</li>
+            <li><strong>Manual Journal</strong> to add accounts and trades manually.</li>
           </ul>
-          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add your first account</button>
-          <p className="hint">Inventory detected: {summary.total} rows · pending-only: {summary.pendingOnly} · stale/inactive: {summary.staleInactive}.</p>
-          {hasPendingOnly ? <p className="hint"><strong>Current state:</strong> pending-only workspace. Finish connector setup to make an account usable.</p> : null}
-          {hasStaleOnly ? <p className="hint"><strong>Current state:</strong> stale/inactive only. Reconnect a provider to restore an actively usable account.</p> : null}
+          <button type="button" className="primary-cta" onClick={onAddAccount}>Add your first account</button>
+          {summary.total > 0 ? (
+            <p className="hint">
+              Existing workspace rows: {summary.total} (pending-only: {summary.pendingOnly}, inactive/stale: {summary.staleInactive}).
+              Onboarding stays visible until at least one account is currently connected.
+            </p>
+          ) : null}
+          <p className="hint">Need operational setup and connector controls later? Use <strong>Connections</strong>.</p>
         </div>
-        {summary.pendingAccounts.length > 0 ? (
-          <div className="card">
-            <h3>Pending setup accounts</h3>
-            <p className="hint">These records are tracked but are not yet usable connected accounts.</p>
-            <div className="accounts-grid">
-              {summary.pendingAccounts.map((account) => (
-                <AccountWorkspaceCard
-                  key={account.account_key}
-                  account={account}
-                  isSelected={selectedAccount?.account_key === account.account_key}
-                  accountState={classifyWorkspaceAccountState(account)}
-                  onSelect={onSelectAccount}
-                />
-              ))}
-            </div>
-          </div>
-        ) : null}
-        {summary.staleAccounts.length > 0 ? (
-          <div className="card">
-            <h3>Historical / disconnected records</h3>
-            <p className="hint">Shown for history and audit context only. These are intentionally not counted as active connected workspace accounts.</p>
-            <ul className="connector-account-list">
-              {summary.staleAccounts.map((account) => (
-                <li key={`stale-onboarding-${account.account_key}`}>
-                  <span>{account.display_label || account.external_account_id || account.account_key}</span>
-                  <span className="pill">{account.source_label || account.connector_type || 'Unknown source'}</span>
-                  <span className="pill">{account.connection_status || 'disconnected'}</span>
-                  <span className="hint">Last sync {formatDate(account.last_sync_at)} · Updated {formatDate(account.last_activity_at)}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        ) : null}
       </section>
     )
   }
 
   return (
-    <section className="panel page-panel premium-workspace-panel accounts-page">
-      <div className="panel-header row">
-        <div>
-          <p className="kicker">Accounts</p>
-          <h2>Manage connected accounts</h2>
-        </div>
-        <div className="row">
-          <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh</button>
-          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
-        </div>
+    <section className="panel">
+      <div className="row">
+        <h2>Accounts</h2>
+        <button type="button" onClick={onAddAccount}>Add Account</button>
       </div>
-      <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
-      <p className="hint"><strong>Set Active Account</strong> on any card to move workspace focus across Dashboard and Connections.</p>
-      <p className="hint"><strong>Workspace rule:</strong> only usable connected accounts can become active workspace context. Pending and stale records stay visible for truth and recovery workflows.</p>
+      <p className="hint">
+        This is the main workspace for all connected trading accounts. Connector health is displayed using workspace rollup semantics.
+      </p>
+
 
       {recentlyAddedAccountLabel ? (
-        <div className="card add-success-banner premium-success-banner">
-          <strong>Account added.</strong>
-          <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>.</p>
+        <div className="card add-success-banner">
+          <strong>Account added successfully.</strong>
+          <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>. You can manage connector/bridge details in Connections.</p>
         </div>
       ) : null}
-      <div className="meta-grid accounts-summary-grid premium-summary-grid accounts-summary-premium-grid">
+      <div className="meta-grid accounts-summary-grid">
         <div className="meta-card summary-card">
-          <span className="hint">All accounts</span>
+          <span className="hint">All workspace accounts</span>
           <strong>{summary.total}</strong>
         </div>
         <div className="meta-card summary-card">
-          <span className="hint">Healthy</span>
+          <span className="hint">Healthy connections</span>
           <strong>{summary.connected}</strong>
         </div>
         <div className="meta-card summary-card">
-          <span className="hint">Syncing</span>
+          <span className="hint">Currently syncing</span>
           <strong>{summary.syncing}</strong>
         </div>
         <div className="meta-card summary-card">
@@ -199,30 +100,8 @@ function AccountsOverviewPage({
           <strong>{summary.attention}</strong>
         </div>
       </div>
-      {selectedAccount ? (
-        <div className="card current-active-account-strip current-active-account-hero">
-          <div className="row">
-            <strong>Current active account</strong>
-            {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
-            <span className="pill">Usable context</span>
-          </div>
-          <p>
-            <strong>{selectedAccount.display_label || selectedAccount.external_account_id || selectedAccount.account_key}</strong>
-            {' · '}
-            <span className="pill">{selectedAccount.source_label || selectedAccount.connector_type}</span>
-            <span className="pill">Connection {selectedAccount.connection_status || 'disconnected'}</span>
-            <span className="pill">Sync {selectedAccount.sync_state || 'idle'}</span>
-          </p>
-          <p className="hint">This account is the shared focus for Dashboard and Connections until you intentionally switch it.</p>
-        </div>
-      ) : (
-        <div className="card current-active-account-strip current-active-account-hero">
-          <strong>Current active account</strong>
-          <p className="hint">No active usable account is selected right now. Choose a usable account card to set focused workspace context.</p>
-        </div>
-      )}
 
-      <div className="card selected-account-panel premium-focus-card accounts-focus-panel">
+      <div className="card selected-account-panel">
         <div className="row">
           <h3>Active account context</h3>
           {selectedAccount?.is_primary ? <span className="pill primary-pill">Primary</span> : null}
@@ -236,60 +115,37 @@ function AccountsOverviewPage({
             </p>
             <div className="row">
               <span className="pill">{selectedAccount.source_label}</span>
-              <span className="pill">{selectedAccount.broker_name || 'Broker not yet available'}</span>
-              {selectedAccount.environment ? <span className="pill">{String(selectedAccount.environment).toUpperCase()}</span> : null}
-              {selectedAccount.provider_state ? <span className="pill">{String(selectedAccount.provider_state).replace(/_/g, ' ')}</span> : null}
+              <span className="pill">{selectedAccount.broker_name || 'Unknown broker'}</span>
               <span className="hint">Connection</span>
               <AccountStatusBadge value={selectedAccount.connection_status} />
+              {selectedAccount.provider_state ? <span className="pill">{selectedAccount.provider_state}</span> : null}
               <span className="hint">Sync</span>
               <AccountStatusBadge variant="sync" value={selectedAccount.sync_state} />
             </div>
-            <p className="hint">Last activity: {formatDate(selectedAccount.last_activity_at)} · Last sync: {formatDate(selectedAccount.last_sync_at)}</p>
-            <div className="meta-grid">
-              <div className="meta-card">
-                <span className="hint">Connection health</span>
-                <strong>{selectedAccount.connection_status || 'disconnected'}</strong>
+            {selectedAccount.connector_type === 'tradingview_webhook' ? (
+              <div className="meta tradingview-activity-preview">
+                <p className="hint">
+                  {selectedAccount.connection_status === 'active'
+                    ? `Webhook active · Last alert received ${formatDate(selectedAccount.tradingview_last_event_at || selectedAccount.last_activity_at)}`
+                    : 'Awaiting first TradingView alert'}
+                </p>
+                {(selectedAccount.recent_events || []).length > 0 ? (
+                  <ul>
+                    {selectedAccount.recent_events.slice(0, 3).map((event, index) => (
+                      <li key={`${selectedAccount.account_key}-event-${index}`}>
+                        <strong>{event.symbol || event.event_type || 'alert'}</strong>
+                        {event.timeframe ? ` · ${event.timeframe}` : ''}
+                        {' · '}
+                        {formatDate(event.received_at)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </div>
-              <div className="meta-card">
-                <span className="hint">Validation</span>
-                <strong>{selectedAccount.last_validated_at ? 'Verified' : 'Pending'}</strong>
-              </div>
-              <div className="meta-card">
-                <span className="hint">Last validated</span>
-                <strong>{formatDate(selectedAccount.last_validated_at)}</strong>
-              </div>
-              <div className="meta-card">
-                <span className="hint">Environment</span>
-                <strong>{selectedAccount.environment ? String(selectedAccount.environment).toUpperCase() : '—'}</strong>
-              </div>
-              {selectedAccount.account_summary?.equity != null ? (
-                <div className="meta-card">
-                  <span className="hint">Equity</span>
-                  <strong>{selectedAccount.account_summary.equity}</strong>
-                </div>
-              ) : null}
-              {selectedAccount.account_summary?.buying_power != null ? (
-                <div className="meta-card">
-                  <span className="hint">Buying power</span>
-                  <strong>{selectedAccount.account_summary.buying_power}</strong>
-                </div>
-              ) : null}
-              {selectedAccount.account_summary?.cash != null ? (
-                <div className="meta-card">
-                  <span className="hint">Cash</span>
-                  <strong>{selectedAccount.account_summary.cash}</strong>
-                </div>
-              ) : null}
-              {selectedAccount.account_summary?.portfolio_value != null ? (
-                <div className="meta-card">
-                  <span className="hint">Portfolio value</span>
-                  <strong>{selectedAccount.account_summary.portfolio_value}</strong>
-                </div>
-              ) : null}
-            </div>
+            ) : null}
           </>
         ) : (
-          <p className="hint">Select an account to establish workspace focus.</p>
+          <p className="hint">Select an account to establish workspace context for future account-specific views.</p>
         )}
         {summary.primary ? (
           <p className="hint">
@@ -300,75 +156,15 @@ function AccountsOverviewPage({
         )}
       </div>
 
-      <div className="accounts-workspace-layout">
-        <div className="accounts-workspace-list">
-          <div className="accounts-grid">
-            {summary.usableAccounts.map((account) => (
-              <AccountWorkspaceCard
-                key={account.account_key}
-                account={account}
-                isSelected={selectedAccount?.account_key === account.account_key}
-                accountState={classifyWorkspaceAccountState(account)}
-                onSelect={(accountKey) => {
-                  onSelectAccount(accountKey)
-                  onDetailAccountChange(accountKey)
-                }}
-                onOpenDetails={onDetailAccountChange}
-              />
-            ))}
-          </div>
-          {summary.pendingAccounts.length > 0 ? (
-            <div className="card">
-              <h3>Pending setup accounts</h3>
-              <p className="hint">These accounts exist but still require connector setup or sync completion before becoming fully usable.</p>
-              <div className="accounts-grid">
-                {summary.pendingAccounts.map((account) => (
-                  <AccountWorkspaceCard
-                    key={account.account_key}
-                    account={account}
-                    isSelected={selectedAccount?.account_key === account.account_key}
-                    accountState={classifyWorkspaceAccountState(account)}
-                    onSelect={onSelectAccount}
-                    onOpenDetails={onDetailAccountChange}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
-          {summary.staleAccounts.length > 0 ? (
-            <div className="card">
-              <h3>Historical / disconnected records</h3>
-              <p className="hint">These rows are shown for audit context and are intentionally not treated as active account presence.</p>
-              <div className="accounts-grid">
-                {summary.staleAccounts.map((account) => (
-                  <AccountWorkspaceCard
-                    key={account.account_key}
-                    account={account}
-                    isSelected={selectedAccount?.account_key === account.account_key}
-                    accountState={classifyWorkspaceAccountState(account)}
-                    onSelect={onSelectAccount}
-                    onOpenDetails={onDetailAccountChange}
-                  />
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </div>
-
-        <AccountDetailPanel
-          account={detailAccount}
-          accountState={detailAccount ? classifyWorkspaceAccountState(detailAccount) : 'stale'}
-          isSelected={selectedAccount?.account_key === detailAccount?.account_key}
-          onSetActive={(accountKey) => {
-            onSelectAccount(accountKey)
-            onDetailAccountChange(accountKey)
-          }}
-          dashboardPath="/app"
-          connectionsManagePath={detailAccount ? buildConnectionsIntentPath(detailAccount, 'manage') : '/app/connections'}
-          connectionsSetupPath={detailAccount ? buildConnectionsIntentPath(detailAccount, 'setup') : '/app/connections'}
-          connectionsReconnectPath={detailAccount ? buildConnectionsIntentPath(detailAccount, 'reconnect') : '/app/connections'}
-          onRefreshWorkspace={onRefreshWorkspace}
-        />
+      <div className="accounts-grid">
+        {accountWorkspaces.map((account) => (
+          <AccountWorkspaceCard
+            key={account.account_key}
+            account={account}
+            isSelected={selectedAccount?.account_key === account.account_key}
+            onSelect={onSelectAccount}
+          />
+        ))}
       </div>
     </section>
   )
