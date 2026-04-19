@@ -4,16 +4,17 @@
 
 body {
   background:
-    radial-gradient(circle at 10% -20%, rgba(70, 150, 255, 0.2) 0%, rgba(7, 14, 27, 0) 45%),
-    radial-gradient(circle at 100% 0%, rgba(129, 90, 255, 0.16) 0%, rgba(7, 14, 27, 0) 42%),
-    linear-gradient(180deg, #08111f 0%, #060c18 46%, #03070f 100%);
+    radial-gradient(circle at 8% -15%, rgba(68, 140, 255, 0.24) 0%, rgba(7, 14, 27, 0) 42%),
+    radial-gradient(circle at 95% -8%, rgba(134, 88, 255, 0.18) 0%, rgba(7, 14, 27, 0) 38%),
+    radial-gradient(circle at 50% 115%, rgba(23, 166, 228, 0.12) 0%, rgba(3, 7, 15, 0) 44%),
+    linear-gradient(180deg, #08101d 0%, #050b16 58%, #02050b 100%);
   color: #e8f0ff;
 }
 
 #root {
   width: 100%;
   margin: 0 auto;
-  padding: 14px 14px 92px;
+  padding: 14px 14px 96px;
   font-family: Inter, system-ui, sans-serif;
   color: #e6eefc;
   box-sizing: border-box;
@@ -23,7 +24,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 1160px;
+  max-width: 1180px;
   margin: 0 auto;
 }
 
@@ -33,41 +34,49 @@ body {
 .meta-card,
 .empty-state,
 .account-card {
-  border: 1px solid rgba(100, 138, 198, 0.28);
-  border-radius: 14px;
-  background: linear-gradient(175deg, rgba(14, 24, 42, 0.96), rgba(8, 15, 29, 0.98));
-  box-shadow: 0 18px 38px rgba(0, 6, 18, 0.5);
+  border: 1px solid rgba(100, 138, 198, 0.27);
+  border-radius: 16px;
+  background:
+    linear-gradient(176deg, rgba(15, 26, 45, 0.97), rgba(8, 15, 29, 0.99));
+  box-shadow:
+    0 22px 45px rgba(0, 5, 16, 0.54),
+    inset 0 1px 0 rgba(158, 197, 255, 0.07);
 }
 
 .app-header-shell {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 14px;
+  padding: 14px 16px;
+  position: sticky;
+  top: 8px;
+  z-index: 60;
+  backdrop-filter: blur(8px);
 }
 
 .app-brand-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .brand-avatar {
-  width: 38px;
-  height: 38px;
-  border-radius: 12px;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
   display: grid;
   place-items: center;
-  font-weight: 700;
-  background: linear-gradient(160deg, #5dd2ff, #356cff);
-  color: #041226;
+  font-weight: 800;
+  background: linear-gradient(145deg, #63dbff, #3e6dff);
+  color: #031225;
+  box-shadow: 0 10px 22px rgba(58, 102, 220, 0.42);
 }
 
 .app-header-shell h1 {
-  font-size: 1.35rem;
+  font-size: 1.45rem;
   line-height: 1.1;
   margin: 0;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.015em;
 }
 
 .shell-kicker {
@@ -86,10 +95,10 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgba(96, 136, 204, 0.45);
-  background: rgba(8, 15, 29, 0.9);
+  border: 1px solid rgba(114, 157, 229, 0.5);
+  background: rgba(9, 18, 34, 0.82);
   border-radius: 999px;
-  padding: 6px 10px;
+  padding: 7px 12px;
 }
 
 .header-clock,
@@ -109,11 +118,11 @@ body {
 }
 
 .page-panel {
-  padding: 16px;
+  padding: 18px;
 }
 
 .panel-header {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
 .panel-header h2,
@@ -123,15 +132,38 @@ h3 {
 
 .kicker {
   text-transform: uppercase;
-  letter-spacing: 0.11em;
+  letter-spacing: 0.12em;
   font-size: 10px;
-  color: #58c5ff;
+  color: #5cc7ff;
   margin: 0 0 6px;
 }
 
 .auth-shell-gate {
-  border-color: rgba(96, 208, 255, 0.55);
-  background: linear-gradient(165deg, rgba(11, 26, 45, 0.97), rgba(8, 20, 36, 0.97));
+  border-color: rgba(96, 208, 255, 0.58);
+  background:
+    radial-gradient(circle at 88% 8%, rgba(105, 146, 255, 0.16), transparent 45%),
+    linear-gradient(165deg, rgba(11, 26, 45, 0.98), rgba(8, 20, 36, 0.98));
+}
+
+.auth-gate-content {
+  display: grid;
+  grid-template-columns: minmax(260px, 1.4fr) minmax(220px, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.auth-gate-feature-list {
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: #b8ccec;
+}
+
+.auth-gate-widget-wrap {
+  border: 1px solid rgba(116, 155, 221, 0.4);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(8, 15, 29, 0.82);
+  min-height: 110px;
 }
 
 .app-shell-top {
@@ -140,10 +172,13 @@ h3 {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  border-color: rgba(124, 158, 220, 0.36);
 }
 
 .app-shell-health-strip {
-  padding: 10px 14px;
+  padding: 11px 14px;
+  background:
+    linear-gradient(180deg, rgba(15, 27, 47, 0.95), rgba(9, 16, 30, 0.95));
 }
 
 .app-shell-auth-prompt {
@@ -153,12 +188,12 @@ h3 {
 .app-shell-nav-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 
 .app-nav {
   display: flex;
-  gap: 8px;
+  gap: 9px;
   align-items: center;
 }
 
@@ -166,26 +201,35 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(101, 136, 197, 0.58);
-  border-radius: 10px;
-  padding: 8px 13px;
-  color: #dbe7fb;
-  background: linear-gradient(165deg, rgba(18, 29, 48, 0.95), rgba(10, 18, 32, 0.95));
-  font-weight: 500;
+  border: 1px solid rgba(100, 137, 196, 0.62);
+  border-radius: 11px;
+  padding: 8px 14px;
+  color: #dbe8ff;
+  background: linear-gradient(165deg, rgba(18, 30, 52, 0.96), rgba(9, 17, 32, 0.96));
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 140ms ease;
+}
+
+.app-nav-link:hover {
+  border-color: rgba(134, 168, 232, 0.84);
+  transform: translateY(-1px);
 }
 
 .app-nav-link.active {
-  border-color: rgba(92, 197, 255, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(127, 214, 255, 0.45);
-  background: linear-gradient(160deg, rgba(52, 110, 208, 0.96), rgba(25, 175, 244, 0.96));
+  border-color: rgba(96, 205, 255, 0.95);
+  box-shadow:
+    inset 0 0 0 1px rgba(148, 222, 255, 0.54),
+    0 10px 24px rgba(34, 122, 193, 0.34);
+  background: linear-gradient(155deg, rgba(41, 104, 212, 0.98), rgba(26, 179, 245, 0.98));
   color: #04152b;
 }
 
 .add-account-nav-link {
-  border-color: rgba(181, 150, 255, 0.85);
-  color: #ece1ff;
-  font-weight: 600;
-  background: linear-gradient(145deg, rgba(119, 71, 238, 0.95), rgba(94, 48, 206, 0.95));
+  border-color: rgba(192, 162, 255, 0.95);
+  color: #f2eaff;
+  font-weight: 700;
+  background: linear-gradient(145deg, rgba(123, 72, 244, 0.98), rgba(96, 52, 213, 0.98));
 }
 
 .app-shell-actions {
@@ -199,7 +243,7 @@ h3 {
 }
 
 .account-switcher select {
-  min-width: 250px;
+  min-width: 260px;
 }
 
 .hint {
@@ -223,8 +267,8 @@ h3 {
 
 .meta-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 9px;
 }
 
 .meta-card {
@@ -233,17 +277,43 @@ h3 {
   gap: 4px;
 }
 
-.premium-summary-grid .summary-card {
-  border: 1px solid rgba(107, 146, 212, 0.34);
-  background: linear-gradient(165deg, rgba(18, 35, 59, 0.9), rgba(11, 21, 38, 0.9));
+.premium-summary-grid .summary-card,
+.dashboard-summary-grid .summary-card,
+.accounts-summary-premium-grid .summary-card,
+.connections-method-grid .summary-card {
+  border: 1px solid rgba(110, 150, 219, 0.36);
+  background: linear-gradient(166deg, rgba(19, 37, 62, 0.94), rgba(10, 20, 38, 0.94));
+}
+
+.dashboard-page {
+  border-color: rgba(92, 143, 228, 0.34);
+}
+
+.accounts-page {
+  border-color: rgba(117, 157, 232, 0.39);
+  background:
+    radial-gradient(circle at 0% 0%, rgba(92, 119, 255, 0.12), transparent 34%),
+    linear-gradient(176deg, rgba(15, 26, 45, 0.97), rgba(8, 15, 29, 0.99));
+}
+
+.connections-page {
+  border-color: rgba(95, 170, 208, 0.38);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(63, 177, 230, 0.12), transparent 37%),
+    linear-gradient(176deg, rgba(15, 26, 45, 0.97), rgba(8, 15, 29, 0.99));
 }
 
 .premium-focus-card,
 .premium-activity-card,
 .premium-auth-helper,
 .premium-success-banner,
-.premium-workspace-panel {
-  border-color: rgba(107, 146, 212, 0.35);
+.premium-workspace-panel,
+.connections-connector-card,
+.connections-utility-panel,
+.dashboard-focus-card,
+.accounts-focus-panel,
+.dashboard-activity-card {
+  border-color: rgba(108, 149, 216, 0.37);
 }
 
 .badge,
@@ -286,15 +356,15 @@ h3 {
 
 .empty-state {
   border-style: dashed;
-  border-color: rgba(130, 161, 224, 0.65);
+  border-color: rgba(130, 161, 224, 0.68);
 }
 
 .primary-cta {
   font-size: 14px;
-  font-weight: 600;
-  border: 1px solid rgba(153, 122, 255, 0.75);
-  color: #f2ecff;
-  background: linear-gradient(140deg, #8658ff, #6434d0);
+  font-weight: 700;
+  border: 1px solid rgba(164, 134, 255, 0.84);
+  color: #f4efff;
+  background: linear-gradient(140deg, #8b5fff, #6737d5);
 }
 
 .secondary-button {
@@ -310,7 +380,7 @@ textarea {
   background: rgba(10, 18, 31, 0.9);
   color: #e6eefc;
   border: 1px solid rgba(93, 126, 181, 0.45);
-  border-radius: 8px;
+  border-radius: 9px;
   padding: 8px 10px;
 }
 
@@ -350,7 +420,7 @@ textarea {
 }
 
 .account-card.selected {
-  border-color: rgba(87, 175, 255, 0.7);
+  border-color: rgba(87, 175, 255, 0.75);
 }
 
 .account-card-grid {
@@ -415,7 +485,15 @@ textarea {
 
 @media (max-width: 760px) {
   #root {
-    padding: 10px 10px 88px;
+    padding: 10px 10px 92px;
+  }
+
+  .app-header-shell {
+    position: static;
+  }
+
+  .auth-gate-content {
+    grid-template-columns: 1fr;
   }
 
   .app-shell-top {
@@ -423,16 +501,18 @@ textarea {
   }
 
   .app-nav {
-    width: 100%;
+    width: calc(100% - 16px);
     justify-content: space-between;
     position: fixed;
-    left: 0;
-    right: 0;
-    bottom: 0;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
     z-index: 110;
-    padding: 10px;
-    background: rgba(10, 20, 36, 0.97);
-    border-top: 1px solid rgba(102, 133, 190, 0.35);
+    padding: 9px;
+    background: rgba(8, 18, 34, 0.98);
+    border: 1px solid rgba(102, 133, 190, 0.44);
+    border-radius: 14px;
+    box-shadow: 0 16px 34px rgba(0, 5, 16, 0.58);
   }
 
   .app-nav-link {
