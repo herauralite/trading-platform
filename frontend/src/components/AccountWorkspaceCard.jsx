@@ -17,8 +17,17 @@ function AccountWorkspaceCard({ account, isSelected, onSelect, accountState = 's
       ? 'Pending-only'
       : 'Stale / inactive'
 
+  const canSetActive = accountState === 'usable' && !isSelected
+  const buttonLabel = isSelected
+    ? 'Current Active Account'
+    : accountState === 'usable'
+      ? 'Set Active Account'
+      : accountState === 'pending'
+        ? 'Pending setup (not active yet)'
+        : 'Inactive record (not active)'
+
   return (
-    <article className={`account-card account-card-${accountState}${isSelected ? ' selected' : ''}`}>
+    <article className={`account-card account-card-${accountState}${isSelected ? ' selected selected-focused' : ''}`}>
       <div className="row account-card-top">
         <div>
           <h3>{displayName}</h3>
@@ -92,8 +101,13 @@ function AccountWorkspaceCard({ account, isSelected, onSelect, accountState = 's
       </div>
       <p className="hint">Validation: {account.last_validated_at ? 'verified' : 'pending'} · Last validated: {formatTimestamp(account.last_validated_at)}</p>
 
-      <button type="button" onClick={() => onSelect(account.account_key)}>
-        {isSelected ? 'Active account selected' : 'Set Active Account'}
+      <button
+        type="button"
+        className={canSetActive ? 'primary-cta' : 'secondary-button'}
+        disabled={!canSetActive}
+        onClick={() => onSelect(account.account_key)}
+      >
+        {buttonLabel}
       </button>
     </article>
   )
