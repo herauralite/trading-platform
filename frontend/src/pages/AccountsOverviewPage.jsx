@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo } from 'react'
 import AccountStatusBadge from '../components/AccountStatusBadge'
 import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
 import AccountDetailPanel from '../components/AccountDetailPanel'
 import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from '../accountConnectionState'
+import { classifyWorkspaceAccountState, resolvePreferredDetailAccountKey } from '../workspaceAccountSelection'
 
 function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
@@ -13,14 +14,14 @@ function AccountsOverviewPage({
   accountWorkspaces,
   selectedAccount,
   onSelectAccount,
+  detailAccountKey,
+  onDetailAccountChange,
   onAddAccount,
   recentlyAddedAccountLabel,
   formatDate,
   isWorkspaceLoading,
   onRefreshWorkspace,
 }) {
-  const [detailAccountKey, setDetailAccountKey] = useState('')
-
   const summary = useMemo(() => {
     const connectionState = deriveAccountConnectionState(accountWorkspaces)
     const usableAccounts = accountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account))
@@ -44,30 +45,19 @@ function AccountsOverviewPage({
     }
   }, [accountWorkspaces])
 
-  function accountState(account) {
-    if (isCurrentlyConnectedAccount(account)) return 'usable'
-    if (isPendingOnlyAccount(account)) return 'pending'
-    return 'stale'
-  }
-
   const detailAccount = useMemo(
     () => accountWorkspaces.find((account) => account.account_key === detailAccountKey) || null,
     [accountWorkspaces, detailAccountKey],
   )
 
   useEffect(() => {
-    if (!accountWorkspaces.length) {
-      if (detailAccountKey) setDetailAccountKey('')
-      return
-    }
-    if (selectedAccount?.account_key && selectedAccount.account_key !== detailAccountKey) {
-      setDetailAccountKey(selectedAccount.account_key)
-      return
-    }
-    if (!detailAccountKey || !accountWorkspaces.some((account) => account.account_key === detailAccountKey)) {
-      setDetailAccountKey(accountWorkspaces[0].account_key)
-    }
-  }, [accountWorkspaces, detailAccountKey, selectedAccount])
+    const resolved = resolvePreferredDetailAccountKey(accountWorkspaces, {
+      currentDetailAccountKey: detailAccountKey,
+      selectedActiveAccountKey: selectedAccount?.account_key || '',
+    })
+    if (resolved === detailAccountKey) return
+    onDetailAccountChange(resolved)
+  }, [accountWorkspaces, detailAccountKey, onDetailAccountChange, selectedAccount])
 
   if (!signedIn) {
     return (
@@ -141,7 +131,7 @@ function AccountsOverviewPage({
                   key={account.account_key}
                   account={account}
                   isSelected={selectedAccount?.account_key === account.account_key}
-                  accountState={accountState(account)}
+                  accountState={classifyWorkspaceAccountState(account)}
                   onSelect={onSelectAccount}
                 />
               ))}
@@ -317,12 +307,12 @@ function AccountsOverviewPage({
                 key={account.account_key}
                 account={account}
                 isSelected={selectedAccount?.account_key === account.account_key}
-                accountState={accountState(account)}
+                accountState={classifyWorkspaceAccountState(account)}
                 onSelect={(accountKey) => {
                   onSelectAccount(accountKey)
-                  setDetailAccountKey(accountKey)
+                  onDetailAccountChange(accountKey)
                 }}
-                onOpenDetails={setDetailAccountKey}
+                onOpenDetails={onDetailAccountChange}
               />
             ))}
           </div>
@@ -336,9 +326,9 @@ function AccountsOverviewPage({
                     key={account.account_key}
                     account={account}
                     isSelected={selectedAccount?.account_key === account.account_key}
-                    accountState={accountState(account)}
+                    accountState={classifyWorkspaceAccountState(account)}
                     onSelect={onSelectAccount}
-                    onOpenDetails={setDetailAccountKey}
+                    onOpenDetails={onDetailAccountChange}
                   />
                 ))}
               </div>
@@ -354,9 +344,9 @@ function AccountsOverviewPage({
                     key={account.account_key}
                     account={account}
                     isSelected={selectedAccount?.account_key === account.account_key}
-                    accountState={accountState(account)}
+                    accountState={classifyWorkspaceAccountState(account)}
                     onSelect={onSelectAccount}
-                    onOpenDetails={setDetailAccountKey}
+                    onOpenDetails={onDetailAccountChange}
                   />
                 ))}
               </div>
@@ -366,12 +356,19 @@ function AccountsOverviewPage({
 
         <AccountDetailPanel
           account={detailAccount}
-          accountState={detailAccount ? accountState(detailAccount) : 'stale'}
+          accountState={detailAccount ? classifyWorkspaceAccountState(detailAccount) : 'stale'}
           isSelected={selectedAccount?.account_key === detailAccount?.account_key}
           onSetActive={(accountKey) => {
             onSelectAccount(accountKey)
-            setDetailAccountKey(accountKey)
+            onDetailAccountChange(accountKey)
           }}
+          connectionsPath={
+            detailAccount?.connector_type === 'csv_import'
+              ? '/app/connections?addFlow=csv'
+              : detailAccount?.connector_type === 'manual'
+                ? '/app/connections?addFlow=manual'
+                : '/app/connections'
+          }
           onRefreshWorkspace={onRefreshWorkspace}
         />
       </div>
