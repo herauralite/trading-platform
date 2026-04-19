@@ -513,33 +513,23 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = String((window.__TALI_CONFIG__ && window.__TALI_CONFIG__.devGatePassword) || '').trim();
-const TALI_USER_KEY = 'tali_user_v1';
-const TALI_SESSION_TOKEN_KEY = 'tali_session_token_v1';
-const TALI_PW_KEY = 'tali_pw_ok';
-const TALI_TG_DONE_KEY = 'tali_tg_done';
-const TALI_AUTH_STATE_KEY = 'tali_tg_oidc_state';
-const TALI_AUTH_NONCE_KEY = 'tali_tg_oidc_nonce';
-const TALI_AUTH_FLOW_KEY = 'tali_tg_oidc_flow';
+let TALI_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
+let TALI_BOT_USERNAME_SOURCE = 'bootstrap_constant';
+let TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername('TaliTradeBot');
+let TALI_LOGIN_DOMAIN = 'www.talitrade.com';
+let TALI_CANONICAL_LOGIN_DOMAIN = 'www.talitrade.com';
+// ────────────────────────────────────────────────────────────────────────────
 
-let TALI_LOGIN_CONFIG = {
-  authMode: 'legacy_widget',
-  botUsername: 'TaliTradeBot',
-  canonicalBotUsername: 'TaliTradeBot',
-  loginDomain: 'www.talitrade.com',
-  canonicalLoginDomain: 'www.talitrade.com',
-  oidcEnabled: false,
-  oidcClientId: '',
-  oidcAuthorizeUrl: '',
-  oidcIssuer: '',
-  oidcScopes: ['openid', 'profile'],
-};
+const TALI_USER_KEY    = 'tali_user_v1';
+const TALI_SESSION_TOKEN_KEY = 'tali_session_token_v1';
+const TALI_PW_KEY      = 'tali_pw_ok';         // sessionStorage — re-ask each browser session
+const TALI_TG_DONE_KEY = 'tali_tg_done';       // sessionStorage — require Telegram every session
 
 let taliTelegramAuthStarted = false;
 let taliWidgetFailureTimer = null;
 let taliAccountSyncTimer = null;
 let taliStep2InitStarted = false;
 let taliWidgetScriptInjected = false;
-let taliStep2RenderedMode = '';
 let taliTelegramConfigFetchFailed = false;
 let taliAuthDiagnostics = [];
 const AUTH_DEBUG_QUERY_KEY = 'debugAuth';
@@ -635,41 +625,38 @@ function classifyAuthConfigFailure(error, status) {
   return 'transport_failure';
 }
 
-function getOidcRedirectUri() {
-  return window.location.origin + window.location.pathname;
-}
-
-function randomToken(size = 24) {
-  const arr = new Uint8Array(size);
-  window.crypto.getRandomValues(arr);
-  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
-}
-
 function validateTelegramLoginConfig() {
   const issues = [];
-  const currentHost = normalizeLoginHost(window.location.hostname);
-  const canonicalHost = normalizeLoginHost(TALI_LOGIN_CONFIG.canonicalLoginDomain);
-  const loginHost = normalizeLoginHost(TALI_LOGIN_CONFIG.loginDomain);
-
-  if (TALI_LOGIN_CONFIG.authMode === 'oidc') {
-    if (!TALI_LOGIN_CONFIG.oidcClientId) issues.push('oidc_client_id_missing');
-    if (!TALI_LOGIN_CONFIG.oidcAuthorizeUrl) issues.push('oidc_authorize_url_missing');
-    if (!canonicalHost) issues.push('canonical_login_domain_missing');
-    if (loginHost && canonicalHost && loginHost !== canonicalHost) issues.push('login_domain_not_canonical');
-    if (currentHost && canonicalHost && currentHost !== canonicalHost) issues.push('host_not_canonical');
-    return issues;
+  if (!TALI_BOT_USERNAME || !/^[A-Za-z0-9_]{5,64}$/.test(TALI_BOT_USERNAME)) {
+    issues.push('bot_username_invalid');
+  }
+  if (!TALI_CANONICAL_BOT_USERNAME) {
+    issues.push('canonical_bot_username_missing');
+  }
+  if (TALI_BOT_USERNAME && TALI_CANONICAL_BOT_USERNAME && TALI_BOT_USERNAME !== TALI_CANONICAL_BOT_USERNAME) {
+    issues.push('bot_username_not_canonical');
   }
 
-  const botUsername = normalizeTelegramBotUsername(TALI_LOGIN_CONFIG.botUsername);
-  const canonicalBotUsername = normalizeTelegramBotUsername(TALI_LOGIN_CONFIG.canonicalBotUsername || botUsername);
-  if (!botUsername || !/^[A-Za-z0-9_]{5,64}$/.test(botUsername)) issues.push('bot_username_invalid');
-  if (!canonicalBotUsername) issues.push('canonical_bot_username_missing');
-  if (botUsername && canonicalBotUsername && botUsername !== canonicalBotUsername) issues.push('bot_username_not_canonical');
-  if (!canonicalHost) issues.push('canonical_login_domain_missing');
-  if (loginHost && canonicalHost && loginHost !== canonicalHost) issues.push('login_domain_not_canonical');
-  if (currentHost && canonicalHost && currentHost !== canonicalHost) issues.push('host_not_canonical');
+  const currentHost = normalizeLoginHost(window.location.hostname);
+  const canonicalHost = normalizeLoginHost(TALI_CANONICAL_LOGIN_DOMAIN);
+  const loginHost = normalizeLoginHost(TALI_LOGIN_DOMAIN);
+  if (!canonicalHost) {
+    issues.push('canonical_login_domain_missing');
+  }
+  if (loginHost && canonicalHost && loginHost !== canonicalHost) {
+    issues.push('login_domain_not_canonical');
+  }
+  if (!currentHost || currentHost !== canonicalHost) {
+    issues.push('host_not_canonical');
+  }
+  if (currentHost === 'www.talitrade.com') {
+    if (TALI_BOT_USERNAME.toLowerCase().includes('change') || TALI_BOT_USERNAME.toLowerCase().includes('your')) {
+      issues.push('bot_username_placeholder_like');
+    }
+  }
   return issues;
 }
+
 
 async function hydrateTelegramWidgetConfig() {
   const apiBase = getBaseApiUrl();
@@ -689,17 +676,19 @@ async function hydrateTelegramWidgetConfig() {
     }
     const cfg = await res.json();
     if (!cfg || typeof cfg !== 'object') throw new SyntaxError('invalid json payload');
-    TALI_LOGIN_CONFIG = {
-      ...TALI_LOGIN_CONFIG,
-      ...cfg,
-      botUsername: normalizeTelegramBotUsername(cfg?.botUsername || cfg?.canonicalBotUsername || TALI_LOGIN_CONFIG.botUsername),
-      canonicalBotUsername: normalizeTelegramBotUsername(cfg?.canonicalBotUsername || cfg?.botUsername || TALI_LOGIN_CONFIG.canonicalBotUsername),
-      loginDomain: normalizeLoginHost(cfg?.loginDomain || cfg?.canonicalLoginDomain || TALI_LOGIN_CONFIG.loginDomain),
-      canonicalLoginDomain: normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain || TALI_LOGIN_CONFIG.canonicalLoginDomain),
-    };
-    TALI_LOGIN_CONFIG.oidcEnabled = !!cfg?.oidcEnabled;
+    const botFromApi = normalizeTelegramBotUsername(cfg?.canonicalBotUsername || cfg?.botUsername);
+    if (botFromApi) {
+      TALI_BOT_USERNAME = botFromApi;
+      TALI_CANONICAL_BOT_USERNAME = botFromApi;
+      TALI_BOT_USERNAME_SOURCE = 'backend_config';
+    }
+    const loginDomainFromApi = normalizeLoginHost(cfg?.canonicalLoginDomain || cfg?.loginDomain);
+    if (loginDomainFromApi) {
+      TALI_LOGIN_DOMAIN = loginDomainFromApi;
+      TALI_CANONICAL_LOGIN_DOMAIN = loginDomainFromApi;
+    }
     taliTelegramConfigFetchFailed = false;
-    pushGateDiagnostic(`config_loaded mode=${TALI_LOGIN_CONFIG.authMode} bot=${TALI_LOGIN_CONFIG.botUsername} login_domain=${TALI_LOGIN_CONFIG.loginDomain}`);
+    pushGateDiagnostic(`config_loaded bot=${TALI_BOT_USERNAME} login_domain=${TALI_LOGIN_DOMAIN}`);
   } catch (error) {
     taliTelegramConfigFetchFailed = true;
     pushGateDiagnostic(`config_fetch_failed=${classifyAuthConfigFailure(error)}`);
@@ -719,25 +708,35 @@ async function hydrateTelegramWidgetConfig() {
 
 function parseTelegramAuthFailure(res, body) {
   const reason = body?.reason || body?.detail || `http_${res.status}`;
-  if (reason === 'hash_mismatch') return 'Telegram verification failed. Check the bot username and BotFather login domain.';
-  if (reason === 'auth_expired') return 'Telegram login expired. Please try again.';
-  if (reason === 'missing_bot_token') return 'Server Telegram token is missing. Please contact support.';
-  if (reason === 'oidc_not_enabled') return 'Telegram OIDC is not enabled on the server yet.';
-  if (reason === 'oidc_invalid_token') return 'Telegram token verification failed. Please try again.';
+  if (reason === 'hash_mismatch') {
+    return 'Telegram verification failed. Check bot username and BotFather /setdomain www.talitrade.com.';
+  }
+  if (reason === 'auth_expired') {
+    return 'Telegram login expired. Please try again.';
+  }
+  if (reason === 'missing_bot_token') {
+    return 'Server Telegram token is missing. Please contact support.';
+  }
   return 'Telegram login failed. Please retry.';
 }
 
+// ── On load: check what gates have already been passed ───────────────────────
 (function() {
   if (!TALI_DEV_PASSWORD) {
     sessionStorage.setItem(TALI_PW_KEY, '1');
   }
   const pwOk = sessionStorage.getItem(TALI_PW_KEY) === '1';
+  // Telegram is ALWAYS required every session — no skipping via localStorage
+
   if (pwOk) {
+    // Password already done this session — skip straight to Telegram step
     document.getElementById('gate-step1').style.display = 'none';
     document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
     showTelegramStep();
     return;
   }
+
+  // Default: show password step
   document.getElementById('gate-input').addEventListener('keydown', function(e) {
     if (e.key === 'Enter') gateSubmit();
     document.getElementById('gate-pw-error').style.display = 'none';
@@ -748,59 +747,87 @@ function parseTelegramAuthFailure(res, body) {
   });
 })();
 
+// ── Step 1: password submit ───────────────────────────────────────────────────
 window.gateSubmit = function() {
   const val = document.getElementById('gate-input').value;
   if (!TALI_DEV_PASSWORD || val === TALI_DEV_PASSWORD) {
     sessionStorage.setItem(TALI_PW_KEY, '1');
+    // Slide to step 2
     document.getElementById('gate-step1').style.display = 'none';
     document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
     showTelegramStep();
   } else {
     const wrap = document.getElementById('gate-input-wrap');
     wrap.style.borderColor = 'rgba(224,92,92,0.5)';
-    wrap.style.boxShadow = '0 0 0 3px rgba(224,92,92,0.08)';
+    wrap.style.boxShadow   = '0 0 0 3px rgba(224,92,92,0.08)';
     document.getElementById('gate-pw-error').style.display = 'block';
     document.getElementById('gate-input').value = '';
     wrap.style.transform = 'translateX(-6px)';
-    setTimeout(() => { wrap.style.transform = 'translateX(6px)'; }, 60);
+    setTimeout(() => { wrap.style.transform = 'translateX(6px)';  }, 60);
     setTimeout(() => { wrap.style.transform = 'translateX(-4px)'; }, 120);
     setTimeout(() => { wrap.style.transform = 'translateX(0)'; wrap.style.transition = 'all .2s'; }, 180);
   }
 };
 
-function renderTelegramOidcButton() {
-  const wrap = document.getElementById('tg-widget-wrap');
-  wrap.innerHTML = `
-    <div style="width:100%;display:flex;flex-direction:column;align-items:center;gap:12px;">
-      <button id="tgOidcBtn" style="width:100%;max-width:280px;padding:14px 16px;border:none;border-radius:10px;background:linear-gradient(135deg,#2aabee,#1a8bc4);color:#fff;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:0.2px;box-shadow:0 20px 40px rgba(42,171,238,0.18);">
-        Continue with Telegram
-      </button>
-      <div style="font-size:11px;color:#4d7490;text-align:center;line-height:1.5;max-width:280px;">
-        Secure Telegram sign in via the new login flow.
-      </div>
-    </div>`;
-  document.getElementById('tgOidcBtn').addEventListener('click', startTelegramOidcFlow);
-}
+// ── Step 2: show Telegram widget ─────────────────────────────────────────────
+async function showTelegramStep() {
+  taliAuthDebugMode = isAuthDebugModeEnabled();
+  await hydrateTelegramWidgetConfig();
 
-function renderTelegramLegacyWidget() {
+  const step2 = document.getElementById('gate-step2');
+  step2.style.display = 'block';
+  step2.classList.add('visible');
+
+  if (taliStep2InitStarted) {
+    return;
+  }
+  taliStep2InitStarted = true;
+
+  TALI_BOT_USERNAME = normalizeTelegramBotUsername(TALI_BOT_USERNAME);
+  TALI_CANONICAL_BOT_USERNAME = normalizeTelegramBotUsername(TALI_CANONICAL_BOT_USERNAME) || TALI_BOT_USERNAME;
+  clearGateTelegramError();
+  if (taliTelegramConfigFetchFailed) {
+    taliConfigRetryVisible = true;
+    setGateTelegramError('We could not load Telegram sign-in settings right now. Please retry.');
+  }
+
+  const issues = validateTelegramLoginConfig();
+  const oidcAuthorizeHost = normalizeLoginHost((window.TALI_LOGIN_CONFIG && window.TALI_LOGIN_CONFIG.oidcAuthorizeHost) || '');
+  console.info(`TaliTrade: Telegram widget init bot=${TALI_BOT_USERNAME} source=${TALI_BOT_USERNAME_SOURCE} host=${window.location.hostname} loginDomain=${TALI_LOGIN_DOMAIN} canonicalLoginDomain=${TALI_CANONICAL_LOGIN_DOMAIN} authMode=legacy_widget callbackAuthHost=${oidcAuthorizeHost || window.location.hostname}`);
+  if (issues.length) {
+    console.error('TaliTrade: Telegram config validation failed', { issues, bot: TALI_BOT_USERNAME, host: window.location.hostname, loginDomain: TALI_LOGIN_DOMAIN, canonicalLoginDomain: TALI_CANONICAL_LOGIN_DOMAIN });
+    if (issues.includes('host_not_canonical')) {
+      setGateTelegramError('Open www.talitrade.com to continue with Telegram sign-in.');
+      return;
+    }
+    setGateTelegramError('Telegram sign-in is temporarily unavailable. Please contact support if this continues.');
+    document.getElementById('tg-widget-loading').style.display = 'none';
+    return;
+  }
+
   const wrap = document.getElementById('tg-widget-wrap');
-  wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Preparing secure Telegram sign-in…</div>';
+  if (!taliWidgetScriptInjected) {
+    wrap.innerHTML = '<div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Preparing secure Telegram sign-in…</div>';
+  }
+
   const existingScript = wrap.querySelector('script[data-tali-telegram-widget="1"]');
-  if (existingScript) return;
+  if (existingScript) {
+    taliWidgetScriptInjected = true;
+    return;
+  }
 
   const script = document.createElement('script');
   script.async = true;
-  script.src = 'https://telegram.org/js/telegram-widget.js?22';
-  script.setAttribute('data-telegram-login', TALI_LOGIN_CONFIG.botUsername);
-  script.setAttribute('data-size', 'large');
-  script.setAttribute('data-radius', '10');
-  script.setAttribute('data-onauth', 'onTelegramAuth(user)');
-  script.setAttribute('data-request-access', 'write');
+  script.src   = 'https://telegram.org/js/telegram-widget.js?22';
+  script.setAttribute('data-telegram-login',  TALI_BOT_USERNAME);
+  script.setAttribute('data-size',            'large');
+  script.setAttribute('data-radius',          '10');
+  script.setAttribute('data-onauth',          'onTelegramAuth(user)');
+  script.setAttribute('data-request-access',  'write');
   script.setAttribute('data-tali-telegram-widget', '1');
   script.onload = () => {
     taliWidgetScriptInjected = true;
-    const loading = document.getElementById('tg-widget-loading');
-    if (loading) loading.style.display = 'none';
+    document.getElementById('tg-widget-loading').style.display = 'none';
     if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
     setTimeout(() => {
       const widgetRendered = !!wrap.querySelector('iframe, .telegram-login, div[id^="telegram-login"]');
@@ -811,6 +838,7 @@ function renderTelegramLegacyWidget() {
     taliWidgetFailureTimer = setTimeout(() => {
       if (!taliTelegramAuthStarted) {
         setGateTelegramError('Telegram login did not complete. Please retry.');
+        console.warn('TaliTrade: Telegram widget did not trigger auth callback', { bot: TALI_BOT_USERNAME, host: window.location.hostname });
       }
     }, 20000);
   };
@@ -818,270 +846,154 @@ function renderTelegramLegacyWidget() {
     taliStep2InitStarted = false;
     taliWidgetScriptInjected = false;
     setGateTelegramError('Telegram sign-in widget could not be loaded. Check browser blockers and retry.');
+    console.error('TaliTrade: failed to load telegram widget script');
   };
   wrap.appendChild(script);
 }
 
-async function showTelegramStep() {
-  taliAuthDebugMode = isAuthDebugModeEnabled();
-  await hydrateTelegramWidgetConfig();
-  const step2 = document.getElementById('gate-step2');
-  step2.style.display = 'block';
-  step2.classList.add('visible');
-  if (taliStep2InitStarted) {
-    await maybeCompleteTelegramOidcCallback();
-    return;
-  }
-  taliStep2InitStarted = true;
-
-  clearGateTelegramError();
-  if (taliTelegramConfigFetchFailed) {
-    taliConfigRetryVisible = true;
-    setGateTelegramError('We could not load Telegram sign-in settings right now. Please retry.');
-  }
-  const issues = validateTelegramLoginConfig();
-  if (issues.length) {
-    if (issues.includes('host_not_canonical')) {
-      setGateTelegramError('Open www.talitrade.com to continue with Telegram sign-in.');
-      return;
-    }
-    setGateTelegramError('Telegram sign-in is temporarily unavailable. Please contact support if this continues.');
-    return;
-  }
-
-  const mode = TALI_LOGIN_CONFIG.authMode === 'oidc' && TALI_LOGIN_CONFIG.oidcEnabled ? 'oidc' : 'legacy_widget';
-  const oidcAuthorizeHost = normalizeLoginHost(TALI_LOGIN_CONFIG.oidcAuthorizeHost || TALI_LOGIN_CONFIG.oidcAuthorizeUrl || '');
-  console.info('TaliTrade: telegram auth resolved config', {
-    botUsername: TALI_LOGIN_CONFIG.botUsername,
-    loginDomain: TALI_LOGIN_CONFIG.loginDomain,
-    authMode: mode,
-    callbackAuthHost: oidcAuthorizeHost || window.location.hostname,
-  });
-  taliStep2RenderedMode = mode;
-  if (mode === 'oidc') renderTelegramOidcButton();
-  else renderTelegramLegacyWidget();
-
-  await maybeCompleteTelegramOidcCallback();
-}
-
-function startTelegramOidcFlow() {
-  clearGateTelegramError();
-  const state = randomToken(16);
-  const nonce = randomToken(16);
-  sessionStorage.setItem(TALI_AUTH_STATE_KEY, state);
-  sessionStorage.setItem(TALI_AUTH_NONCE_KEY, nonce);
-  sessionStorage.setItem(TALI_AUTH_FLOW_KEY, 'started');
-
-  const scopes = Array.isArray(TALI_LOGIN_CONFIG.oidcScopes) && TALI_LOGIN_CONFIG.oidcScopes.length
-    ? TALI_LOGIN_CONFIG.oidcScopes.join(' ')
-    : 'openid profile';
-
-  const url = new URL(TALI_LOGIN_CONFIG.oidcAuthorizeUrl);
-  url.searchParams.set('client_id', TALI_LOGIN_CONFIG.oidcClientId);
-  url.searchParams.set('response_type', 'id_token');
-  url.searchParams.set('scope', scopes);
-  url.searchParams.set('redirect_uri', getOidcRedirectUri());
-  url.searchParams.set('state', state);
-  url.searchParams.set('nonce', nonce);
-  url.searchParams.set('response_mode', 'fragment');
-
-  window.location.assign(url.toString());
-}
-
-function parseTelegramOidcCallbackFromLocation() {
-  const hash = window.location.hash ? window.location.hash.slice(1) : '';
-  if (!hash) return null;
-  const params = new URLSearchParams(hash);
-  const idToken = params.get('id_token');
-  const state = params.get('state');
-  const error = params.get('error');
-  if (!idToken && !error) return null;
-  return {
-    idToken,
-    state,
-    error,
-    errorDescription: params.get('error_description') || '',
-  };
-}
-
-function clearTelegramOidcCallbackFromUrl() {
-  if (!window.location.hash) return;
-  history.replaceState(null, '', window.location.pathname + window.location.search);
-}
-
-async function maybeCompleteTelegramOidcCallback() {
-  if (taliStep2RenderedMode !== 'oidc') return;
-  const cb = parseTelegramOidcCallbackFromLocation();
-  if (!cb) return;
-  clearTelegramOidcCallbackFromUrl();
-
-  if (cb.error) {
-    setGateTelegramError('Telegram sign in was cancelled or failed: ' + cb.error);
-    return;
-  }
-
-  const expectedState = sessionStorage.getItem(TALI_AUTH_STATE_KEY) || '';
-  const expectedNonce = sessionStorage.getItem(TALI_AUTH_NONCE_KEY) || '';
-  if (!cb.state || cb.state !== expectedState) {
-    setGateTelegramError('Telegram sign in failed state validation. Please retry.');
-    return;
-  }
-
-  document.getElementById('gate-signing').style.display = 'block';
-  document.getElementById('tg-widget-wrap').style.opacity = '0.4';
-  try {
-    const res = await fetch(getBaseApiUrl() + '/auth/telegram/oidc', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        id_token: cb.idToken,
-        nonce: expectedNonce,
-        redirect_uri: getOidcRedirectUri(),
-      }),
-    });
-    const raw = await res.text();
-    let data = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
-    pushGateDiagnostic(`session_create_status=${res.status} via=oidc`);
-    if (!res.ok || !data.ok) {
-      const msg = parseTelegramAuthFailure(res, data);
-      setGateTelegramError(msg);
-      throw new Error(msg);
-    }
-    sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
-    sessionStorage.removeItem(TALI_AUTH_NONCE_KEY);
-    sessionStorage.removeItem(TALI_AUTH_FLOW_KEY);
-    await finishTelegramLogin(data);
-  } catch (e) {
-    document.getElementById('gate-signing').style.display = 'none';
-    document.getElementById('tg-widget-wrap').style.opacity = '1';
-    if (!document.getElementById('gate-tg-error').textContent?.trim()) {
-      setGateTelegramError('Authentication failed. Please try again.');
-    }
-    console.error('TaliTrade: Telegram OIDC auth failed', e);
-  }
-}
-
+// ── Called by Telegram widget ─────────────────────────────────────────────────
 window.onTelegramAuth = async function(tgUser) {
   taliTelegramAuthStarted = true;
   if (taliWidgetFailureTimer) clearTimeout(taliWidgetFailureTimer);
-  document.getElementById('gate-signing').style.display = 'block';
-  document.getElementById('tg-widget-wrap').style.opacity = '0.4';
   clearGateTelegramError();
+  document.getElementById('gate-signing').style.display  = 'block';
+  document.getElementById('tg-widget-wrap').style.opacity = '0.4';
 
   try {
+    const baseUrl = getBaseApiUrl();
+
+    // 1. Verify with backend + upsert user
     if (!tgUser?.id || !tgUser?.hash || !tgUser?.auth_date) {
       throw new Error('widget_payload_incomplete');
     }
-    const res = await fetch(getBaseApiUrl() + '/auth/telegram', {
-      method: 'POST',
+
+    const res = await fetch(baseUrl + '/auth/telegram', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tgUser),
+      body:    JSON.stringify(tgUser),
     });
     const raw = await res.text();
     let data = {};
-    try { data = raw ? JSON.parse(raw) : {}; } catch (_) {}
+    try { data = raw ? JSON.parse(raw) : {}; } catch(_) { data = {}; }
     pushGateDiagnostic(`session_create_status=${res.status} via=widget`);
-    if (!res.ok || !data.ok) {
+    if (!res.ok) {
       const msg = parseTelegramAuthFailure(res, data);
       setGateTelegramError(msg);
-      throw new Error(msg);
+      throw new Error(`auth_failed:${data?.reason || res.status}`);
     }
-    await finishTelegramLogin(data, tgUser);
-  } catch (e) {
-    document.getElementById('gate-signing').style.display = 'none';
+    if (!data.ok) {
+      setGateTelegramError('Telegram login rejected by server.');
+      throw new Error('auth_rejected');
+    }
+
+    let user = normalizeTaliUserShape(data.user) || normalizeTaliUserShape(normalizeWidgetUserShape(tgUser));
+    const token = String(data.access_token || '');
+    if (!token) throw new Error('missing_session_token');
+
+    // Populate ACCOUNTS map dynamically from this user's linked accounts
+    hydrateAccountsMap(data.accounts || []);
+
+    // Persist token first so bootstrap probes can execute.
+    localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
+
+    try {
+      const meRes = await fetch(baseUrl + '/auth/me', {
+        headers: { Authorization: 'Bearer ' + token },
+        credentials: 'include',
+      });
+      pushGateDiagnostic(`/auth/me_status=${meRes.status} post_login`);
+      if (meRes.ok) {
+        const meData = await meRes.json();
+        const meUser = normalizeTaliUserShape(meData.user);
+        if (meUser) user = meUser;
+      }
+    } catch (meErr) {
+      pushGateDiagnostic(`/auth/me_failure=${meErr?.message || meErr}`);
+    }
+
+    if (!user) throw new Error('missing_or_invalid_user');
+    localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
+
+    // 2b. Push telegramUserId into the extension's chrome.storage.local so
+    //     content.js (which runs on fundingpips.com, a different origin) can
+    //     read it for account linking. Requires:
+    //       - background.js service worker in the extension
+    //       - manifest.json: "externally_connectable": { "matches": ["https://www.talitrade.com/*"] }
+    //       - TALI_EXTENSION_ID set below to your extension's Chrome ID
+    try {
+      const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
+      if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+        chrome.runtime.sendMessage(
+          TALI_EXTENSION_ID,
+          { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token },
+          (response) => {
+            if (chrome.runtime.lastError) {
+              console.warn('TaliTrade: extension message failed (extension not installed or ID wrong)');
+            } else {
+              console.log('TaliTrade: telegramUserId sent to extension', response);
+            }
+          }
+        );
+      }
+    } catch(e) { /* chrome not available */ }
+
+    // 3. Auto-link accounts currently detected by the extension.
+    //    content.js runs on fundingpips.com — a different origin — so localStorage
+    //    is NOT shared. Instead we read /extension/status (already being populated
+    //    by the extension's 5s heartbeat) and link whatever accounts are live right now.
+    //    The extension will also retry on subsequent polls via /extension/data
+    //    once telegramUserId is propagated through chrome.storage (see content.js).
+    try {
+      const statusRes = await fetch(baseUrl + '/extension/status');
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        const liveAccounts = statusData.accounts || {};
+        for (const [acctId, acct] of Object.entries(liveAccounts)) {
+          const params = new URLSearchParams({
+            account_id:       acctId,
+            account_type:     acct.accountType  || '',
+            account_size:     acct.accountSize  || 0,
+            label:            acct.accountLabel || acctId,
+            broker:           'fundingpips',
+          });
+          await fetch(baseUrl + '/auth/link-account?' + params.toString(), {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token },
+          });
+          console.log(`TaliTrade: linked live account ${acctId} to user ${user.telegramUserId}`);
+        }
+      }
+    } catch(e) {
+      // Non-fatal — extension may not be running at login time.
+      // Accounts will be linked on next extension poll via /extension/data.
+      console.warn('TaliTrade: could not auto-link accounts at login time', e);
+    }
+
+    // 4. Update topbar
+    applyUserToTopbar(user);
+    startAccountLinkWatcher(user.telegramUserId);
+
+    // 5. Dismiss gate
+    const gate = document.getElementById('gate');
+    gate.classList.add('unlocking');
+    setTimeout(() => gate.style.display = 'none', 450);
+
+  } catch(e) {
+    document.getElementById('gate-signing').style.display  = 'none';
     document.getElementById('tg-widget-wrap').style.opacity = '1';
     if (!document.getElementById('gate-tg-error').textContent?.trim()) {
       setGateTelegramError('Authentication failed. Please try again.');
     }
-    console.error('TaliTrade: Telegram auth failed', e);
+    console.error('TaliTrade: Telegram auth failed', {
+      error: e?.message || e,
+      bot: TALI_BOT_USERNAME,
+      botSource: TALI_BOT_USERNAME_SOURCE,
+      host: window.location.hostname,
+    });
   }
 };
 
-function normalizeWidgetUserShape(rawWidgetUser) {
-  if (!rawWidgetUser || typeof rawWidgetUser !== 'object') return null;
-  const telegramUserId = String(rawWidgetUser.id || rawWidgetUser.telegramUserId || rawWidgetUser.telegram_user_id || '').trim();
-  if (!telegramUserId) return null;
-  return {
-    telegramUserId,
-    telegram_user_id: telegramUserId,
-    username: rawWidgetUser.username || '',
-    telegram_username: rawWidgetUser.username || '',
-    firstName: rawWidgetUser.first_name || '',
-    first_name: rawWidgetUser.first_name || '',
-    lastName: rawWidgetUser.last_name || '',
-    last_name: rawWidgetUser.last_name || '',
-    photoUrl: rawWidgetUser.photo_url || '',
-    photo_url: rawWidgetUser.photo_url || '',
-  };
-}
-
-async function finishTelegramLogin(data, widgetUser = null) {
-  let user = normalizeTaliUserShape(data.user) || normalizeTaliUserShape(normalizeWidgetUserShape(widgetUser));
-  const token = String(data.access_token || '');
-  if (!token) throw new Error('missing_session_token');
-  hydrateAccountsMap(data.accounts || []);
-  localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
-  sessionStorage.setItem(TALI_TG_DONE_KEY, '1');
-
-  try {
-    const meRes = await fetch(getBaseApiUrl() + '/auth/me', {
-      headers: { Authorization: 'Bearer ' + token },
-      credentials: 'include',
-    });
-    pushGateDiagnostic(`/auth/me_status=${meRes.status} post_login`);
-    if (!meRes.ok) throw new Error('auth_me_failed_' + meRes.status);
-    const meData = await meRes.json();
-    const meUser = normalizeTaliUserShape(meData.user);
-    if (!meUser) throw new Error('auth_me_missing_user');
-    user = meUser;
-  } catch (meErr) {
-    pushGateDiagnostic(`/auth/me_failure=${meErr?.message || meErr}`);
-  }
-
-  if (!user) throw new Error('missing_or_invalid_user');
-  localStorage.setItem(TALI_USER_KEY, JSON.stringify(user));
-
-  try {
-    const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
-    if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
-      chrome.runtime.sendMessage(
-        TALI_EXTENSION_ID,
-        { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token },
-        () => {}
-      );
-    }
-  } catch (_) {}
-
-  try {
-    const statusRes = await fetch(getBaseApiUrl() + '/extension/status');
-    if (statusRes.ok) {
-      const statusData = await statusRes.json();
-      const liveAccounts = statusData.accounts || {};
-      for (const [acctId, acct] of Object.entries(liveAccounts)) {
-        const params = new URLSearchParams({
-          account_id: acctId,
-          account_type: acct.accountType || '',
-          account_size: acct.accountSize || 0,
-          label: acct.accountLabel || acctId,
-          broker: 'fundingpips',
-        });
-        await fetch(getBaseApiUrl() + '/auth/link-account?' + params.toString(), {
-          method: 'POST',
-          headers: { Authorization: 'Bearer ' + token },
-        });
-      }
-    }
-  } catch (_) {}
-
-  applyUserToTopbar(user);
-  startAccountLinkWatcher(user.telegramUserId);
-  document.getElementById('gate-signing').style.display = 'none';
-  const gate = document.getElementById('gate');
-  gate.classList.add('unlocking');
-  setTimeout(() => gate.style.display = 'none', 450);
-}
-
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function normalizeTaliUserShape(rawUser) {
   if (!rawUser || typeof rawUser !== 'object') return null;
@@ -1104,6 +1016,24 @@ function normalizeTaliUserShape(rawUser) {
   };
 }
 
+function normalizeWidgetUserShape(rawWidgetUser) {
+  if (!rawWidgetUser || typeof rawWidgetUser !== 'object') return null;
+  const telegramUserId = String(rawWidgetUser.id || rawWidgetUser.telegramUserId || rawWidgetUser.telegram_user_id || '').trim();
+  if (!telegramUserId) return null;
+  return {
+    telegramUserId,
+    telegram_user_id: telegramUserId,
+    username: rawWidgetUser.username || '',
+    telegram_username: rawWidgetUser.username || '',
+    firstName: rawWidgetUser.first_name || '',
+    first_name: rawWidgetUser.first_name || '',
+    lastName: rawWidgetUser.last_name || '',
+    last_name: rawWidgetUser.last_name || '',
+    photoUrl: rawWidgetUser.photo_url || '',
+    photo_url: rawWidgetUser.photo_url || '',
+  };
+}
+
 function getTaliUser() {
   try {
     const raw = localStorage.getItem(TALI_USER_KEY);
@@ -1112,6 +1042,7 @@ function getTaliUser() {
     return u || null;
   } catch(e) { localStorage.removeItem(TALI_USER_KEY); return null; }
 }
+
 
 function hydrateAccountsMap(linkedAccounts, keepActive=true) {
   const prevActive = activeAcct;
@@ -1124,7 +1055,7 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
       label: acct.label || (sizeK ? sizeK+' '+typeLabel : acct.accountId),
       short: typeLabel,
       color: colors[i % colors.length],
-      idx: i + 1
+      idx:   i + 1
     };
   });
   if (linkedAccounts.length > 0) {
@@ -1143,7 +1074,8 @@ async function syncLinkedAccountsFromBackend(telegramUserId) {
   const token = localStorage.getItem(TALI_SESSION_TOKEN_KEY) || '';
   if (!token) return false;
   try {
-    const res = await fetch(getBaseApiUrl() + '/auth/me', {
+    const baseUrl = getBaseApiUrl();
+    const res = await fetch(baseUrl + '/auth/me', {
       headers: { Authorization: 'Bearer ' + token },
       credentials: 'include',
     });
@@ -1183,7 +1115,8 @@ function startAccountLinkWatcher(telegramUserId) {
 
 function applyUserToTopbar(user) {
   const profileInner = document.querySelector('.tb-profile-inner');
-  const displayName = user.firstName || user.username || 'Trader';
+  const displayName  = user.firstName || user.username || 'Trader';
+
   if (profileInner) {
     if (user.photoUrl) {
       const img = document.createElement('img');
@@ -1195,33 +1128,31 @@ function applyUserToTopbar(user) {
       profileInner.textContent = (displayName[0] || 'T').toUpperCase();
     }
   }
+
   const btnProfile = document.getElementById('btnProfile');
   if (btnProfile) {
-    btnProfile.title = displayName + ' · tap to sign out';
+    btnProfile.title   = displayName + ' · tap to sign out';
     btnProfile.onclick = (e) => {
       e.stopPropagation();
       if (confirm('Sign out of TaliTrade?')) {
         localStorage.removeItem(TALI_USER_KEY);
         localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
         sessionStorage.removeItem(TALI_PW_KEY);
-        sessionStorage.removeItem(TALI_TG_DONE_KEY);
-        sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
-        sessionStorage.removeItem(TALI_AUTH_NONCE_KEY);
-        sessionStorage.removeItem(TALI_AUTH_FLOW_KEY);
+        // Also clear from extension storage if available
         try {
-          const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
+          const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';  // ← same ID as above
           if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
             chrome.runtime.sendMessage(TALI_EXTENSION_ID, { type: 'TALI_CLEAR_UID' }, () => {});
           }
-        } catch (_) {}
+        } catch(e) {}
         location.reload();
       }
     };
   }
 }
 
-const existingTaliUser = getTaliUser();
-if (existingTaliUser) applyUserToTopbar(existingTaliUser);
+const existingTaliUser=getTaliUser();
+if(existingTaliUser) applyUserToTopbar(existingTaliUser);
 </script>
 <!-- ═══════════════════════════════════════════════════════════ -->
 
@@ -1889,9 +1820,6 @@ function hasLinkedAccounts(){
 }
 
 const bootstrapTaliUser=getTaliUser();
-if(!bootstrapTaliUser){
-  pushGateDiagnostic('gate_reason=no_local_authenticated_user');
-}
 if(bootstrapTaliUser){
   syncLinkedAccountsFromBackend(bootstrapTaliUser.telegramUserId);
   startAccountLinkWatcher(bootstrapTaliUser.telegramUserId);
