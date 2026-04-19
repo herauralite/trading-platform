@@ -65,7 +65,8 @@ test('stale-only and pending-only account states remain non-usable', () => {
 test('post-add-account flow routes users to accounts workspace and triggers route hydration', async () => {
   const appSource = await readFrontendFile('App.jsx')
 
-  assert.equal(appSource.includes("navigate('/app/accounts')"), true)
+  assert.equal(appSource.includes("setAddAccountReturnPath('/app/accounts')"), true)
+  assert.equal(appSource.includes("navigate(addAccountReturnPath || '/app/accounts')"), true)
   assert.equal(appSource.includes('routeRefreshGuardRef'), true)
   assert.equal(appSource.includes("void loadConnectorData({ silent: true })"), true)
   assert.equal(appSource.includes('if (existingSelected && isCurrentlyConnectedAccount(existingSelected)) return'), true)

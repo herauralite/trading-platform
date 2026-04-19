@@ -516,6 +516,14 @@ textarea {
     inset 0 0 0 1px rgba(134, 222, 255, 0.24);
 }
 
+.connections-workflow-focus-panel .meta-grid {
+  margin-top: 8px;
+}
+
+.connections-workflow-focus-panel .meta-card strong {
+  font-size: 13px;
+}
+
 .connections-context-panel {
   margin-bottom: 12px;
 }
