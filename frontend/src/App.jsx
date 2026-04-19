@@ -158,6 +158,7 @@ function App() {
   const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
   const [selectedProviderType, setSelectedProviderType] = useState('mt5_bridge')
+  const [addAccountReturnPath, setAddAccountReturnPath] = useState('/app/accounts')
   const [addAccountDraft, setAddAccountDraft] = useState({
     external_account_id: '',
     display_label: '',
@@ -775,6 +776,11 @@ function App() {
     }
     setAuthActionPrompt('')
     setSelectedProviderType(defaultProviderType)
+    if (location.pathname === '/app/connections') {
+      setAddAccountReturnPath(`${location.pathname}${location.search || ''}`)
+    } else {
+      setAddAccountReturnPath('/app/accounts')
+    }
     setAddAccountError('')
     setAddAccountSuccessMessage('')
     setIsAddAccountOpen(true)
@@ -833,7 +839,7 @@ function App() {
           return
         }
         closeAddAccountFlow()
-        navigate('/app/accounts')
+        navigate(addAccountReturnPath || '/app/accounts')
         return
       }
       if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
@@ -874,7 +880,7 @@ function App() {
           await new Promise((resolve) => window.setTimeout(resolve, 900))
         }
         closeAddAccountFlow()
-        navigate('/app/accounts')
+        navigate(addAccountReturnPath || '/app/accounts')
         return
       }
 
@@ -894,7 +900,7 @@ function App() {
       await connectorAction(provider.connectorType, 'connect', payload)
       setPendingAccountFocus({ connectorType: provider.connectorType, externalAccountId })
       closeAddAccountFlow()
-      navigate('/app/accounts')
+      navigate(addAccountReturnPath || '/app/accounts')
     } catch (error) {
       const apiDetail = error?.response?.data?.detail
       setAddAccountError(apiDetail || error?.message || 'Could not complete this add account flow.')
@@ -1139,6 +1145,7 @@ function App() {
                   onAddAccount={openAddAccountFlow}
                   addFlowIntent={addFlowIntent}
                   selectedAccount={selectedAccount}
+                  accountWorkspaces={unifiedAccountWorkspaces}
                   isWorkspaceLoading={isWorkspaceLoading}
                   onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
