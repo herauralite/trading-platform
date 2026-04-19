@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { PUBLIC_API_BETA_CONNECTORS } from '../addAccountFlow'
+import { PUBLIC_API_BETA_CONNECTORS, PUBLIC_API_CONNECTORS } from '../addAccountFlow'
 
 const MT5_TOTAL_STEPS = 6
 
@@ -376,16 +376,16 @@ function AddAccountFlowModal({
               </>
             ) : null}
 
-            {PUBLIC_API_BETA_CONNECTORS.includes(selectedProvider.connectorType) ? (
+            {PUBLIC_API_CONNECTORS.includes(selectedProvider.connectorType) ? (
               <>
                 <p className="hint">
                   {selectedProvider.connectorType === 'alpaca_api'
                     ? 'Connect read-only Alpaca API credentials. Credentials are validated server-side and never echoed back.'
-                    : 'Register this provider for beta onboarding. We only save safe metadata in this slice.'}
+                    : 'Connect TradeLocker API credentials. Credentials are validated server-side, secrets are never echoed back, and this adds the account to your authenticated workspace.'}
                 </p>
                 <div className="row">
                   <input
-                    placeholder={selectedProvider.connectorType === 'alpaca_api' ? 'Account label' : 'Display name'}
+                    placeholder="Account label"
                     value={draft.display_label}
                     onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
                     required
@@ -395,15 +395,8 @@ function AddAccountFlowModal({
                     onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
                   >
                     <option value="paper">Paper</option>
-                    <option value="live">{selectedProvider.connectorType === 'alpaca_api' ? 'Live' : 'Live (metadata only)'}</option>
+                    <option value="live">Live</option>
                   </select>
-                  {selectedProvider.connectorType !== 'alpaca_api' ? (
-                    <input
-                      placeholder="Optional account alias"
-                      value={draft.account_alias || ''}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
-                    />
-                  ) : null}
                 </div>
                 {selectedProvider.connectorType === 'alpaca_api' ? (
                   <div className="row">
@@ -422,8 +415,74 @@ function AddAccountFlowModal({
                     />
                   </div>
                 ) : (
-                  <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
+                  <>
+                    <div className="row">
+                      <input
+                        placeholder="Base URL"
+                        value={draft.base_url || ''}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, base_url: event.target.value }))}
+                        required
+                      />
+                      <input
+                        placeholder="Account ID"
+                        value={draft.account_id || ''}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, account_id: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="row">
+                      <input
+                        placeholder="Email"
+                        value={draft.email || ''}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, email: event.target.value }))}
+                        required
+                      />
+                      <input
+                        type="password"
+                        placeholder="Password"
+                        value={draft.password || ''}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, password: event.target.value }))}
+                        required
+                      />
+                    </div>
+                    <div className="row">
+                      <input
+                        placeholder="Server (optional)"
+                        value={draft.server || ''}
+                        onChange={(event) => setDraft((prev) => ({ ...prev, server: event.target.value }))}
+                      />
+                    </div>
+                    <p className="hint">Credentials are validated server-side. Secrets are never echoed back in this UI.</p>
+                    <p className="hint">Submitting this form adds the TradeLocker account to your authenticated workspace.</p>
+                  </>
                 )}
+              </>
+            ) : null}
+
+            {PUBLIC_API_BETA_CONNECTORS.includes(selectedProvider.connectorType) ? (
+              <>
+                <p className="hint">Register this provider for beta onboarding. We only save safe metadata in this slice.</p>
+                <div className="row">
+                  <input
+                    placeholder="Display name"
+                    value={draft.display_label}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
+                    required
+                  />
+                  <select
+                    value={draft.environment || 'paper'}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
+                  >
+                    <option value="paper">Paper</option>
+                    <option value="live">Live (metadata only)</option>
+                  </select>
+                  <input
+                    placeholder="Optional account alias"
+                    value={draft.account_alias || ''}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
+                  />
+                </div>
+                <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
               </>
             ) : null}
 
