@@ -8,6 +8,43 @@ function formatTimestamp(value) {
   return date.toLocaleString()
 }
 
+function displaySourceLabel(account) {
+  if (account?.connector_type === 'tradelocker_api') return 'TradeLocker API'
+  return account?.source_label || account?.connector_type || 'Unknown source'
+}
+
+function relativeHealth(account) {
+  const now = Date.now()
+  const lastSync = account?.last_sync_at ? new Date(account.last_sync_at).getTime() : null
+  const lastActivity = account?.last_activity_at ? new Date(account.last_activity_at).getTime() : null
+
+  if (String(account?.sync_state || '').toLowerCase() === 'failed' || String(account?.connection_status || '').toLowerCase() === 'sync_error') {
+    return 'Needs attention: recent sync error.'
+  }
+  if (String(account?.sync_state || '').toLowerCase() === 'retrying') {
+    return 'Retrying latest sync failure.'
+  }
+  if (String(account?.connection_status || '').toLowerCase() === 'validation_failed') {
+    return 'Validation failed: re-check credentials/config.'
+  }
+  if (String(account?.provider_state || '').toLowerCase().includes('auth')) {
+    return 'Auth state changed: verify connector session.'
+  }
+  if (lastSync && now - lastSync <= 24 * 60 * 60 * 1000) {
+    return 'Recently synced.'
+  }
+  if (lastSync && now - lastSync > 7 * 24 * 60 * 60 * 1000) {
+    return 'Sync looks stale.'
+  }
+  if (!lastActivity) {
+    return 'Awaiting first activity.'
+  }
+  if (lastActivity && now - lastActivity > 14 * 24 * 60 * 60 * 1000) {
+    return 'Inactive recently.'
+  }
+  return 'Operational and active.'
+}
+
 function AccountWorkspaceCard({ account, isSelected, onSelect }) {
   const connectionMeta = connectionStatusMeta(account.connection_status)
   const displayName = account.display_label || account.external_account_id || account.account_key
@@ -26,9 +63,10 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
       </div>
 
       <div className="row">
-        <span className="pill">{account.source_label}</span>
+        <span className="pill">{displaySourceLabel(account)}</span>
         <span className="pill">{account.broker_name || 'Unknown broker'}</span>
         {account.account_type ? <span className="pill">{account.account_type}</span> : null}
+        {account.provider_state ? <span className="pill">{account.provider_state}</span> : null}
       </div>
 
       <div className="account-card-grid">
@@ -51,6 +89,8 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
           <strong>{formatTimestamp(account.last_activity_at)}</strong>
         </div>
       </div>
+
+      <p className="hint">{relativeHealth(account)}</p>
 
       <button type="button" onClick={() => onSelect(account.account_key)}>
         {isSelected ? 'Selected' : 'Open account context'}

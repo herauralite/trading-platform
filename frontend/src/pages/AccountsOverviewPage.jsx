@@ -7,6 +7,37 @@ function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
 }
 
+function displaySourceLabel(account) {
+  if (account?.connector_type === 'tradelocker_api') return 'TradeLocker API'
+  return account?.source_label || account?.connector_type || 'Unknown source'
+}
+
+function buildSelectedAccountHint(account) {
+  const connectionStatus = String(account?.connection_status || '').toLowerCase()
+  const syncState = String(account?.sync_state || '').toLowerCase()
+  const providerState = String(account?.provider_state || '').toLowerCase()
+
+  if (connectionStatus === 'validation_failed' || providerState.includes('validation_failed')) {
+    return 'Validation failed — review connector credentials/config in Connections.'
+  }
+  if (providerState.includes('auth') && (providerState.includes('failed') || providerState.includes('expired') || providerState.includes('invalid'))) {
+    return 'Authentication needs attention — reconnect or refresh credentials in Connections.'
+  }
+  if (connectionStatus === 'sync_error' || syncState === 'failed') {
+    return 'Recent sync error — open Connections for error details and retry options.'
+  }
+  if (syncState === 'retrying') {
+    return 'Retrying sync after an error. You can wait for retry or trigger sync manually.'
+  }
+  if (syncState === 'queued' || syncState === 'running') {
+    return 'Sync in progress — account data is being refreshed.'
+  }
+  if (connectionStatus === 'awaiting_alerts' || (!account?.last_activity_at && !account?.last_sync_at)) {
+    return 'Awaiting first activity — account is connected but has not produced activity yet.'
+  }
+  return 'Connection appears healthy based on current workspace state.'
+}
+
 function AccountsOverviewPage({
   accountWorkspaces,
   selectedAccount,
@@ -114,7 +145,7 @@ function AccountsOverviewPage({
               <span className="mono">{selectedAccount.account_key}</span>
             </p>
             <div className="row">
-              <span className="pill">{selectedAccount.source_label}</span>
+              <span className="pill">{displaySourceLabel(selectedAccount)}</span>
               <span className="pill">{selectedAccount.broker_name || 'Unknown broker'}</span>
               <span className="hint">Connection</span>
               <AccountStatusBadge value={selectedAccount.connection_status} />
@@ -122,6 +153,17 @@ function AccountsOverviewPage({
               <span className="hint">Sync</span>
               <AccountStatusBadge variant="sync" value={selectedAccount.sync_state} />
             </div>
+            <div className="meta-grid accounts-summary-grid">
+              <div className="meta-card summary-card">
+                <span className="hint">Last sync</span>
+                <strong>{formatDate(selectedAccount.last_sync_at)}</strong>
+              </div>
+              <div className="meta-card summary-card">
+                <span className="hint">Last activity</span>
+                <strong>{formatDate(selectedAccount.last_activity_at)}</strong>
+              </div>
+            </div>
+            <p className="hint">{buildSelectedAccountHint(selectedAccount)}</p>
             {selectedAccount.connector_type === 'tradingview_webhook' ? (
               <div className="meta tradingview-activity-preview">
                 <p className="hint">
