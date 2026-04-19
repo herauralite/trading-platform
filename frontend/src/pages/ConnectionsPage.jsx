@@ -32,6 +32,7 @@ function ConnectionsPage({
   importCsvTrades,
   onAddAccount,
   addFlowIntent,
+  selectedAccount,
   isWorkspaceLoading,
   onRefreshWorkspace,
 }) {
@@ -59,6 +60,7 @@ function ConnectionsPage({
   const connectedCount = managedConnectors.filter((connector) => connector.account_count > 0 || connector.is_connected).length
   const syncingCount = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state)).length
   const attentionCount = managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error' || connector.config_validation_error).length
+  const selectedConnectorType = selectedAccount?.connector_type || ''
 
   function findConnector(methodKey) {
     return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
@@ -97,8 +99,30 @@ function ConnectionsPage({
           </div>
         </div>
         <p className="hint">
-          Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management and Add Account onboarding.
+          <strong>Accounts</strong> is your account-centric workspace. <strong>Connections</strong> handles provider configuration and sync operations for the current workspace context.
         </p>
+        <div className="card selected-account-panel premium-focus-card connections-context-panel">
+          <h3>Current workspace account context</h3>
+          {selectedAccount ? (
+            <>
+              <p>
+                <strong>{selectedAccount.display_label || selectedAccount.external_account_id || selectedAccount.account_key}</strong>
+                {' · '}
+                <span className="mono">{selectedAccount.account_key}</span>
+              </p>
+              <div className="row">
+                <span className="pill">{selectedAccount.source_label || selectedAccount.connector_type}</span>
+                <span className="pill">{selectedAccount.broker_name || 'Broker metadata pending'}</span>
+                <span className="pill">Connection {selectedAccount.connection_status || 'disconnected'}</span>
+                <span className="pill">Sync {selectedAccount.sync_state || 'idle'}</span>
+                {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
+              </div>
+              <p className="hint">This account currently drives provider operations context on this page.</p>
+            </>
+          ) : (
+            <p className="hint">No active usable account selected yet. Go to Accounts to set active account focus before running provider operations.</p>
+          )}
+        </div>
         {!signedIn ? (
           <div className="card premium-auth-helper">
             <strong>Signed out: setup actions are disabled.</strong>
@@ -130,6 +154,7 @@ function ConnectionsPage({
               <div className="meta-card summary-card" key={method.key}>
                 <div className="row">
                   <strong>{method.title}</strong>
+                  {selectedConnectorType && selectedConnectorType === method.key ? <span className="pill primary-pill">Selected account provider</span> : null}
                   <span className={`badge ${statusTone(connector?.status || 'disconnected')}`}>
                     {connectorActionLabel(connector)}
                   </span>
@@ -167,6 +192,7 @@ function ConnectionsPage({
                 <>
             <div className="row">
               <strong>{sourceLabel(connector.connector_type)}</strong>
+              {selectedConnectorType && selectedConnectorType === connector.connector_type ? <span className="pill primary-pill">Active account provider</span> : null}
               <span className={`badge ${statusTone(connector.status)}`}>{connector.status}</span>
               <span className={`badge ${lifecycle.toneClass}`}>{lifecycle.label}</span>
               {connector.integration_status ? <span className="pill">{connector.integration_status}</span> : null}

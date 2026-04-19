@@ -284,6 +284,10 @@ function App() {
 
   const addFlowIntent = useMemo(() => new URLSearchParams(location.search).get('addFlow') || '', [location.search])
   const accountConnectionState = useMemo(() => deriveAccountConnectionState(unifiedAccountWorkspaces), [unifiedAccountWorkspaces])
+  const usableAccountWorkspaces = useMemo(
+    () => unifiedAccountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account)),
+    [unifiedAccountWorkspaces],
+  )
   const onboardingState = useMemo(() => deriveAppOnboardingState({
     signedIn,
     useWorkspaceApi: USE_ACCOUNT_WORKSPACES_API,
@@ -346,14 +350,13 @@ function App() {
 
   useEffect(() => {
     if (selectedAccountKey) {
-      const exists = unifiedAccountWorkspaces.some((account) => account.account_key === selectedAccountKey)
-      if (exists) return
+      const existingSelected = unifiedAccountWorkspaces.find((account) => account.account_key === selectedAccountKey)
+      if (existingSelected) return
     }
-    const primary = unifiedAccountWorkspaces.find((account) => account.is_primary && isCurrentlyConnectedAccount(account))
-    const firstConnected = unifiedAccountWorkspaces.find((account) => isCurrentlyConnectedAccount(account))
-    const firstPending = unifiedAccountWorkspaces.find((account) => !isCurrentlyConnectedAccount(account) && ['queued', 'running', 'retrying'].includes(String(account.sync_state || '').toLowerCase()))
-    setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || firstPending?.account_key || '')
-  }, [unifiedAccountWorkspaces, selectedAccountKey])
+    const primaryUsable = usableAccountWorkspaces.find((account) => account.is_primary)
+    const fallbackUsable = usableAccountWorkspaces[0] || null
+    setSelectedAccountKey(primaryUsable?.account_key || fallbackUsable?.account_key || '')
+  }, [unifiedAccountWorkspaces, usableAccountWorkspaces, selectedAccountKey])
 
   useEffect(() => {
     if (!signedIn) return
@@ -939,7 +942,13 @@ function App() {
           <span className="pill">Pending setup: {accountConnectionState.pendingOnlyCount}</span>
           <span className="pill">Syncing: {shellSyncingCount}</span>
           <span className="pill">Needs attention: {shellNeedsAttentionCount}</span>
-          {selectedAccount ? <span className="pill">Active: {selectedAccount.display_label || selectedAccount.external_account_id}</span> : null}
+          {selectedAccount ? (
+            <span className="pill">
+              Active: {selectedAccount.display_label || selectedAccount.external_account_id} · {selectedAccount.connection_status || 'disconnected'} / {selectedAccount.sync_state || 'idle'}
+            </span>
+          ) : (
+            <span className="pill">Active: none selected</span>
+          )}
         </div>
         <p className="hint">{status}</p>
         {workspaceLoadError ? <p className="error-text">{workspaceLoadError}</p> : null}
@@ -1102,6 +1111,7 @@ function App() {
                   importCsvTrades={importCsvTrades}
                   onAddAccount={openAddAccountFlow}
                   addFlowIntent={addFlowIntent}
+                  selectedAccount={selectedAccount}
                   isWorkspaceLoading={isWorkspaceLoading}
                   onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
