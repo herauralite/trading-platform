@@ -1,6 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
+import { NavLink } from 'react-router-dom'
 import AccountStatusBadge from '../components/AccountStatusBadge'
 import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
+import AccountDetailPanel from '../components/AccountDetailPanel'
 import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from '../accountConnectionState'
 
 function countBy(items, predicate) {
@@ -18,6 +20,8 @@ function AccountsOverviewPage({
   isWorkspaceLoading,
   onRefreshWorkspace,
 }) {
+  const [detailAccountKey, setDetailAccountKey] = useState('')
+
   const summary = useMemo(() => {
     const connectionState = deriveAccountConnectionState(accountWorkspaces)
     const usableAccounts = accountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account))
@@ -46,6 +50,11 @@ function AccountsOverviewPage({
     if (isPendingOnlyAccount(account)) return 'pending'
     return 'stale'
   }
+
+  const detailAccount = useMemo(
+    () => accountWorkspaces.find((account) => account.account_key === detailAccountKey) || null,
+    [accountWorkspaces, detailAccountKey],
+  )
 
   if (!signedIn) {
     return (
@@ -187,10 +196,11 @@ function AccountsOverviewPage({
         </div>
       </div>
       {selectedAccount ? (
-        <div className="card current-active-account-strip">
+        <div className="card current-active-account-strip current-active-account-hero">
           <div className="row">
             <strong>Current active account</strong>
             {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
+            <span className="pill">Usable context</span>
           </div>
           <p>
             <strong>{selectedAccount.display_label || selectedAccount.external_account_id || selectedAccount.account_key}</strong>
@@ -199,8 +209,14 @@ function AccountsOverviewPage({
             <span className="pill">Connection {selectedAccount.connection_status || 'disconnected'}</span>
             <span className="pill">Sync {selectedAccount.sync_state || 'idle'}</span>
           </p>
+          <p className="hint">This account is the shared focus for Dashboard and Connections until you intentionally switch it.</p>
         </div>
-      ) : null}
+      ) : (
+        <div className="card current-active-account-strip current-active-account-hero">
+          <strong>Current active account</strong>
+          <p className="hint">No active usable account is selected right now. Choose a usable account card to set focused workspace context.</p>
+        </div>
+      )}
 
       <div className="card selected-account-panel premium-focus-card accounts-focus-panel">
         <div className="row">
@@ -288,6 +304,7 @@ function AccountsOverviewPage({
             isSelected={selectedAccount?.account_key === account.account_key}
             accountState={accountState(account)}
             onSelect={onSelectAccount}
+            onOpenDetails={setDetailAccountKey}
           />
         ))}
       </div>
@@ -303,6 +320,7 @@ function AccountsOverviewPage({
                 isSelected={selectedAccount?.account_key === account.account_key}
                 accountState={accountState(account)}
                 onSelect={onSelectAccount}
+                onOpenDetails={setDetailAccountKey}
               />
             ))}
           </div>
@@ -323,6 +341,17 @@ function AccountsOverviewPage({
           </ul>
         </div>
       ) : null}
+      {detailAccount ? (
+        <AccountDetailPanel
+          account={detailAccount}
+          accountState={accountState(detailAccount)}
+          isSelected={selectedAccount?.account_key === detailAccount.account_key}
+          onSetActive={onSelectAccount}
+          onRefreshWorkspace={onRefreshWorkspace}
+          onClose={() => setDetailAccountKey('')}
+        />
+      ) : null}
+      <p className="hint">Need provider operations? <NavLink className="app-nav-link" to="/app/connections">Go to Connections</NavLink></p>
     </section>
   )
 }
