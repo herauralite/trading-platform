@@ -48,7 +48,7 @@ function ConnectionsPage({
 
   return (
     <>
-      <section className="panel page-panel premium-workspace-panel">
+      <section className="panel page-panel premium-workspace-panel connections-page">
         <div className="panel-header row">
           <div>
             <p className="kicker">Connections</p>
@@ -65,7 +65,7 @@ function ConnectionsPage({
             <p className="hint">Sign in with Telegram in the shell gate to connect providers, run sync jobs, import CSV rows, or write manual journal entries.</p>
           </div>
         ) : null}
-        <div className="meta-grid premium-summary-grid">
+        <div className="meta-grid premium-summary-grid connections-method-grid">
           {connectionMethods.map((method) => {
             const connector = findConnector(method.key)
             return (
@@ -100,7 +100,7 @@ function ConnectionsPage({
         ) : null}
 
         {managedConnectors.map((connector) => (
-          <div key={connector.connector_type} className="card connector-card">
+          <div key={connector.connector_type} className="card connector-card connections-connector-card">
             {(() => {
               const lifecycle = deriveConnectorLifecycleState(connector)
               return (
@@ -316,7 +316,7 @@ function ConnectionsPage({
         ))}
       </section>
 
-      <section className={`panel page-panel${addFlowIntent === 'manual' ? ' dev-panel' : ''}`}>
+      <section className={`panel page-panel connections-utility-panel${addFlowIntent === 'manual' ? ' dev-panel' : ''}`}>
         <h2>Manual Journal</h2>
         {addFlowIntent === 'manual' ? <p className="hint">Add Account directed you here for manual setup.</p> : null}
         <div className="row">
@@ -336,7 +336,7 @@ function ConnectionsPage({
         </div>
       </section>
 
-      <section className={`panel page-panel${addFlowIntent === 'csv' ? ' dev-panel' : ''}`}>
+      <section className={`panel page-panel connections-utility-panel${addFlowIntent === 'csv' ? ' dev-panel' : ''}`}>
         <h2>CSV Import</h2>
         {addFlowIntent === 'csv' ? <p className="hint">Add Account directed you here for CSV import.</p> : null}
         <div className="row">
