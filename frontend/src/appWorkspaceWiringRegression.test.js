@@ -13,7 +13,7 @@ test('shell-level Add Account action is wired from all /app route surfaces', asy
   assert.equal(appSource.includes('path="/app"'), true)
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
-  assert.equal(appSource.includes('onAddAccount={() => openAddAccountFlow(\'mt5_bridge\')}'), true)
+  assert.equal(appSource.includes('onAddAccount={openAddAccountFlow}'), true)
 })
 
 test('signed-out users keep route-specific page experiences instead of a single generic fallback', async () => {
