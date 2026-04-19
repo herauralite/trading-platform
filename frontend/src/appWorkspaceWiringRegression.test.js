@@ -39,8 +39,11 @@ test('active account selection persists in shell storage and is cleared on sign-
   const appSource = await readFrontendFile('App.jsx')
 
   assert.equal(appSource.includes("ACTIVE_ACCOUNT_STORAGE_KEY = 'tali_active_account_key'"), true)
+  assert.equal(appSource.includes("DETAIL_ACCOUNT_STORAGE_KEY = 'tali_detail_account_key'"), true)
   assert.equal(appSource.includes('localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, selectedAccountKey)'), true)
+  assert.equal(appSource.includes('localStorage.setItem(DETAIL_ACCOUNT_STORAGE_KEY, detailAccountKey)'), true)
   assert.equal(appSource.includes('localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)'), true)
+  assert.equal(appSource.includes('localStorage.removeItem(DETAIL_ACCOUNT_STORAGE_KEY)'), true)
   assert.equal(appSource.includes('No active usable account selected'), true)
   assert.equal(appSource.includes('Provider: {selectedAccount.source_label || selectedAccount.connector_type ||'), true)
 })
