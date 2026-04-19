@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --test src/sessionAuth.test.js src/syncRunDiagnostics.test.js src/connectorConfig.test.js src/apiBase.test.js src/telegramAuthRegression.test.js src/staticTelegramGateRegression.test.js src/taliApiBaseResolverRegression.test.js src/authPlatformBaselineRegression.test.js src/accountConnectionState.test.js src/accountStatusMeta.test.js src/connectorLifecycleState.test.js src/alpacaConnectFlow.test.js src/onboardingState.test.js src/appNavigationRegression.test.js src/renderPathCanonicalRegression.test.js src/appRouteFamilyRegression.test.js src/appShellPresentationRegression.test.js src/appWorkspaceWiringRegression.test.js src/premiumAppExperienceRegression.test.js src/appWorkspaceFunctionalRegression.test.js src/accountDetailWorkspaceRegression.test.js"
+    "test": "node --test src/sessionAuth.test.js src/syncRunDiagnostics.test.js src/connectorConfig.test.js src/apiBase.test.js src/telegramAuthRegression.test.js src/staticTelegramGateRegression.test.js src/taliApiBaseResolverRegression.test.js src/authPlatformBaselineRegression.test.js src/accountConnectionState.test.js src/accountStatusMeta.test.js src/connectorLifecycleState.test.js src/alpacaConnectFlow.test.js src/onboardingState.test.js src/appNavigationRegression.test.js src/renderPathCanonicalRegression.test.js src/appRouteFamilyRegression.test.js src/appShellPresentationRegression.test.js src/appWorkspaceWiringRegression.test.js src/premiumAppExperienceRegression.test.js src/appWorkspaceFunctionalRegression.test.js src/accountDetailWorkspaceRegression.test.js src/workspaceAccountSelection.test.js"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.21",

@@ -19,7 +19,7 @@ test('accounts page updates detail context when selecting a usable account', asy
   const accountsSource = await readFrontendFile('pages/AccountsOverviewPage.jsx')
 
   assert.equal(accountsSource.includes('accounts-workspace-layout'), true)
-  assert.equal(accountsSource.includes('setDetailAccountKey(accountKey)'), true)
+  assert.equal(accountsSource.includes('onDetailAccountChange(accountKey)'), true)
   assert.equal(accountsSource.includes('onSelectAccount(accountKey)'), true)
 })
 
@@ -30,6 +30,9 @@ test('pending and stale cards keep non-active actions truthful', async () => {
   assert.equal(cardSource.includes('Pending setup (not active yet)'), true)
   assert.equal(cardSource.includes('Inactive record (not active)'), true)
   assert.equal(detailSource.includes('Not eligible for active workspace'), true)
+  assert.equal(detailSource.includes('Pending accounts must complete setup before activation.'), true)
+  assert.equal(detailSource.includes('Open reconnection in Connections'), true)
+  assert.equal(detailSource.includes('Continue setup in Connections'), true)
 })
 
 test('dashboard and connections reflect selected account context with action links', async () => {
@@ -43,4 +46,14 @@ test('dashboard and connections reflect selected account context with action lin
 
   assert.equal(connectionsSource.includes('Selected account context'), true)
   assert.equal(connectionsSource.includes('Connections actions stay scoped around this selected account/provider context.'), true)
+})
+
+test('accounts detail selection supports resilient fallback ordering', async () => {
+  const appSource = await readFrontendFile('App.jsx')
+  const accountsSource = await readFrontendFile('pages/AccountsOverviewPage.jsx')
+  const helperSource = await readFrontendFile('workspaceAccountSelection.js')
+
+  assert.equal(appSource.includes('DETAIL_ACCOUNT_STORAGE_KEY'), true)
+  assert.equal(accountsSource.includes('resolvePreferredDetailAccountKey'), true)
+  assert.equal(helperSource.includes('sortBySelectionPriority'), true)
 })

@@ -23,6 +23,7 @@ import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './
 import { fetchAccountWorkspaces } from './accountWorkspaceService'
 import { deriveAccountConnectionState, isCurrentlyConnectedAccount } from './accountConnectionState'
 import { deriveAppOnboardingState } from './onboardingState'
+import { resolvePreferredDetailAccountKey } from './workspaceAccountSelection'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
@@ -44,6 +45,7 @@ const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth'
 const USE_ACCOUNT_WORKSPACES_API = import.meta.env.VITE_APP_USE_ACCOUNT_WORKSPACES !== '0'
 const FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY = 'tali_first_run_add_account_prompt_seen'
 const ACTIVE_ACCOUNT_STORAGE_KEY = 'tali_active_account_key'
+const DETAIL_ACCOUNT_STORAGE_KEY = 'tali_detail_account_key'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -151,6 +153,7 @@ function App() {
   const [configDrafts, setConfigDrafts] = useState({})
   const [syncHistory, setSyncHistory] = useState({})
   const [selectedAccountKey, setSelectedAccountKey] = useState(() => localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY) || '')
+  const [detailAccountKey, setDetailAccountKey] = useState(() => localStorage.getItem(DETAIL_ACCOUNT_STORAGE_KEY) || '')
   const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
   const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
@@ -357,6 +360,15 @@ function App() {
   }, [unifiedAccountWorkspaces, usableAccountWorkspaces, selectedAccountKey])
 
   useEffect(() => {
+    const resolvedDetailKey = resolvePreferredDetailAccountKey(unifiedAccountWorkspaces, {
+      currentDetailAccountKey: detailAccountKey,
+      selectedActiveAccountKey: selectedAccountKey,
+    })
+    if (resolvedDetailKey === detailAccountKey) return
+    setDetailAccountKey(resolvedDetailKey)
+  }, [detailAccountKey, selectedAccountKey, unifiedAccountWorkspaces])
+
+  useEffect(() => {
     if (!signedIn) return
     if (!selectedAccountKey) {
       localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)
@@ -364,6 +376,15 @@ function App() {
     }
     localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, selectedAccountKey)
   }, [signedIn, selectedAccountKey])
+
+  useEffect(() => {
+    if (!signedIn) return
+    if (!detailAccountKey) {
+      localStorage.removeItem(DETAIL_ACCOUNT_STORAGE_KEY)
+      return
+    }
+    localStorage.setItem(DETAIL_ACCOUNT_STORAGE_KEY, detailAccountKey)
+  }, [detailAccountKey, signedIn])
 
 
   useEffect(() => {
@@ -377,6 +398,7 @@ function App() {
     ))
     if (!matched) return
     if (isCurrentlyConnectedAccount(matched)) setSelectedAccountKey(matched.account_key)
+    setDetailAccountKey(matched.account_key)
     setRecentlyAddedAccountLabel(matched.display_label || matched.external_account_id || matched.account_key)
     setPendingAccountFocus(null)
   }, [pendingAccountFocus, unifiedAccountWorkspaces])
@@ -552,9 +574,11 @@ function App() {
     setIsWorkspaceLoading(false)
     setRecentlyAddedAccountLabel('')
     setSelectedAccountKey('')
+    setDetailAccountKey('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
     localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)
+    localStorage.removeItem(DETAIL_ACCOUNT_STORAGE_KEY)
     sessionStorage.removeItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY)
   }
 
@@ -1072,6 +1096,8 @@ function App() {
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
+                  detailAccountKey={detailAccountKey}
+                  onDetailAccountChange={setDetailAccountKey}
                   onAddAccount={openAddAccountFlow}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}

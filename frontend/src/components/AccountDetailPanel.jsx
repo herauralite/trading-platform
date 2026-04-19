@@ -35,6 +35,7 @@ function AccountDetailPanel({
   accountState,
   isSelected,
   onSetActive,
+  connectionsPath = '/app/connections',
   onRefreshWorkspace,
 }) {
   if (!account) {
@@ -49,6 +50,23 @@ function AccountDetailPanel({
   const connectionMeta = connectionStatusMeta(account.connection_status)
   const stateClass = statusClassCopy(accountState)
   const canSetActive = accountState === 'usable' && !isSelected
+  const setActiveDisabledReason = isSelected
+    ? 'Already the active workspace account.'
+    : accountState === 'pending'
+      ? 'Pending accounts must complete setup before activation.'
+      : accountState === 'stale'
+        ? 'Stale/disconnected records cannot be activated until reconnected.'
+        : ''
+  const connectionsActionLabel = accountState === 'pending'
+    ? 'Continue setup in Connections'
+    : accountState === 'stale'
+      ? 'Open reconnection in Connections'
+      : 'Open connections'
+  const connectionsActionHelper = accountState === 'pending'
+    ? 'This opens the provider setup path so you can finish pending steps.'
+    : accountState === 'stale'
+      ? 'This opens provider operations so you can reconnect and restore usability.'
+      : 'Use Connections for provider-level operations for this active account.'
 
   return (
     <aside className="card account-detail-panel premium-focus-card" aria-live="polite">
@@ -103,9 +121,11 @@ function AccountDetailPanel({
         <button type="button" className={canSetActive ? 'primary-cta' : 'secondary-button'} disabled={!canSetActive} onClick={() => onSetActive(account.account_key)}>
           {isSelected ? 'Current Active Account' : accountState === 'usable' ? 'Set Active Account' : 'Not eligible for active workspace'}
         </button>
-        <NavLink className="app-nav-link" to="/app/connections">Open connections</NavLink>
+        <NavLink className="app-nav-link" to={connectionsPath}>{connectionsActionLabel}</NavLink>
         <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh Workspace</button>
       </div>
+      {!canSetActive ? <p className="hint">{setActiveDisabledReason}</p> : null}
+      <p className="hint">{connectionsActionHelper}</p>
     </aside>
   )
 }
