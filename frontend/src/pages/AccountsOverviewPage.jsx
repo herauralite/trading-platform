@@ -147,12 +147,56 @@ function AccountsOverviewPage({
             <div className="row">
               <span className="pill">{selectedAccount.source_label}</span>
               <span className="pill">{selectedAccount.broker_name || 'Broker not yet available'}</span>
+              {selectedAccount.environment ? <span className="pill">{String(selectedAccount.environment).toUpperCase()}</span> : null}
+              {selectedAccount.provider_state ? <span className="pill">{String(selectedAccount.provider_state).replace(/_/g, ' ')}</span> : null}
               <span className="hint">Connection</span>
               <AccountStatusBadge value={selectedAccount.connection_status} />
               <span className="hint">Sync</span>
               <AccountStatusBadge variant="sync" value={selectedAccount.sync_state} />
             </div>
             <p className="hint">Last activity: {formatDate(selectedAccount.last_activity_at)} · Last sync: {formatDate(selectedAccount.last_sync_at)}</p>
+            <div className="meta-grid">
+              <div className="meta-card">
+                <span className="hint">Connection health</span>
+                <strong>{selectedAccount.connection_status || 'disconnected'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Validation</span>
+                <strong>{selectedAccount.last_validated_at ? 'Verified' : 'Pending'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Last validated</span>
+                <strong>{formatDate(selectedAccount.last_validated_at)}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Environment</span>
+                <strong>{selectedAccount.environment ? String(selectedAccount.environment).toUpperCase() : '—'}</strong>
+              </div>
+              {selectedAccount.account_summary?.equity != null ? (
+                <div className="meta-card">
+                  <span className="hint">Equity</span>
+                  <strong>{selectedAccount.account_summary.equity}</strong>
+                </div>
+              ) : null}
+              {selectedAccount.account_summary?.buying_power != null ? (
+                <div className="meta-card">
+                  <span className="hint">Buying power</span>
+                  <strong>{selectedAccount.account_summary.buying_power}</strong>
+                </div>
+              ) : null}
+              {selectedAccount.account_summary?.cash != null ? (
+                <div className="meta-card">
+                  <span className="hint">Cash</span>
+                  <strong>{selectedAccount.account_summary.cash}</strong>
+                </div>
+              ) : null}
+              {selectedAccount.account_summary?.portfolio_value != null ? (
+                <div className="meta-card">
+                  <span className="hint">Portfolio value</span>
+                  <strong>{selectedAccount.account_summary.portfolio_value}</strong>
+                </div>
+              ) : null}
+            </div>
           </>
         ) : (
           <p className="hint">Select an account to establish workspace focus.</p>
