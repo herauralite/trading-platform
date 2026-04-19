@@ -63,11 +63,13 @@ from app.services.mt5_bridge import (
 from app.services.provider_onboarding import (
     PUBLIC_API_BETA_CONNECTORS,
     connect_alpaca_api_account,
+    connect_tradelocker_api_account,
     create_public_api_beta_connection,
     create_tradingview_connection,
     ingest_tradingview_event,
 )
 from app.services.alpaca_provider import AlpacaCredentialValidationError
+from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -1768,6 +1770,16 @@ class AlpacaApiConnectRequest(BaseModel):
     api_secret: str
 
 
+class TradeLockerApiConnectRequest(BaseModel):
+    label: str
+    base_url: str
+    account_id: str
+    email: str
+    password: str
+    server: str | None = None
+    environment: str | None = "demo"
+
+
 @app.get("/connectors/{connector_type}")
 async def connector_status_detail(
     connector_type: str,
@@ -2207,6 +2219,49 @@ async def connect_alpaca_public_api_provider(
             "validation_state": "account_verified",
             "last_validated_at": result["account"]["last_validated_at"],
             "summary": result["account"].get("account_summary") or {},
+        },
+    }
+
+
+@app.post("/providers/public-api/tradelocker_api/connect")
+async def connect_tradelocker_public_api_provider(
+    payload: TradeLockerApiConnectRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    label = str(payload.label or "").strip()
+    if not label:
+        raise HTTPException(status_code=400, detail="label is required")
+    try:
+        result = await connect_tradelocker_api_account(
+            user_id=resolved_uid,
+            label=label,
+            base_url=payload.base_url,
+            account_id=payload.account_id,
+            email=payload.email,
+            password=payload.password,
+            server=payload.server,
+            environment=payload.environment,
+        )
+    except TradeLockerAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "provider": "tradelocker_api",
+        "status": result["provider_state"],
+        "environment": result["environment"],
+        "validation_state": "account_verified",
+        "validation_error": result.get("validation_error"),
+        "account": {
+            "id": result["account"]["id"],
+            "display_label": result["account"]["display_label"],
+            "external_account_id": result["account"]["external_account_id"],
+            "provider_state": result["provider_state"],
+            "validation_state": "account_verified",
+            "last_validated_at": result["account"]["last_validated_at"],
         },
     }
 

@@ -81,6 +81,25 @@ CONNECTOR_CATALOG: dict[str, dict[str, Any]] = {
             "awaiting_secure_auth": "Awaiting secure auth",
         },
     },
+    "tradelocker_api": {
+        "label": "TradeLocker API",
+        "category": "public_api",
+        "auth_mode": "credentials_with_session_refresh",
+        "status": "beta",
+        "supports_live_sync": True,
+        "requires_bridge": False,
+        "beta": True,
+        "integration_status": "beta_live_sync",
+        "connection_layer": "public_api_connector",
+        "supported_capabilities": ["credential_validation", "account_sync", "position_ingest", "trade_ingest"],
+        "onboarding_copy": "Connect TradeLocker credentials and sync account snapshots/positions.",
+        "connection_state_labels": {
+            "connected": "Connected",
+            "sync_error": "Sync error",
+            "validation_failed": "Validation failed",
+            "awaiting_secure_auth": "Awaiting secure auth",
+        },
+    },
     "oanda_api": {
         "label": "OANDA API",
         "category": "public_api",
@@ -162,6 +181,23 @@ CONNECTOR_CONFIG_SPEC: dict[str, dict[str, Any]] = {
         "secret_fields": ["bridge_api_key"],
         "supports_external_sync": True,
     },
+    "tradelocker_api": {
+        "non_secret_fields": [
+            "base_url",
+            "environment",
+            "account_id",
+            "access_token_expires_at",
+            "last_synced_at",
+        ],
+        "secret_fields": [
+            "encrypted_access_token",
+            "encrypted_refresh_token",
+            "encrypted_email",
+            "encrypted_password",
+            "server",
+        ],
+        "supports_external_sync": True,
+    },
 }
 
 
@@ -181,9 +217,25 @@ def validate_mt5_bridge_connector_config(non_secret_config: dict[str, Any], secr
     return ("configured", None)
 
 
+def validate_tradelocker_connector_config(non_secret_config: dict[str, Any], secret_config: dict[str, Any]) -> tuple[str, str | None]:
+    base_url = str(non_secret_config.get("base_url") or "").strip()
+    account_id = str(non_secret_config.get("account_id") or "").strip()
+    refresh_token = str(secret_config.get("encrypted_refresh_token") or "").strip()
+    email = str(secret_config.get("encrypted_email") or "").strip()
+    password = str(secret_config.get("encrypted_password") or "").strip()
+    if not base_url:
+        return ("incomplete", "base_url is required for TradeLocker connectivity")
+    if not account_id:
+        return ("incomplete", "account_id is required for TradeLocker connectivity")
+    if not refresh_token and not (email and password):
+        return ("incomplete", "refresh token or email/password is required for TradeLocker connectivity")
+    return ("configured", None)
+
+
 CONNECTOR_CONFIG_VALIDATORS: dict[str, ConnectorConfigValidator] = {
     "fundingpips_extension": validate_fundingpips_connector_config,
     "mt5_bridge": validate_mt5_bridge_connector_config,
+    "tradelocker_api": validate_tradelocker_connector_config,
 }
 
 

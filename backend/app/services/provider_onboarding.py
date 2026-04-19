@@ -14,8 +14,9 @@ from app.services.alpaca_provider import (
     normalize_alpaca_environment,
     validate_alpaca_credentials,
 )
-from app.services.connector_ingest import upsert_connector_lifecycle, upsert_trading_account
+from app.services.connector_ingest import upsert_connector_config, upsert_connector_lifecycle, upsert_trading_account
 from app.services.secret_crypto import encrypt_secret
+from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient
 from app.services.tradingview_events import normalize_tradingview_event
 
 TRADINGVIEW_CONNECTOR = "tradingview_webhook"
@@ -381,4 +382,144 @@ async def connect_alpaca_api_account(
         "environment": env,
         "validation_error": validation_error,
         "account": dict(row),
+    }
+
+
+async def connect_tradelocker_api_account(
+    *,
+    user_id: str,
+    label: str,
+    base_url: str,
+    account_id: str,
+    email: str,
+    password: str,
+    server: str | None = None,
+    environment: str | None = "demo",
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    normalized_base_url = str(base_url or "").strip().rstrip("/")
+    normalized_account_id = str(account_id or "").strip()
+    normalized_email = str(email or "").strip()
+    normalized_password = str(password or "").strip()
+    display_label = str(label or "").strip() or "TradeLocker API"
+    normalized_env = str(environment or "demo").strip().lower()
+    if not normalized_base_url or not normalized_account_id:
+        raise ValueError("missing_account_context")
+    if not normalized_email or not normalized_password:
+        raise ValueError("invalid_credentials")
+
+    client = TradeLockerClient(base_url=normalized_base_url)
+    try:
+        session = await client.login_password(
+            email=normalized_email,
+            password=normalized_password,
+            server=server,
+        )
+        accessible_accounts = await client.list_accounts(session["access_token"])
+        matched_account = next(
+            (
+                row for row in accessible_accounts
+                if str(row.get("id") or row.get("accountId") or row.get("account_id") or "").strip() == normalized_account_id
+            ),
+            None,
+        )
+        if matched_account is None:
+            raise TradeLockerAuthError("account_not_accessible")
+        account_payload = await client.get_account(session["access_token"], normalized_account_id)
+    except TradeLockerAuthError as exc:
+        await upsert_connector_lifecycle(
+            user_id=user_id,
+            connector_type="tradelocker_api",
+            status="validation_failed",
+            is_connected=False,
+            last_activity_at=now,
+            metadata={
+                "provider_state": "validation_failed",
+                "validation_error": str(exc),
+                "environment": normalized_env,
+            },
+            error=str(exc),
+        )
+        raise
+    except TradeLockerApiError as exc:
+        await upsert_connector_lifecycle(
+            user_id=user_id,
+            connector_type="tradelocker_api",
+            status="validation_failed",
+            is_connected=False,
+            last_activity_at=now,
+            metadata={
+                "provider_state": "validation_failed",
+                "validation_error": str(exc),
+                "environment": normalized_env,
+            },
+            error=str(exc),
+        )
+        raise ValueError("provider_unavailable") from exc
+
+    external_account_id = str(
+        account_payload.get("id")
+        or account_payload.get("accountId")
+        or account_payload.get("account_id")
+        or normalized_account_id
+    ).strip()
+    account = await upsert_trading_account({
+        "user_id": user_id,
+        "connector_type": "tradelocker_api",
+        "broker_name": "tradelocker",
+        "external_account_id": external_account_id,
+        "display_label": display_label,
+        "metadata": {
+            "provider_state": "connected",
+            "validation_state": "account_verified",
+            "onboarding_state": "credentials_validated",
+            "environment": normalized_env,
+            "last_validated_at": now.isoformat(),
+        },
+    })
+
+    await upsert_connector_config(
+        user_id=user_id,
+        connector_type="tradelocker_api",
+        status="configured",
+        validation_error=None,
+        non_secret_config={
+            "base_url": normalized_base_url,
+            "account_id": external_account_id,
+            "environment": normalized_env,
+            "access_token_expires_at": session["expires_at"].isoformat(),
+            "last_synced_at": None,
+        },
+        secret_config={
+            "encrypted_access_token": encrypt_secret(session["access_token"]),
+            "encrypted_refresh_token": encrypt_secret(session["refresh_token"]),
+            "encrypted_email": encrypt_secret(normalized_email),
+            "encrypted_password": encrypt_secret(normalized_password),
+            "server": str(server or "").strip(),
+        },
+    )
+
+    await upsert_connector_lifecycle(
+        user_id=user_id,
+        connector_type="tradelocker_api",
+        status="connected",
+        is_connected=True,
+        last_activity_at=now,
+        metadata={
+            "provider_state": "connected",
+            "validation_state": "account_verified",
+            "environment": normalized_env,
+        },
+    )
+
+    return {
+        "provider_state": "connected",
+        "environment": normalized_env,
+        "validation_error": None,
+        "account": {
+            "id": account["id"],
+            "display_label": display_label,
+            "external_account_id": external_account_id,
+            "last_validated_at": now,
+        },
     }
