@@ -16,6 +16,7 @@ function AccountsOverviewPage({
   recentlyAddedAccountLabel,
   formatDate,
   isWorkspaceLoading,
+  onRefreshWorkspace,
 }) {
   const summary = useMemo(() => {
     const connectionState = deriveAccountConnectionState(accountWorkspaces)
@@ -74,11 +75,16 @@ function AccountsOverviewPage({
   }
 
   if (summary.hasZeroConnectedAccounts) {
+    const hasPendingOnly = summary.pendingAccounts.length > 0 && summary.staleAccounts.length === 0
+    const hasStaleOnly = summary.pendingAccounts.length === 0 && summary.staleAccounts.length > 0
     return (
       <section className="panel page-panel premium-workspace-panel accounts-page">
         <div className="panel-header row">
           <h2>Accounts</h2>
-          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+          <div className="row">
+            <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh</button>
+            <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+          </div>
         </div>
         <div className="empty-state account-onboarding-empty-state">
           <h3>Connect your first trading account</h3>
@@ -94,6 +100,8 @@ function AccountsOverviewPage({
           </ul>
           <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add your first account</button>
           <p className="hint">Inventory detected: {summary.total} rows · pending-only: {summary.pendingOnly} · stale/inactive: {summary.staleInactive}.</p>
+          {hasPendingOnly ? <p className="hint"><strong>Current state:</strong> pending-only workspace. Finish connector setup to make an account usable.</p> : null}
+          {hasStaleOnly ? <p className="hint"><strong>Current state:</strong> stale/inactive only. Reconnect a provider to restore an actively usable account.</p> : null}
         </div>
         {summary.pendingAccounts.length > 0 ? (
           <div className="card">
@@ -138,7 +146,10 @@ function AccountsOverviewPage({
           <p className="kicker">Accounts</p>
           <h2>Manage connected accounts</h2>
         </div>
-        <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+        <div className="row">
+          <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh</button>
+          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+        </div>
       </div>
       <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
 

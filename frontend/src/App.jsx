@@ -174,7 +174,7 @@ function App() {
   const [pendingAccountFocus, setPendingAccountFocus] = useState(null)
   const [recentlyAddedAccountLabel, setRecentlyAddedAccountLabel] = useState('')
   const [authActionPrompt, setAuthActionPrompt] = useState('')
-  const [addAccountReturnPath, setAddAccountReturnPath] = useState('/app/accounts')
+  const routeRefreshGuardRef = useRef('')
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -438,6 +438,16 @@ function App() {
     sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
     openAddAccountFlow('mt5_bridge')
   }, [signedIn, hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
+
+  useEffect(() => {
+    if (!signedIn) return
+    if (!['/app', '/app/accounts', '/app/connections'].includes(location.pathname)) return
+    const refreshKey = `${location.pathname}:${sessionToken}`
+    if (routeRefreshGuardRef.current === refreshKey) return
+    routeRefreshGuardRef.current = refreshKey
+    void loadConnectorData({ silent: true })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn, sessionToken, location.pathname])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
@@ -740,7 +750,6 @@ function App() {
     }
     setAuthActionPrompt('')
     setSelectedProviderType(defaultProviderType)
-    setAddAccountReturnPath(location.pathname.startsWith('/app') ? location.pathname : '/app/accounts')
     setAddAccountError('')
     setAddAccountSuccessMessage('')
     setIsAddAccountOpen(true)
@@ -799,7 +808,7 @@ function App() {
           return
         }
         closeAddAccountFlow()
-        navigate(addAccountReturnPath)
+        navigate('/app/accounts')
         return
       }
       if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
@@ -840,7 +849,7 @@ function App() {
           await new Promise((resolve) => window.setTimeout(resolve, 900))
         }
         closeAddAccountFlow()
-        navigate(addAccountReturnPath)
+        navigate('/app/accounts')
         return
       }
 
@@ -860,7 +869,7 @@ function App() {
       await connectorAction(provider.connectorType, 'connect', payload)
       setPendingAccountFocus({ connectorType: provider.connectorType, externalAccountId })
       closeAddAccountFlow()
-      navigate(addAccountReturnPath)
+      navigate('/app/accounts')
     } catch (error) {
       const apiDetail = error?.response?.data?.detail
       setAddAccountError(apiDetail || error?.message || 'Could not complete this add account flow.')
@@ -1035,11 +1044,13 @@ function App() {
                   accountConnectionState={accountConnectionState}
                   onAddAccount={openAddAccountFlow}
                   selectedAccount={selectedAccount}
+                  accountWorkspaces={unifiedAccountWorkspaces}
                   managedConnectors={managedConnectors}
                   syncHistory={syncHistory}
                   formatDate={formatDate}
                   isWorkspaceLoading={isWorkspaceLoading}
                   workspaceLoadError={workspaceLoadError}
+                  onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
               )}
             />
@@ -1055,6 +1066,7 @@ function App() {
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}
                   isWorkspaceLoading={isWorkspaceLoading}
+                  onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
               )}
             />
@@ -1091,6 +1103,7 @@ function App() {
                   onAddAccount={openAddAccountFlow}
                   addFlowIntent={addFlowIntent}
                   isWorkspaceLoading={isWorkspaceLoading}
+                  onRefreshWorkspace={() => loadConnectorData({ silent: true })}
                 />
               )}
             />
