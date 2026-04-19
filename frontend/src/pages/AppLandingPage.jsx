@@ -21,14 +21,24 @@ function AppLandingPage({
 
   if (!signedIn) {
     return (
-      <section className="panel page-panel app-dashboard-hub">
+      <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
         <div className="panel-header">
           <p className="kicker">Workspace</p>
-          <h2>Connect Telegram to unlock your trading workspace</h2>
+          <h2>Preview the TaliTrade workspace, then unlock it with Telegram</h2>
         </div>
         <p className="hint">
           You can browse Dashboard, Accounts, and Connections now. Sign in to attach broker accounts, sync data, and run account-specific workflows.
         </p>
+        <div className="meta-grid accounts-summary-grid">
+          <div className="meta-card summary-card">
+            <span className="hint">Navigation</span>
+            <strong>Dashboard · Accounts · Connections</strong>
+          </div>
+          <div className="meta-card summary-card">
+            <span className="hint">What unlocks after sign-in</span>
+            <strong>Add Account, sync control, account focus</strong>
+          </div>
+        </div>
         <div className="row app-onboarding-links">
           <NavLink className="app-nav-link" to="/app/accounts">Review Accounts surface</NavLink>
           <NavLink className="app-nav-link" to="/app/connections">Review Connections surface</NavLink>
@@ -39,7 +49,7 @@ function AppLandingPage({
 
   if (isWorkspaceLoading) {
     return (
-      <section className="panel page-panel app-dashboard-hub">
+      <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
         <div className="panel-header">
           <p className="kicker">Dashboard</p>
           <h2>Loading account workspace</h2>
@@ -55,7 +65,7 @@ function AppLandingPage({
 
   if (workspaceLoadError) {
     return (
-      <section className="panel page-panel app-dashboard-hub">
+      <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
         <div className="panel-header">
           <p className="kicker">Dashboard</p>
           <h2>Workspace data could not be loaded</h2>
@@ -68,7 +78,7 @@ function AppLandingPage({
 
   if (hasZeroConnectedAccounts) {
     return (
-      <section className="panel page-panel app-onboarding-hub">
+      <section className="panel page-panel app-onboarding-hub premium-workspace-panel">
         <div className="panel-header row">
           <div>
             <p className="kicker">Onboarding</p>
@@ -77,7 +87,7 @@ function AppLandingPage({
           <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <p className="hint">
-          Choose a provider, link an account, then use Connections for sync operations and connector-level controls.
+          This is your workspace launch point: connect a provider in Accounts, then run connector operations in Connections.
         </p>
         <ul className="onboarding-path-list">
           <li><strong>MT5</strong> bridge with registration and pairing support</li>
@@ -99,7 +109,7 @@ function AppLandingPage({
   }
 
   return (
-    <section className="panel page-panel app-dashboard-hub">
+    <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
       <div className="panel-header row">
         <div>
           <p className="kicker">Dashboard</p>
@@ -108,7 +118,7 @@ function AppLandingPage({
         <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
       </div>
 
-      <div className="meta-grid accounts-summary-grid">
+      <div className="meta-grid accounts-summary-grid premium-summary-grid">
         <div className="meta-card summary-card">
           <span className="hint">Connected accounts</span>
           <strong>{accountConnectionState.connectedUsableCount}</strong>
@@ -123,7 +133,7 @@ function AppLandingPage({
         </div>
       </div>
 
-      <div className="card selected-account-panel">
+      <div className="card selected-account-panel premium-focus-card">
         <h3>Active account focus</h3>
         {selectedAccount ? (
           <p>
@@ -138,7 +148,7 @@ function AppLandingPage({
         )}
       </div>
 
-      <div className="card">
+      <div className="card premium-activity-card">
         <h3>Recent sync activity</h3>
         {latestRuns.length > 0 ? (
           <ul className="sync-activity-list">

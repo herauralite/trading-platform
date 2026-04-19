@@ -21,7 +21,7 @@ test('signed-out users keep route-specific page experiences instead of a single 
   const accountsSource = await readFrontendFile('pages/AccountsOverviewPage.jsx')
   const connectionsSource = await readFrontendFile('pages/ConnectionsPage.jsx')
 
-  assert.equal(landingSource.includes('Connect Telegram to unlock your trading workspace'), true)
+  assert.equal(landingSource.includes('unlock it with Telegram'), true)
   assert.equal(accountsSource.includes('Sign in with Telegram from the app shell to manage account cards'), true)
   assert.equal(connectionsSource.includes('Signed out: setup actions are disabled.'), true)
 })
