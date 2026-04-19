@@ -10,7 +10,7 @@ test('app shell exposes visible routes to Accounts and Connections regardless of
   assert.equal(appSource.includes('to="/app/accounts"'), true)
   assert.equal(appSource.includes('to="/app/connections"'), true)
   assert.equal(appSource.includes('path="/app"'), true)
-  assert.equal(appSource.includes('Authenticate to connect broker accounts, sync workspace data, and unlock account actions.'), true)
+  assert.equal(appSource.includes('Authenticate to unlock the account workspace, live sync operations, and connector controls.'), true)
 
   assert.equal(landingSource.includes('Review Accounts surface'), true)
   assert.equal(landingSource.includes('Review Connections surface'), true)

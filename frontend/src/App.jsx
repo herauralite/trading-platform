@@ -321,6 +321,44 @@ function App() {
   }, [widgetScriptLoaded, signedIn])
 
   useEffect(() => {
+    if (signedIn) return
+    if (telegramConfig?.oidcEnabled) return
+    if (!isCanonicalHost) return
+    const mountNode = widgetWrapRef.current
+    if (!mountNode) return
+
+    const botUsername = telegramConfig?.botUsername || 'TaliTradeBot'
+    mountNode.innerHTML = ''
+    setWidgetScriptLoaded(false)
+    setWidgetStatus('')
+
+    const script = document.createElement('script')
+    script.async = true
+    script.src = 'https://telegram.org/js/telegram-widget.js?22'
+    script.setAttribute('data-telegram-login', botUsername)
+    script.setAttribute('data-size', 'large')
+    script.setAttribute('data-userpic', 'false')
+    script.setAttribute('data-request-access', 'write')
+    script.setAttribute('data-onauth', 'onTelegramAuth(user)')
+    script.onload = () => {
+      setWidgetScriptLoaded(true)
+      setWidgetStatus('')
+    }
+    script.onerror = () => {
+      setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')
+    }
+    mountNode.appendChild(script)
+
+    return () => {
+      script.onload = null
+      script.onerror = null
+      if (mountNode.contains(script)) {
+        mountNode.removeChild(script)
+      }
+    }
+  }, [signedIn, telegramConfig?.oidcEnabled, telegramConfig?.botUsername, isCanonicalHost])
+
+  useEffect(() => {
     if (!signedIn) return
     if (!hasZeroConnectedAccounts) return
     if (location.pathname !== '/app' && location.pathname !== '/app/accounts') return
@@ -365,7 +403,7 @@ function App() {
       })
       setWidgetDiagnostics(diagnostics)
       setTelegramConfig(res.data || null)
-      setWidgetStatus('Telegram sign-in is ready.')
+      setWidgetStatus('')
     } catch (error) {
       setTelegramConfig(null)
       setConfigLoadFailed(true)
@@ -860,9 +898,9 @@ function App() {
       ) : null}
       {!signedIn ? (
         <section className="panel auth-shell-gate" aria-live="polite">
-          <h2>Sign in with Telegram</h2>
+          <h2>Secure Telegram sign-in</h2>
           {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-          <p>Authenticate to connect broker accounts, sync workspace data, and unlock account actions.</p>
+          <p>Authenticate to unlock the account workspace, live sync operations, and connector controls.</p>
           {telegramConfig?.oidcEnabled ? (
             <button onClick={startOidcFlow}>Continue with Telegram</button>
           ) : (
@@ -870,20 +908,7 @@ function App() {
               {!isCanonicalHost ? (
                 <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
               ) : (
-                <>
-                  {isConfigLoading ? <p className="hint">Loading Telegram sign-in…</p> : null}
-                  <script
-                    async
-                    src="https://telegram.org/js/telegram-widget.js?22"
-                    data-telegram-login={telegramConfig?.botUsername || 'TaliTradeBot'}
-                    data-size="large"
-                    data-userpic="false"
-                    data-request-access="write"
-                    data-onauth="onTelegramAuth(user)"
-                    onLoad={() => setWidgetScriptLoaded(true)}
-                    onError={() => setWidgetStatus('Could not load Telegram widget script. Disable blockers and retry.')}
-                  />
-                </>
+                isConfigLoading ? <p className="hint">Loading Telegram sign-in…</p> : null
               )}
               {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
               {configLoadFailed ? (
