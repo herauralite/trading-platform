@@ -16,6 +16,7 @@ function AppLandingPage({
 }) {
   const usableAccounts = accountWorkspaces.filter((account) => ['connected', 'active', 'paper_connected', 'live_connected', 'account_verified', 'degraded', 'sync_error'].includes(String(account.connection_status || '').toLowerCase()))
   const pendingAccounts = accountWorkspaces.filter((account) => !usableAccounts.some((item) => item.account_key === account.account_key) && ['awaiting_alerts', 'bridge_required', 'waiting_for_registration', 'ready_for_account_attach', 'beta_pending', 'metadata_saved', 'awaiting_secure_auth', 'waiting_for_secure_auth_support'].includes(String(account.connection_status || '').toLowerCase()))
+  const staleAccounts = accountWorkspaces.filter((account) => !usableAccounts.some((item) => item.account_key === account.account_key) && !pendingAccounts.some((item) => item.account_key === account.account_key))
   const connectorsWithErrors = managedConnectors.filter((connector) => connector.last_error)
   const connectorsSyncing = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state))
   const connectorsConnected = managedConnectors.filter((connector) => connector.account_count > 0 || connector.is_connected)
@@ -95,6 +96,8 @@ function AppLandingPage({
   }
 
   if (hasZeroConnectedAccounts) {
+    const hasPendingOnly = pendingAccounts.length > 0 && staleAccounts.length === 0
+    const hasStaleOnly = staleAccounts.length > 0 && pendingAccounts.length === 0
     return (
       <section className="panel page-panel app-onboarding-hub premium-workspace-panel dashboard-page">
         <div className="panel-header row">
@@ -123,6 +126,11 @@ function AppLandingPage({
         <p className="hint">
           Current workspace inventory: {accountConnectionState.totalCount} total · {accountConnectionState.pendingOnlyCount} pending-only · {accountConnectionState.staleInactiveCount} inactive/stale.
         </p>
+        {hasPendingOnly ? <p className="hint"><strong>Current mode:</strong> pending-only workspace context. Complete provider setup before an account becomes usable.</p> : null}
+        {hasStaleOnly ? <p className="hint"><strong>Current mode:</strong> stale/inactive workspace context. Reconnect a provider to restore an active account.</p> : null}
+        {!hasPendingOnly && !hasStaleOnly && accountConnectionState.totalCount > 0 ? (
+          <p className="hint"><strong>Current mode:</strong> mixed non-usable records detected (pending + stale). Use Accounts to pick which provider to recover first.</p>
+        ) : null}
       </section>
     )
   }
@@ -174,13 +182,45 @@ function AppLandingPage({
               {' · '}
               <span className="pill">{selectedAccount.source_label}</span>
               {selectedAccount.broker_name ? <span className="pill">{selectedAccount.broker_name}</span> : null}
+              {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
             </p>
-            <p className="hint">
-              Connection {selectedAccount.connection_status || 'disconnected'} · Sync {selectedAccount.sync_state || 'idle'} · Last sync {formatDate(selectedAccount.last_sync_at)} · Last activity {formatDate(selectedAccount.last_activity_at)}
-            </p>
+            <div className="meta-grid">
+              <div className="meta-card">
+                <span className="hint">Account label</span>
+                <strong>{selectedAccount.display_label || '—'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Account ID</span>
+                <strong className="mono">{selectedAccount.external_account_id || selectedAccount.trading_account_id || selectedAccount.account_key}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Provider/source</span>
+                <strong>{selectedAccount.source_label || selectedAccount.connector_type || 'Unknown provider'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Broker</span>
+                <strong>{selectedAccount.broker_name || 'Broker metadata pending'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Connection status</span>
+                <strong>{selectedAccount.connection_status || 'disconnected'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Sync state</span>
+                <strong>{selectedAccount.sync_state || 'idle'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Last sync</span>
+                <strong>{formatDate(selectedAccount.last_sync_at)}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Last activity</span>
+                <strong>{formatDate(selectedAccount.last_activity_at)}</strong>
+              </div>
+            </div>
           </>
         ) : (
-          <p className="hint">Select an account in the shell switcher to focus account context across pages.</p>
+          <p className="hint">No active usable account is selected. Use Accounts to select a workspace account.</p>
         )}
       </div>
 
