@@ -57,8 +57,26 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
             <strong>{account.account_summary.equity}</strong>
           </div>
         ) : null}
+        {account.account_summary?.buying_power != null ? (
+          <div className="meta-card">
+            <span className="hint">Buying power</span>
+            <strong>{account.account_summary.buying_power}</strong>
+          </div>
+        ) : null}
+        {account.account_summary?.cash != null ? (
+          <div className="meta-card">
+            <span className="hint">Cash</span>
+            <strong>{account.account_summary.cash}</strong>
+          </div>
+        ) : null}
+        {account.account_summary?.portfolio_value != null ? (
+          <div className="meta-card">
+            <span className="hint">Portfolio value</span>
+            <strong>{account.account_summary.portfolio_value}</strong>
+          </div>
+        ) : null}
       </div>
-      {account.last_validated_at ? <p className="hint">Last validated: {formatTimestamp(account.last_validated_at)}</p> : null}
+      <p className="hint">Validation: {account.last_validated_at ? 'verified' : 'pending'} · Last validated: {formatTimestamp(account.last_validated_at)}</p>
 
       <button type="button" onClick={() => onSelect(account.account_key)}>
         {isSelected ? 'Selected' : 'Open account context'}
