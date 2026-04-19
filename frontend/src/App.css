@@ -435,6 +435,36 @@ textarea {
   gap: 10px;
 }
 
+
+.accounts-workspace-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.accounts-workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.account-detail-panel {
+  position: sticky;
+  top: 86px;
+  border-color: rgba(100, 206, 255, 0.58);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(64, 156, 255, 0.15), transparent 45%),
+    linear-gradient(170deg, rgba(20, 37, 62, 0.97), rgba(10, 20, 36, 0.98));
+  box-shadow:
+    0 24px 42px rgba(1, 14, 31, 0.54),
+    inset 0 0 0 1px rgba(110, 214, 255, 0.22);
+}
+
+.account-detail-panel-empty {
+  position: static;
+}
+
 .account-card.selected {
   border-color: rgba(87, 175, 255, 0.75);
 }
@@ -566,17 +596,12 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  .account-detail-overlay {
-    align-items: flex-end;
-    justify-content: stretch;
-    padding: 0;
+  .accounts-workspace-layout {
+    grid-template-columns: 1fr;
   }
 
-  .account-detail-drawer {
-    width: 100%;
-    max-height: 84vh;
-    border-radius: 16px 16px 0 0;
-    border-bottom-width: 0;
+  .account-detail-panel {
+    position: static;
   }
 }
 
