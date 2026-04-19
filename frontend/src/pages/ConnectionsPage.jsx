@@ -4,6 +4,7 @@ import { buildConnectorConfigDraft, connectorConfigStateLabel } from '../connect
 import { formatSyncRunDiagnostics } from '../syncRunDiagnostics'
 import { isGuidedAddAccountConnector } from '../addAccountFlow'
 import { connectorEnvironmentLabel, deriveConnectorLifecycleState } from '../connectorLifecycleState'
+import { isCurrentlyConnectedAccount, isPendingOnlyAccount } from '../accountConnectionState'
 
 function ConnectionsPage({
   catalog,
@@ -35,6 +36,7 @@ function ConnectionsPage({
   onAddAccount,
   addFlowIntent,
   selectedAccount,
+  accountWorkspaces,
   isWorkspaceLoading,
   onRefreshWorkspace,
 }) {
@@ -77,6 +79,71 @@ function ConnectionsPage({
   const selectedProviderLabel = selectedAccount?.source_label || selectedAccount?.connector_type || ''
   const selectedMethod = connectionMethods.find((method) => method.key === selectedConnectorType) || null
   const inboundMethod = connectionMethods.find((method) => method.key === inboundIntent.provider) || null
+  const routeFocusedAccount = useMemo(() => {
+    if (!inboundIntent.account) return null
+    return (accountWorkspaces || []).find((account) => String(account.account_key || '').toLowerCase() === inboundIntent.account.toLowerCase()) || null
+  }, [accountWorkspaces, inboundIntent.account])
+  const providerConnector = useMemo(
+    () => (inboundIntent.provider ? findConnector(inboundIntent.provider) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [managedConnectors, inboundIntent.provider],
+  )
+  const providerLifecycle = useMemo(
+    () => deriveConnectorLifecycleState(providerConnector || { status: 'disconnected' }),
+    [providerConnector],
+  )
+  const focusedAccountConnectionState = useMemo(() => {
+    if (!routeFocusedAccount) return 'stale'
+    if (isCurrentlyConnectedAccount(routeFocusedAccount)) return 'usable'
+    if (isPendingOnlyAccount(routeFocusedAccount)) return 'pending'
+    return 'stale'
+  }, [routeFocusedAccount])
+  const providerWorkflowState = useMemo(() => {
+    if (routeFocusedAccount) return focusedAccountConnectionState
+    const connectorStatus = String(providerConnector?.status || '').toLowerCase()
+    if (providerLifecycle.key === 'pending_beta_metadata') return 'pending'
+    if (providerConnector?.account_count > 0 && (providerConnector?.is_connected || connectorStatus === 'connected' || connectorStatus === 'active')) return 'usable'
+    if (['waiting_for_registration', 'bridge_required', 'awaiting_secure_auth', 'awaiting_alerts', 'beta_pending', 'metadata_saved'].includes(connectorStatus)) return 'pending'
+    return 'stale'
+  }, [focusedAccountConnectionState, providerConnector, providerLifecycle.key, routeFocusedAccount])
+  const focusedWorkflowCta = useMemo(() => {
+    if (!inboundIntent.provider) return null
+    const guided = isGuidedAddAccountConnector(inboundIntent.provider) || ['mt5_bridge', 'fundingpips_extension', 'csv_import', 'manual'].includes(inboundIntent.provider)
+    if (!signedIn) return { label: 'Sign in to continue', disabled: true, onClick: () => {} }
+    if (providerLifecycle.key === 'pending_beta_metadata') {
+      return {
+        label: 'Finish required configuration',
+        disabled: false,
+        onClick: () => onAddAccount(inboundIntent.provider),
+      }
+    }
+    if (providerWorkflowState === 'usable') {
+      if (providerConnector?.supports_live_sync) {
+        return {
+          label: 'Refresh sync',
+          disabled: false,
+          onClick: () => connectorAction(inboundIntent.provider, 'sync'),
+        }
+      }
+      return {
+        label: 'View linked accounts',
+        disabled: false,
+        onClick: () => onAddAccount(inboundIntent.provider),
+      }
+    }
+    if (providerWorkflowState === 'pending') {
+      return {
+        label: guided ? 'Continue setup' : 'Finish required configuration',
+        disabled: false,
+        onClick: guided ? () => onAddAccount(inboundIntent.provider) : () => connectorAction(inboundIntent.provider, 'connect'),
+      }
+    }
+    return {
+      label: guided ? 'Reconnect provider' : 'Re-run sync after reconnect',
+      disabled: false,
+      onClick: guided ? () => onAddAccount(inboundIntent.provider) : () => connectorAction(inboundIntent.provider, 'sync'),
+    }
+  }, [connectorAction, inboundIntent.provider, onAddAccount, providerConnector?.supports_live_sync, providerLifecycle.key, providerWorkflowState, signedIn])
 
   const intentHeadline = inboundIntent.intent === 'setup'
     ? 'Continue provider setup'
@@ -105,8 +172,9 @@ function ConnectionsPage({
     if (!signedIn) return { label: 'Sign in to continue', disabled: true, onClick: () => {} }
     if (state === 'connected') return { label: 'View linked accounts', disabled: false, onClick: () => onAddAccount(methodKey) }
     if (state === 'awaiting setup') return { label: 'Continue setup', disabled: false, onClick: () => onAddAccount(methodKey) }
-    if (state === 'beta / bridge required') return { label: 'Re-open Add Account flow', disabled: false, onClick: () => onAddAccount(methodKey) }
-    return { label: 'Connect', disabled: false, onClick: () => onAddAccount(methodKey) }
+    if (state === 'beta / bridge required') return { label: 'Finish required configuration', disabled: false, onClick: () => onAddAccount(methodKey) }
+    if (connector?.status === 'validation_failed' || connector?.status === 'sync_error') return { label: 'Reconnect provider', disabled: false, onClick: () => onAddAccount(methodKey) }
+    return { label: 'Re-run sync after reconnect', disabled: false, onClick: () => onAddAccount(methodKey) }
   }
 
   function selectedProviderNextAction(connector, methodKey) {
@@ -148,13 +216,55 @@ function ConnectionsPage({
           <strong>Accounts</strong> is your account-centric workspace. <strong>Connections</strong> handles provider configuration and sync operations for the current workspace context.
         </p>
         {inboundIntent.provider ? (
-          <div className="card connections-intent-focus">
+          <div className="card connections-intent-focus connections-workflow-focus-panel">
             <div className="row">
               <strong>{intentHeadline || 'Focused provider context'}</strong>
               <span className="pill primary-pill">{inboundMethod?.title || inboundIntent.provider}</span>
               {inboundIntent.account ? <span className="pill mono">{inboundIntent.account}</span> : null}
             </div>
             <p className="hint">This section is focused from Account details so you can continue the exact provider flow without reselecting context.</p>
+            <div className="meta-grid">
+              <div className="meta-card">
+                <span className="hint">Provider-focused workflow</span>
+                <strong>{inboundMethod?.title || inboundIntent.provider}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Route-focused account</span>
+                <strong>{routeFocusedAccount?.display_label || routeFocusedAccount?.account_key || inboundIntent.account || 'Not supplied'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Selected account</span>
+                <strong>{selectedAccount?.display_label || selectedAccount?.account_key || 'No selected usable account'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Intent / truth state</span>
+                <strong>{(inboundIntent.intent || 'manage')} · {providerWorkflowState}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Connector lifecycle</span>
+                <strong>{providerLifecycle.label}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Next best action</span>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  disabled={focusedWorkflowCta?.disabled}
+                  onClick={() => focusedWorkflowCta?.onClick?.()}
+                >
+                  {focusedWorkflowCta?.label || 'Open provider workflow'}
+                </button>
+              </div>
+            </div>
+            {inboundIntent.account && !routeFocusedAccount ? (
+              <p className="hint"><strong>Route-focused account not found in current workspace records.</strong> Refresh or reconnect before treating it as active context.</p>
+            ) : null}
+            {inboundIntent.account && selectedAccount?.account_key && inboundIntent.account !== selectedAccount.account_key ? (
+              <p className="hint"><strong>Truth note:</strong> selected account and route-focused account differ. Workspace remains on selected usable account until you switch it explicitly.</p>
+            ) : null}
+            {providerLifecycle.key === 'pending_beta_metadata' ? (
+              <p className="hint"><strong>Capability note:</strong> this provider is in beta metadata-only mode, so manage/sync capabilities are intentionally limited.</p>
+            ) : null}
           </div>
         ) : null}
         <div className="card selected-account-panel premium-focus-card connections-context-panel">
@@ -222,7 +332,7 @@ function ConnectionsPage({
             const action = primaryAction(connector, method.key)
             const isSelectedProvider = prioritizedProviderKey && prioritizedProviderKey === method.key
             return (
-              <div className={`meta-card summary-card ${isSelectedProvider ? 'provider-priority-card' : 'provider-secondary-card'}`} key={method.key}>
+            <div className={`meta-card summary-card ${isSelectedProvider ? 'provider-priority-card' : 'provider-secondary-card'}`} key={method.key}>
                 <div className="row">
                   <strong>{method.title}</strong>
                   {isSelectedProvider ? <span className="pill primary-pill">Focused provider</span> : <span className="pill">Other provider</span>}
@@ -234,14 +344,7 @@ function ConnectionsPage({
                 <p className="hint">
                   {isSelectedProvider ? selectedProviderNextAction(connector, method.key) : `Next action: ${signedIn ? action.label : 'Sign in to begin setup.'}`}
                 </p>
-                <button
-                  type="button"
-                  className="secondary-button"
-                  disabled={action.disabled}
-                  onClick={action.onClick}
-                >
-                  {action.label}
-                </button>
+                <button type="button" className="secondary-button" disabled={action.disabled} onClick={action.onClick}>{action.label}</button>
               </div>
             )
           })}
@@ -397,7 +500,7 @@ function ConnectionsPage({
               </div>
             ) : null}
 
-            <details>
+            <details open={Boolean(prioritizedProviderKey && prioritizedProviderKey === connector.connector_type)}>
               <summary>Recent sync runs ({(syncHistory[connector.connector_type] || []).length})</summary>
               <ul>
                 {(syncHistory[connector.connector_type] || []).map((run) => {
@@ -414,7 +517,7 @@ function ConnectionsPage({
             </details>
 
             {connector.supports_live_sync ? (
-              <details>
+              <details open={Boolean(prioritizedProviderKey && prioritizedProviderKey === connector.connector_type)}>
                 <summary>Connector credentials and config</summary>
                 <div className="row">
                   <input
