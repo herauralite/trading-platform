@@ -434,6 +434,14 @@ textarea {
   margin-top: 10px;
 }
 
+.connections-group-section {
+  margin-bottom: 12px;
+}
+
+.connections-group-section h3 {
+  margin: 2px 0 8px;
+}
+
 .connector-account-list {
   margin: 8px 0;
   padding-left: 18px;

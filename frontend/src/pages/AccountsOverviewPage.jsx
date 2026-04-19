@@ -95,6 +95,38 @@ function AccountsOverviewPage({
           <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add your first account</button>
           <p className="hint">Inventory detected: {summary.total} rows · pending-only: {summary.pendingOnly} · stale/inactive: {summary.staleInactive}.</p>
         </div>
+        {summary.pendingAccounts.length > 0 ? (
+          <div className="card">
+            <h3>Pending setup accounts</h3>
+            <p className="hint">These records are tracked but are not yet usable connected accounts.</p>
+            <div className="accounts-grid">
+              {summary.pendingAccounts.map((account) => (
+                <AccountWorkspaceCard
+                  key={account.account_key}
+                  account={account}
+                  isSelected={selectedAccount?.account_key === account.account_key}
+                  onSelect={onSelectAccount}
+                />
+              ))}
+            </div>
+          </div>
+        ) : null}
+        {summary.staleAccounts.length > 0 ? (
+          <div className="card">
+            <h3>Historical / disconnected records</h3>
+            <p className="hint">Shown for history and audit context only. These are intentionally not counted as active connected workspace accounts.</p>
+            <ul className="connector-account-list">
+              {summary.staleAccounts.map((account) => (
+                <li key={`stale-onboarding-${account.account_key}`}>
+                  <span>{account.display_label || account.external_account_id || account.account_key}</span>
+                  <span className="pill">{account.source_label || account.connector_type || 'Unknown source'}</span>
+                  <span className="pill">{account.connection_status || 'disconnected'}</span>
+                  <span className="hint">Last sync {formatDate(account.last_sync_at)} · Updated {formatDate(account.last_activity_at)}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
     )
   }
