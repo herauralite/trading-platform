@@ -2,5 +2,9 @@
   "rewrites": [
     { "source": "/app", "destination": "/app.html" },
     { "source": "/app/:path*", "destination": "/app.html" }
+  ],
+  "redirects": [
+    { "source": "/accounts", "destination": "/app/accounts", "permanent": false },
+    { "source": "/connections", "destination": "/app/connections", "permanent": false }
   ]
 }
