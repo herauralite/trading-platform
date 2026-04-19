@@ -28,7 +28,7 @@ import AccountsOverviewPage from './pages/AccountsOverviewPage'
 import ConnectionsPage from './pages/ConnectionsPage'
 import AppLandingPage from './pages/AppLandingPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
-import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS } from './addAccountFlow'
+import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS, PUBLIC_API_CONNECTORS } from './addAccountFlow'
 import { checkMt5PairingState, createMt5PairingToken, fetchMt5BridgeRegistrationStatus } from './mt5PairingService'
 import './App.css'
 
@@ -97,6 +97,11 @@ function App() {
     account_alias: '',
     api_key: '',
     api_secret: '',
+    base_url: '',
+    account_id: '',
+    email: '',
+    password: '',
+    server: '',
     tradingview_webhook_url: '',
     tradingview_secret_hint: '',
   })
@@ -120,6 +125,7 @@ function App() {
     if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
     if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
     if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
+    if (connectorType === 'tradelocker_api') return 'TradeLocker API'
     if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
     if (connectorType === 'binance_api') return 'Binance API (Beta)'
     if (connectorType === 'csv_import') return 'CSV Import'
@@ -647,7 +653,7 @@ function App() {
         navigate('/app/accounts')
         return
       }
-      if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
+      if (PUBLIC_API_CONNECTORS.includes(provider.connectorType)) {
         if (provider.connectorType === 'alpaca_api') {
           await axios.post(
             buildApiUrl('/providers/public-api/alpaca_api/connect'),
@@ -659,17 +665,61 @@ function App() {
             },
             { headers: authHeaders },
           )
-        } else {
-          await axios.post(
-            buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
+        }
+
+        if (provider.connectorType === 'tradelocker_api') {
+          const baseUrl = (addAccountDraft.base_url || '').trim()
+          const accountId = (addAccountDraft.account_id || '').trim()
+          const email = (addAccountDraft.email || '').trim()
+          const password = addAccountDraft.password || ''
+          const server = (addAccountDraft.server || '').trim()
+
+          if (!baseUrl || !accountId || !email || !password) {
+            setAddAccountError('Base URL, Account ID, Email, and Password are required for TradeLocker.')
+            return
+          }
+
+          const connectRes = await axios.post(
+            buildApiUrl('/providers/public-api/tradelocker_api/connect'),
             {
-              display_label: displayLabel || provider.title,
+              label: displayLabel || provider.title,
+              base_url: baseUrl,
+              account_id: accountId,
+              email,
+              password,
+              server: server || null,
               environment: addAccountDraft.environment || 'paper',
-              account_alias: (addAccountDraft.account_alias || '').trim() || null,
             },
             { headers: authHeaders },
           )
+
+          const responseAccount = connectRes?.data?.account || connectRes?.data?.connection || {}
+          const focusedAccountId = String(
+            responseAccount.external_account_id
+            || responseAccount.account_id
+            || connectRes?.data?.external_account_id
+            || connectRes?.data?.account_id
+            || accountId,
+          )
+          setPendingAccountFocus({ connectorType: provider.connectorType, externalAccountId: focusedAccountId })
         }
+
+        closeAddAccountFlow()
+        await loadConnectorData({ silent: true })
+        navigate('/app/accounts')
+        return
+      }
+
+      if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
+        await axios.post(
+          buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
+          {
+            display_label: displayLabel || provider.title,
+            environment: addAccountDraft.environment || 'paper',
+            account_alias: (addAccountDraft.account_alias || '').trim() || null,
+          },
+          { headers: authHeaders },
+        )
         closeAddAccountFlow()
         await loadConnectorData({ silent: true })
         navigate('/app/accounts')
@@ -696,7 +746,16 @@ function App() {
     } catch (error) {
       setAddAccountError(error?.message || 'Could not complete this add account flow.')
     } finally {
-      setAddAccountDraft((prev) => ({ ...prev, api_key: '', api_secret: '' }))
+      setAddAccountDraft((prev) => ({
+        ...prev,
+        api_key: '',
+        api_secret: '',
+        password: '',
+        base_url: '',
+        account_id: '',
+        email: '',
+        server: '',
+      }))
       setIsAddAccountSubmitting(false)
     }
   }

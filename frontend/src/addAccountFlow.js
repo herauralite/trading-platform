@@ -2,6 +2,7 @@ const REQUIRED_CONNECTORS = [
   'mt5_bridge',
   'tradingview_webhook',
   'alpaca_api',
+  'tradelocker_api',
   'oanda_api',
   'binance_api',
   'fundingpips_extension',
@@ -9,8 +10,9 @@ const REQUIRED_CONNECTORS = [
   'manual',
 ]
 
-export const PUBLIC_API_BETA_CONNECTORS = ['alpaca_api', 'oanda_api', 'binance_api']
-export const GUIDED_ADD_ACCOUNT_CONNECTORS = ['tradingview_webhook', ...PUBLIC_API_BETA_CONNECTORS]
+export const PUBLIC_API_CONNECTORS = ['alpaca_api', 'tradelocker_api']
+export const PUBLIC_API_BETA_CONNECTORS = ['oanda_api', 'binance_api']
+export const GUIDED_ADD_ACCOUNT_CONNECTORS = ['tradingview_webhook', ...PUBLIC_API_CONNECTORS, ...PUBLIC_API_BETA_CONNECTORS]
 
 export function isGuidedAddAccountConnector(connectorType) {
   return GUIDED_ADD_ACCOUNT_CONNECTORS.includes(connectorType)
@@ -40,6 +42,14 @@ const PROVIDER_DEFAULTS = {
     badge: 'Beta',
     description: 'Connect read-only Alpaca API credentials to validate account access.',
     ctaLabel: 'Connect Alpaca',
+  },
+  tradelocker_api: {
+    title: 'TradeLocker API',
+    shortLabel: 'TradeLocker',
+    flowType: 'tradelocker_connect',
+    badge: 'Public API',
+    description: 'Connect real TradeLocker credentials and validate access server-side.',
+    ctaLabel: 'Connect TradeLocker',
   },
   oanda_api: {
     title: 'OANDA API',
