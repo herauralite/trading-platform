@@ -33,6 +33,7 @@ function ConnectionsPage({
   onAddAccount,
   addFlowIntent,
   isWorkspaceLoading,
+  onRefreshWorkspace,
 }) {
   const connectionMethods = [
     { key: 'mt5_bridge', title: 'MT5', description: 'Pair bridge worker + account metadata, then run sync.', group: 'Core connectors' },
@@ -55,6 +56,9 @@ function ConnectionsPage({
     acc[group].push(method)
     return acc
   }, {})
+  const connectedCount = managedConnectors.filter((connector) => connector.account_count > 0 || connector.is_connected).length
+  const syncingCount = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state)).length
+  const attentionCount = managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error' || connector.config_validation_error).length
 
   function findConnector(methodKey) {
     return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
@@ -87,7 +91,10 @@ function ConnectionsPage({
             <p className="kicker">Connections</p>
             <h2>Connector operations and sync controls</h2>
           </div>
-          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+          <div className="row">
+            <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh</button>
+            <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+          </div>
         </div>
         <p className="hint">
           Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management and Add Account onboarding.
@@ -98,6 +105,20 @@ function ConnectionsPage({
             <p className="hint">Sign in with Telegram in the shell gate to connect providers, run sync jobs, import CSV rows, or write manual journal entries.</p>
           </div>
         ) : null}
+        <div className="meta-grid premium-summary-grid connections-method-grid">
+          <div className="meta-card summary-card">
+            <span className="hint">Connected connectors</span>
+            <strong>{connectedCount}</strong>
+          </div>
+          <div className="meta-card summary-card">
+            <span className="hint">Sync in progress</span>
+            <strong>{syncingCount}</strong>
+          </div>
+          <div className="meta-card summary-card">
+            <span className="hint">Needs attention</span>
+            <strong>{attentionCount}</strong>
+          </div>
+        </div>
         {Object.entries(groupedMethods).map(([groupName, methods]) => (
           <div key={groupName} className="connections-group-section">
             <h3>{groupName}</h3>
