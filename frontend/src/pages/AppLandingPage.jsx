@@ -34,6 +34,66 @@ function AppLandingPage({
     .flatMap((runs) => runs || [])
     .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
     .slice(0, 4)
+  const selectedUsableAccount = selectedAccount && usableAccounts.some((account) => account.account_key === selectedAccount.account_key)
+    ? selectedAccount
+    : null
+  const hasPendingOnly = pendingAccounts.length > 0 && staleAccounts.length === 0
+  const hasStaleOnly = staleAccounts.length > 0 && pendingAccounts.length === 0
+  const hasMixedNonUsable = !selectedUsableAccount && pendingAccounts.length > 0 && staleAccounts.length > 0
+  const hasSyncIssuesOnSelected = Boolean(
+    selectedUsableAccount
+    && (
+      selectedUsableAccount.connection_status === 'sync_error'
+      || selectedUsableAccount.sync_state === 'failed'
+      || selectedUsableAccount.sync_state === 'retrying'
+    ),
+  )
+  const accountSummaryRows = selectedUsableAccount?.account_summary && typeof selectedUsableAccount.account_summary === 'object'
+    ? Object.entries(selectedUsableAccount.account_summary).filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+    : []
+
+  const dashboardNextAction = (() => {
+    if (usableAccounts.length === 0) {
+      if (hasPendingOnly) {
+        return {
+          title: 'Continue account setup',
+          copy: 'Your workspace is pending-only. Continue connector setup before an account becomes actively usable.',
+          ctaLabel: 'Continue setup in Connections',
+          to: '/app/connections',
+        }
+      }
+      if (hasStaleOnly) {
+        return {
+          title: 'Reconnect an inactive provider',
+          copy: 'Your workspace currently has stale/inactive accounts only. Reconnect the provider to restore active context.',
+          ctaLabel: 'Reconnect in Connections',
+          to: '/app/connections',
+        }
+      }
+      return {
+        title: 'Add your first usable account',
+        copy: 'No usable accounts are available yet. Add and connect an account to unlock active workspace behavior.',
+        ctaLabel: 'Add Account',
+        onClick: () => onAddAccount('mt5_bridge'),
+      }
+    }
+
+    if (selectedUsableAccount && hasSyncIssuesOnSelected) {
+      return {
+        title: 'Review selected account connector',
+        copy: 'Your active account has sync issues. Open Connections to retry sync or review connector configuration.',
+        ctaLabel: 'Review in Connections',
+        to: '/app/connections',
+      }
+    }
+
+    return {
+      title: 'Workspace is healthy',
+      copy: 'Your selected active account is healthy. Continue working in Dashboard or switch focus from Accounts.',
+      ctaLabel: 'Open Accounts',
+      to: '/app/accounts',
+    }
+  })()
 
   if (!signedIn) {
     return (
@@ -96,8 +156,6 @@ function AppLandingPage({
   }
 
   if (hasZeroConnectedAccounts) {
-    const hasPendingOnly = pendingAccounts.length > 0 && staleAccounts.length === 0
-    const hasStaleOnly = staleAccounts.length > 0 && pendingAccounts.length === 0
     return (
       <section className="panel page-panel app-onboarding-hub premium-workspace-panel dashboard-page">
         <div className="panel-header row">
@@ -173,54 +231,82 @@ function AppLandingPage({
         <NavLink className="app-nav-link" to="/app/connections">Go to Connections</NavLink>
       </div>
 
-      <div className="card selected-account-panel premium-focus-card dashboard-focus-card">
-        <h3>Active account focus</h3>
-        {selectedAccount ? (
+      <div className="card selected-account-panel premium-focus-card dashboard-focus-card dashboard-focused-snapshot">
+        <div className="row">
+          <h3>Focused account snapshot</h3>
+          {selectedUsableAccount?.is_primary ? <span className="pill primary-pill">Primary</span> : null}
+        </div>
+        {selectedUsableAccount ? (
           <>
             <p>
-              <strong>{selectedAccount.display_label || selectedAccount.external_account_id}</strong>
+              <strong>{selectedUsableAccount.display_label || selectedUsableAccount.external_account_id}</strong>
               {' · '}
-              <span className="pill">{selectedAccount.source_label}</span>
-              {selectedAccount.broker_name ? <span className="pill">{selectedAccount.broker_name}</span> : null}
-              {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
+              <span className="pill">{selectedUsableAccount.source_label}</span>
+              {selectedUsableAccount.broker_name ? <span className="pill">{selectedUsableAccount.broker_name}</span> : null}
             </p>
             <div className="meta-grid">
               <div className="meta-card">
                 <span className="hint">Account label</span>
-                <strong>{selectedAccount.display_label || '—'}</strong>
+                <strong>{selectedUsableAccount.display_label || '—'}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Account ID</span>
-                <strong className="mono">{selectedAccount.external_account_id || selectedAccount.trading_account_id || selectedAccount.account_key}</strong>
+                <strong className="mono">{selectedUsableAccount.external_account_id || selectedUsableAccount.trading_account_id || selectedUsableAccount.account_key}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Provider/source</span>
-                <strong>{selectedAccount.source_label || selectedAccount.connector_type || 'Unknown provider'}</strong>
+                <strong>{selectedUsableAccount.source_label || selectedUsableAccount.connector_type || 'Unknown provider'}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Broker</span>
-                <strong>{selectedAccount.broker_name || 'Broker metadata pending'}</strong>
+                <strong>{selectedUsableAccount.broker_name || 'Broker metadata pending'}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Connection status</span>
-                <strong>{selectedAccount.connection_status || 'disconnected'}</strong>
+                <strong>{selectedUsableAccount.connection_status || 'disconnected'}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Sync state</span>
-                <strong>{selectedAccount.sync_state || 'idle'}</strong>
+                <strong>{selectedUsableAccount.sync_state || 'idle'}</strong>
+              </div>
+              <div className="meta-card">
+                <span className="hint">Primary account</span>
+                <strong>{selectedUsableAccount.is_primary ? 'Yes' : 'No'}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Last sync</span>
-                <strong>{formatDate(selectedAccount.last_sync_at)}</strong>
+                <strong>{formatDate(selectedUsableAccount.last_sync_at)}</strong>
               </div>
               <div className="meta-card">
                 <span className="hint">Last activity</span>
-                <strong>{formatDate(selectedAccount.last_activity_at)}</strong>
+                <strong>{formatDate(selectedUsableAccount.last_activity_at)}</strong>
               </div>
+              {accountSummaryRows.map(([key, value]) => (
+                <div className="meta-card" key={`account-summary-${key}`}>
+                  <span className="hint">{String(key).replace(/_/g, ' ')}</span>
+                  <strong>{String(value)}</strong>
+                </div>
+              ))}
             </div>
           </>
         ) : (
-          <p className="hint">No active usable account is selected. Use Accounts to select a workspace account.</p>
+          <>
+            <p className="hint"><strong>No active usable account selected.</strong></p>
+            {hasPendingOnly ? <p className="hint">Current mode: pending-only workspace context.</p> : null}
+            {hasStaleOnly ? <p className="hint">Current mode: stale/inactive-only workspace context.</p> : null}
+            {hasMixedNonUsable ? <p className="hint">Current mode: mixed non-usable workspace context (pending + stale records).</p> : null}
+            <NavLink className="app-nav-link" to="/app/accounts">Go to Accounts to set active context</NavLink>
+          </>
+        )}
+      </div>
+      <div className="card premium-activity-card dashboard-next-action-card">
+        <h3>What to do next</h3>
+        <p><strong>{dashboardNextAction.title}</strong></p>
+        <p className="hint">{dashboardNextAction.copy}</p>
+        {dashboardNextAction.to ? (
+          <NavLink className="app-nav-link" to={dashboardNextAction.to}>{dashboardNextAction.ctaLabel}</NavLink>
+        ) : (
+          <button type="button" className="primary-cta" onClick={dashboardNextAction.onClick}>{dashboardNextAction.ctaLabel}</button>
         )}
       </div>
 

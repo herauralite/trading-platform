@@ -943,11 +943,14 @@ function App() {
           <span className="pill">Syncing: {shellSyncingCount}</span>
           <span className="pill">Needs attention: {shellNeedsAttentionCount}</span>
           {selectedAccount ? (
-            <span className="pill">
-              Active: {selectedAccount.display_label || selectedAccount.external_account_id} · {selectedAccount.connection_status || 'disconnected'} / {selectedAccount.sync_state || 'idle'}
-            </span>
+            <>
+              <span className="pill">Active account: {selectedAccount.display_label || selectedAccount.external_account_id || selectedAccount.account_key}</span>
+              <span className="pill">Provider: {selectedAccount.source_label || selectedAccount.connector_type || 'unknown'}</span>
+              <span className="pill">Connection: {selectedAccount.connection_status || 'disconnected'}</span>
+              <span className="pill">Sync: {selectedAccount.sync_state || 'idle'}</span>
+            </>
           ) : (
-            <span className="pill">Active: none selected</span>
+            <span className="pill">No active usable account selected</span>
           )}
         </div>
         <p className="hint">{status}</p>
