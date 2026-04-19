@@ -11,15 +11,27 @@ test('dashboard, accounts, and connections keep functional workspace summaries a
   const landingSource = await readFrontendFile('pages/AppLandingPage.jsx')
   const accountsSource = await readFrontendFile('pages/AccountsOverviewPage.jsx')
   const connectionsSource = await readFrontendFile('pages/ConnectionsPage.jsx')
+  const cardSource = await readFrontendFile('components/AccountWorkspaceCard.jsx')
 
-  assert.equal(landingSource.includes('Account readiness snapshot'), true)
+  assert.equal(landingSource.includes('Focused account snapshot'), true)
+  assert.equal(landingSource.includes('What to do next'), true)
+  assert.equal(landingSource.includes('No active usable account selected.'), true)
   assert.equal(landingSource.includes('Retry workspace load'), true)
 
+  assert.equal(accountsSource.includes('Current active account'), true)
+  assert.equal(accountsSource.includes('only usable connected accounts can become active workspace context'), true)
   assert.equal(accountsSource.includes('Current state:</strong> pending-only workspace'), true)
   assert.equal(accountsSource.includes('Current state:</strong> stale/inactive only.'), true)
   assert.equal(accountsSource.includes('button type="button" className="secondary-button" onClick={onRefreshWorkspace}'), true)
 
+  assert.equal(cardSource.includes('Pending setup (not active yet)'), true)
+  assert.equal(cardSource.includes('Inactive record (not active)'), true)
+  assert.equal(cardSource.includes('disabled={!canSetActive}'), true)
+
   assert.equal(connectionsSource.includes('Connected connectors'), true)
+  assert.equal(connectionsSource.includes('Selected account provider'), true)
+  assert.equal(connectionsSource.includes('Recommended next action:'), true)
+  assert.equal(connectionsSource.includes('provider-priority-card'), true)
   assert.equal(connectionsSource.includes('Needs attention'), true)
   assert.equal(connectionsSource.includes('button type="button" className="secondary-button" onClick={onRefreshWorkspace}'), true)
 })
