@@ -17,7 +17,7 @@ test('/app routes keep canonical shell navigation and route-specific page surfac
   assert.equal(appSource.includes('to="/app/accounts">Accounts</NavLink>'), true)
   assert.equal(appSource.includes('to="/app/connections">Connections</NavLink>'), true)
 
-  assert.equal(landingSource.includes('Connect Telegram to unlock your trading workspace'), true)
+  assert.equal(landingSource.includes('unlock it with Telegram'), true)
   assert.equal(accountsSource.includes('Sign in with Telegram from the app shell to manage account cards'), true)
   assert.equal(connectionsSource.includes('Signed out: setup actions are disabled.'), true)
 })
