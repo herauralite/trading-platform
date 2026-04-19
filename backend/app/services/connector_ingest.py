@@ -11,6 +11,8 @@ import uuid
 from sqlalchemy import text
 
 from app.core.database import engine
+from app.services.secret_crypto import decrypt_secret, encrypt_secret
+from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient, token_is_expiring_soon
 
 SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
@@ -786,6 +788,8 @@ async def _perform_connector_sync(run: dict[str, Any]) -> dict[str, Any]:
         )
     if connector == "fundingpips_extension":
         return await _perform_fundingpips_sync(run)
+    if connector == "tradelocker_api":
+        return await _perform_tradelocker_sync(run)
     raise ConnectorSyncError(
         f"Unsupported live sync connector: {connector}",
         code="unsupported_live_sync_connector",
@@ -793,6 +797,223 @@ async def _perform_connector_sync(run: dict[str, Any]) -> dict[str, Any]:
         transient=False,
         status_detail=f"No connector-specific sync executor is registered for '{connector}'.",
     )
+
+
+async def _perform_tradelocker_sync(run: dict[str, Any]) -> dict[str, Any]:
+    config_row = await get_connector_config(run["user_id"], run["connector_type"], include_secret=True)
+    if not config_row or config_row.get("status") != "configured":
+        raise ConnectorSyncError(
+            "TradeLocker connector configuration is incomplete",
+            code="connector_config_incomplete",
+            category="configuration",
+            transient=False,
+            status_detail="Configure TradeLocker credentials before running sync.",
+            source_summary={"connector_mode": "public_api"},
+        )
+
+    non_secret = dict(config_row.get("non_secret_config") or {})
+    secret = dict(config_row.get("secret_config") or {})
+    base_url = str(non_secret.get("base_url") or "").strip().rstrip("/")
+    account_id = str(non_secret.get("account_id") or "").strip()
+    if not base_url or not account_id:
+        raise ConnectorSyncError(
+            "TradeLocker base_url/account_id missing",
+            code="connector_config_incomplete",
+            category="configuration",
+            transient=False,
+            status_detail="TradeLocker base_url and account_id are required.",
+        )
+
+    client = TradeLockerClient(base_url=base_url)
+    encrypted_access = str(secret.get("encrypted_access_token") or "").strip()
+    encrypted_refresh = str(secret.get("encrypted_refresh_token") or "").strip()
+    encrypted_email = str(secret.get("encrypted_email") or "").strip()
+    encrypted_password = str(secret.get("encrypted_password") or "").strip()
+    server = str(secret.get("server") or "").strip() or None
+    access_token = decrypt_secret(encrypted_access) if encrypted_access else ""
+    refresh_token = decrypt_secret(encrypted_refresh) if encrypted_refresh else ""
+
+    async def _refresh_or_login() -> tuple[str, str, datetime]:
+        nonlocal refresh_token
+        try:
+            if refresh_token:
+                refreshed = await client.refresh_token(refresh_token)
+            else:
+                refreshed = await client.login_password(
+                    email=decrypt_secret(encrypted_email),
+                    password=decrypt_secret(encrypted_password),
+                    server=server,
+                )
+        except TradeLockerAuthError as exc:
+            raise ConnectorSyncError(
+                "TradeLocker authentication failed",
+                code="invalid_credentials",
+                category="authentication",
+                transient=False,
+                status_detail="TradeLocker credentials are invalid or expired.",
+                source_summary={"connector_mode": "public_api"},
+                diagnostics={"reason": str(exc)},
+            ) from exc
+        refresh_token = refreshed["refresh_token"]
+        return refreshed["access_token"], refreshed["refresh_token"], refreshed["expires_at"]
+
+    if not access_token or token_is_expiring_soon(non_secret.get("access_token_expires_at")):
+        access_token, refresh_token, access_expires_at = await _refresh_or_login()
+    else:
+        access_expires_at = _parse_dt(non_secret.get("access_token_expires_at")) or datetime.now(timezone.utc)
+
+    try:
+        account_payload = await client.get_account(access_token, account_id)
+    except TradeLockerAuthError:
+        access_token, refresh_token, access_expires_at = await _refresh_or_login()
+        account_payload = await client.get_account(access_token, account_id)
+    except TradeLockerApiError as exc:
+        raise ConnectorSyncError(
+            "TradeLocker account request failed",
+            code="source_api_error",
+            category="provider_api",
+            transient=True,
+            status_detail="TradeLocker API unavailable while loading account data.",
+            source_summary={"connector_mode": "public_api"},
+            diagnostics={"reason": str(exc)},
+        ) from exc
+
+    account_external_id = str(account_payload.get("id") or account_payload.get("accountId") or account_id).strip()
+    balance = account_payload.get("balance")
+    equity = account_payload.get("equity")
+    account = await upsert_trading_account({
+        "user_id": run["user_id"],
+        "connector_type": "tradelocker_api",
+        "broker_name": "tradelocker",
+        "external_account_id": account_external_id,
+        "display_label": account_payload.get("name") or account_payload.get("displayName"),
+        "is_active": True,
+        "metadata": {
+            "provider_state": "connected",
+            "account_currency": account_payload.get("currency"),
+        },
+    })
+    await ingest_account_snapshot({
+        "user_id": run["user_id"],
+        "connector_type": "tradelocker_api",
+        "external_account_id": account_external_id,
+        "broker_name": "tradelocker",
+        "balance": balance,
+        "equity": equity,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "source_metadata": {"provider": "tradelocker_api"},
+    })
+
+    instrument_symbols: dict[str, str] = {}
+    try:
+        instrument_symbols = await client.get_instruments(access_token)
+    except Exception:
+        instrument_symbols = {}
+
+    positions_rows = await client.get_positions(access_token, account_id)
+    seen_position_keys: list[str] = []
+    for raw in positions_rows:
+        instrument_id = str(raw.get("tradableInstrumentId") or raw.get("instrumentId") or "").strip()
+        resolved_symbol = instrument_symbols.get(instrument_id) or str(raw.get("symbol") or "").strip()
+        symbol = resolved_symbol or f"instrument_id:{instrument_id or 'unknown'}"
+        side_raw = str(raw.get("side") or raw.get("direction") or "").strip().lower()
+        side = "buy" if side_raw in {"buy", "long", "1"} else "sell" if side_raw in {"sell", "short", "-1"} else side_raw
+        position_key = await ingest_position({
+            "user_id": run["user_id"],
+            "connector_type": "tradelocker_api",
+            "external_account_id": account_external_id,
+            "broker_name": "tradelocker",
+            "symbol": symbol,
+            "side": side,
+            "size": raw.get("qty") or raw.get("size") or raw.get("quantity"),
+            "average_entry": raw.get("avgPrice") or raw.get("averagePrice") or raw.get("openPrice"),
+            "unrealized_pnl": raw.get("unrealizedPnl") or raw.get("profit"),
+            "opened_at": raw.get("openTime") or raw.get("openedAt"),
+            "source_metadata": {
+                "provider": "tradelocker_api",
+                "tradable_instrument_id": instrument_id or None,
+                "symbol_resolved": bool(resolved_symbol),
+            },
+        })
+        seen_position_keys.append(position_key)
+    deactivated = await deactivate_missing_positions(account["id"], seen_position_keys, allow_empty_snapshot=True)
+
+    history_rows = await client.get_order_history(access_token, account_id)
+    trades_ingested = 0
+    history_skipped = 0
+    for raw in history_rows:
+        entry = raw.get("entryPrice") or raw.get("openPrice")
+        exit_price = raw.get("exitPrice") or raw.get("closePrice")
+        close_time = raw.get("closeTime") or raw.get("closedAt")
+        if entry is None or exit_price is None or not close_time:
+            history_skipped += 1
+            continue
+        instrument_id = str(raw.get("tradableInstrumentId") or raw.get("instrumentId") or "").strip()
+        resolved_symbol = instrument_symbols.get(instrument_id) or str(raw.get("symbol") or "").strip()
+        symbol = resolved_symbol or f"instrument_id:{instrument_id or 'unknown'}"
+        side_raw = str(raw.get("side") or raw.get("direction") or "").strip().lower()
+        side = "buy" if side_raw in {"buy", "long", "1"} else "sell" if side_raw in {"sell", "short", "-1"} else side_raw
+        persisted = await ingest_trade({
+            "user_id": run["user_id"],
+            "connector_type": "tradelocker_api",
+            "external_account_id": account_external_id,
+            "broker_name": "tradelocker",
+            "symbol": symbol,
+            "side": side,
+            "size": raw.get("qty") or raw.get("size") or raw.get("quantity"),
+            "entry_price": entry,
+            "exit_price": exit_price,
+            "pnl": raw.get("realizedPnl") or raw.get("profitLoss") or raw.get("pnl") or 0,
+            "open_time": raw.get("openTime") or raw.get("openedAt"),
+            "close_time": close_time,
+            "fees": raw.get("commission") or raw.get("fees"),
+            "source_metadata": {
+                "provider": "tradelocker_api",
+                "tradable_instrument_id": instrument_id or None,
+                "symbol_resolved": bool(resolved_symbol),
+                "history_record_type": raw.get("type"),
+            },
+            "import_provenance": {"history_endpoint": "trade/accounts/{account_id}/history"},
+        })
+        trades_ingested += 1 if persisted else 0
+
+    await upsert_connector_config(
+        run["user_id"],
+        "tradelocker_api",
+        non_secret_config={
+            "base_url": base_url,
+            "account_id": account_external_id,
+            "environment": non_secret.get("environment") or "demo",
+            "access_token_expires_at": access_expires_at.isoformat(),
+            "last_synced_at": datetime.now(timezone.utc).isoformat(),
+        },
+        secret_config={
+            "encrypted_access_token": encrypt_secret(access_token),
+            "encrypted_refresh_token": encrypt_secret(refresh_token),
+            "encrypted_email": secret.get("encrypted_email"),
+            "encrypted_password": secret.get("encrypted_password"),
+            "server": secret.get("server"),
+        },
+        status="configured",
+        validation_error=None,
+    )
+
+    return {
+        "result_category": "connector_sync_summary",
+        "connector_type": "tradelocker_api",
+        "status_detail": f"TradeLocker sync completed for account {account_external_id}.",
+        "counts": {
+            "positions_seen": len(seen_position_keys),
+            "positions_deactivated": deactivated,
+            "trades_ingested": trades_ingested,
+            "history_skipped_untrusted": history_skipped,
+        },
+        "warnings": ([{
+            "code": "history_partial_mapping",
+            "status_detail": "Skipped history rows without both entry and exit prices or close_time.",
+            "skipped": history_skipped,
+        }] if history_skipped else []),
+    }
 
 
 async def claim_next_connector_sync_run(
