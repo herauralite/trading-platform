@@ -299,6 +299,9 @@ def test_account_workspaces_list_route(monkeypatch):
             "last_activity_at": None,
             "last_sync_at": None,
             "is_primary": False,
+            "environment": "paper",
+            "account_summary": {"equity": 1250.5},
+            "last_validated_at": "2026-04-19T00:00:00+00:00",
         }]
 
     monkeypatch.setattr("app.main.list_account_workspaces", fake_list)
@@ -307,6 +310,8 @@ def test_account_workspaces_list_route(monkeypatch):
     body = resp.json()
     assert body["count"] == 1
     assert body["workspaces"][0]["account_key"] == "acct-key-1"
+    assert body["workspaces"][0]["environment"] == "paper"
+    assert body["workspaces"][0]["account_summary"]["equity"] == 1250.5
 
 
 def test_account_workspaces_detail_route_not_found(monkeypatch):

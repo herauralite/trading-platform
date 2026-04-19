@@ -11,6 +11,10 @@ ALPACA_ENVIRONMENTS = {
 }
 
 
+class AlpacaCredentialValidationError(ValueError):
+    pass
+
+
 def normalize_alpaca_environment(environment: str | None) -> str:
     normalized = str(environment or "paper").strip().lower()
     return normalized if normalized in ALPACA_ENVIRONMENTS else "paper"
@@ -37,7 +41,7 @@ async def validate_alpaca_credentials(
     key = str(api_key or "").strip()
     secret = str(api_secret or "").strip()
     if not key or not secret:
-        raise ValueError("invalid_credentials")
+        raise AlpacaCredentialValidationError("missing_credentials")
 
     headers = {
         "APCA-API-KEY-ID": key,
@@ -45,20 +49,27 @@ async def validate_alpaca_credentials(
         "Accept": "application/json",
     }
 
-    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        response = await client.get(f"{base_url}/v2/account", headers=headers)
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.get(f"{base_url}/v2/account", headers=headers)
+    except httpx.TimeoutException as exc:
+        raise AlpacaCredentialValidationError("alpaca_timeout") from exc
+    except httpx.HTTPError as exc:
+        raise AlpacaCredentialValidationError("alpaca_network_error") from exc
 
-    if response.status_code == 401:
-        raise ValueError("invalid_credentials")
-    response.raise_for_status()
+    if response.status_code in {401, 403}:
+        raise AlpacaCredentialValidationError("invalid_credentials")
+    if response.status_code >= 400:
+        raise AlpacaCredentialValidationError(f"alpaca_http_{response.status_code}")
 
     payload = response.json() if response.content else {}
     account_number = str(payload.get("account_number") or payload.get("id") or "").strip()
     if not account_number:
-        raise ValueError("invalid_account_payload")
+        raise AlpacaCredentialValidationError("invalid_account_payload")
 
     return {
         "provider_state": f"{normalized_env}_connected",
+        "validation_state": "account_verified",
         "environment": normalized_env,
         "alpaca_account_number": account_number,
         "alpaca_status": payload.get("status"),

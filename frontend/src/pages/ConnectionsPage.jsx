@@ -112,6 +112,9 @@ function ConnectionsPage({
               State: {connector.is_connected ? 'connected' : 'disconnected'} · Accounts: {connector.account_count} · Last activity: {formatDate(connector.last_activity_at)} · Last sync: {formatDate(connector.last_sync_at)}
             </div>
             <div className="meta">
+              Provider state: {connector.provider_state || connector.status || 'unknown'} · Last validated: {formatDate(connector.last_validated_at)}
+            </div>
+            <div className="meta">
               Sync: {syncStateLabel(connector.current_sync_state)} · Retries: {connector.current_sync_retry_count || 0} · Next retry: {formatDate(connector.next_retry_at)}
             </div>
             <div className="meta">
@@ -125,6 +128,8 @@ function ConnectionsPage({
                 <li key={`${connector.connector_type}-${account.id}`}>
                   <span>{account.display_label || account.external_account_id}</span>
                   <span className="pill">{account.broker_name || 'Broker N/A'}</span>
+                  {account.environment ? <span className="pill">{String(account.environment).toUpperCase()}</span> : null}
+                  {account.last_validated_at ? <span className="hint">Validated {formatDate(account.last_validated_at)}</span> : null}
                   {account.last_sync_at ? <span className="hint">Last sync {formatDate(account.last_sync_at)}</span> : null}
                 </li>
               ))}
