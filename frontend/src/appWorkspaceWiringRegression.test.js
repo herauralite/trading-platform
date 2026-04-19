@@ -34,3 +34,11 @@ test('workspace selectors keep stale metadata out of active account presence', a
   assert.equal(connectionStateSource.includes('INACTIVE_CONNECTION_STATUSES'), true)
   assert.equal(connectionStateSource.includes('summary.staleInactiveCount += 1'), true)
 })
+
+test('active account selection persists in shell storage and is cleared on sign-out', async () => {
+  const appSource = await readFrontendFile('App.jsx')
+
+  assert.equal(appSource.includes("ACTIVE_ACCOUNT_STORAGE_KEY = 'tali_active_account_key'"), true)
+  assert.equal(appSource.includes('localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, selectedAccountKey)'), true)
+  assert.equal(appSource.includes('localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)'), true)
+})

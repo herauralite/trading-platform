@@ -35,15 +35,48 @@ function ConnectionsPage({
   isWorkspaceLoading,
 }) {
   const connectionMethods = [
-    { key: 'mt5_bridge', title: 'MT5 bridge', description: 'Pair bridge worker + account metadata, then run sync.' },
-    { key: 'fundingpips_extension', title: 'FundingPips extension', description: 'Attach extension-backed account and hydrate workspace records.' },
-    { key: 'tradingview_webhook', title: 'TradingView webhook', description: 'Create webhook endpoint and ingest alert-driven trade events.' },
-    { key: 'csv_import', title: 'CSV import', description: 'Upload historical trade rows for backfilled account context.' },
-    { key: 'manual', title: 'Manual journal', description: 'Create manual accounts and add trades directly from app UI.' },
+    { key: 'mt5_bridge', title: 'MT5', description: 'Pair bridge worker + account metadata, then run sync.', group: 'Core connectors' },
+    { key: 'fundingpips_extension', title: 'FundingPips Extension', description: 'Attach extension-backed account and hydrate workspace records.', group: 'Core connectors' },
+    { key: 'tradingview_webhook', title: 'TradingView Webhook', description: 'Create webhook endpoint and ingest alert-driven trade events.', group: 'Core connectors' },
+    { key: 'csv_import', title: 'CSV Import', description: 'Upload historical trade rows for backfilled account context.', group: 'Utility connectors' },
+    { key: 'manual', title: 'Manual Journal', description: 'Create manual accounts and add trades directly from app UI.', group: 'Utility connectors' },
+    ...catalog
+      .filter((entry) => !['mt5_bridge', 'fundingpips_extension', 'tradingview_webhook', 'csv_import', 'manual'].includes(entry.connector_type))
+      .map((entry) => ({
+        key: entry.connector_type,
+        title: entry.label || sourceLabel(entry.connector_type),
+        description: entry.onboarding_copy || entry.notes || 'Public API beta/provider path available from catalog.',
+        group: 'Public API beta',
+      })),
   ]
+  const groupedMethods = connectionMethods.reduce((acc, method) => {
+    const group = method.group || 'Other'
+    if (!acc[group]) acc[group] = []
+    acc[group].push(method)
+    return acc
+  }, {})
 
   function findConnector(methodKey) {
     return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
+  }
+
+  function connectorActionLabel(connector) {
+    if (!connector) return 'not connected'
+    if (connector.account_count > 0 && (connector.status === 'connected' || connector.is_connected)) return 'connected'
+    if (connector.status === 'bridge_required' || connector.status === 'waiting_for_registration' || connector.status === 'awaiting_secure_auth' || connector.status === 'awaiting_alerts') return 'awaiting setup'
+    if (connector.status === 'beta_pending' || connector.beta) return 'beta / bridge required'
+    if (connector.status === 'disconnected' || !connector.is_connected) return 'not connected'
+    if (connector.status === 'validation_failed' || connector.status === 'sync_error') return 'stale / disconnected'
+    return connector.status
+  }
+
+  function primaryAction(connector, methodKey) {
+    const state = connectorActionLabel(connector)
+    if (!signedIn) return { label: 'Sign in to continue', disabled: true, onClick: () => {} }
+    if (state === 'connected') return { label: 'View linked accounts', disabled: false, onClick: () => onAddAccount(methodKey) }
+    if (state === 'awaiting setup') return { label: 'Continue setup', disabled: false, onClick: () => onAddAccount(methodKey) }
+    if (state === 'beta / bridge required') return { label: 'Re-open Add Account flow', disabled: false, onClick: () => onAddAccount(methodKey) }
+    return { label: 'Connect', disabled: false, onClick: () => onAddAccount(methodKey) }
   }
 
   return (
@@ -65,31 +98,37 @@ function ConnectionsPage({
             <p className="hint">Sign in with Telegram in the shell gate to connect providers, run sync jobs, import CSV rows, or write manual journal entries.</p>
           </div>
         ) : null}
-        <div className="meta-grid premium-summary-grid connections-method-grid">
-          {connectionMethods.map((method) => {
+        {Object.entries(groupedMethods).map(([groupName, methods]) => (
+          <div key={groupName} className="connections-group-section">
+            <h3>{groupName}</h3>
+            <div className="meta-grid premium-summary-grid connections-method-grid">
+          {methods.map((method) => {
             const connector = findConnector(method.key)
+            const action = primaryAction(connector, method.key)
             return (
               <div className="meta-card summary-card" key={method.key}>
                 <div className="row">
                   <strong>{method.title}</strong>
                   <span className={`badge ${statusTone(connector?.status || 'disconnected')}`}>
-                    {connector?.status || 'disconnected'}
+                    {connectorActionLabel(connector)}
                   </span>
                 </div>
                 <p className="hint">{method.description}</p>
-                <p className="hint">Next action: {signedIn ? (connector?.is_connected ? 'Review sync/config below.' : 'Use Add Account to start setup.') : 'Sign in to begin setup.'}</p>
+                <p className="hint">Next action: {signedIn ? action.label : 'Sign in to begin setup.'}</p>
                 <button
                   type="button"
                   className="secondary-button"
-                  disabled={!signedIn}
-                  onClick={() => onAddAccount(method.key)}
+                  disabled={action.disabled}
+                  onClick={action.onClick}
                 >
-                  {signedIn ? `Start ${method.title}` : 'Sign in to start'}
+                  {action.label}
                 </button>
               </div>
             )
           })}
-        </div>
+            </div>
+          </div>
+        ))}
         <p className="hint">Connector catalog: {catalog.map((entry) => entry.label).join(', ') || 'No connectors available yet.'}</p>
 
         {isWorkspaceLoading ? (
