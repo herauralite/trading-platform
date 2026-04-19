@@ -61,6 +61,7 @@ function ConnectionsPage({
   const syncingCount = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state)).length
   const attentionCount = managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error' || connector.config_validation_error).length
   const selectedConnectorType = selectedAccount?.connector_type || ''
+  const selectedProviderLabel = selectedAccount?.source_label || selectedAccount?.connector_type || ''
 
   function findConnector(methodKey) {
     return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
@@ -83,6 +84,28 @@ function ConnectionsPage({
     if (state === 'awaiting setup') return { label: 'Continue setup', disabled: false, onClick: () => onAddAccount(methodKey) }
     if (state === 'beta / bridge required') return { label: 'Re-open Add Account flow', disabled: false, onClick: () => onAddAccount(methodKey) }
     return { label: 'Connect', disabled: false, onClick: () => onAddAccount(methodKey) }
+  }
+
+  function selectedProviderNextAction(connector, methodKey) {
+    const status = String(selectedAccount?.connection_status || connector?.status || '').toLowerCase()
+    const providerState = String(selectedAccount?.provider_state || connector?.provider_state || '').toLowerCase()
+    const syncState = String(selectedAccount?.sync_state || connector?.current_sync_state || '').toLowerCase()
+    if (status === 'waiting_for_registration' || status === 'bridge_required' || providerState === 'waiting_for_registration' || providerState === 'bridge_required') {
+      return 'Recommended next action: continue MT5 setup to complete registration and bridge pairing.'
+    }
+    if (status === 'awaiting_alerts' || providerState === 'awaiting_alerts') {
+      return 'Recommended next action: send your first TradingView alert to activate account ingestion.'
+    }
+    if (status === 'awaiting_secure_auth' || status === 'beta_pending' || providerState === 'awaiting_secure_auth' || providerState === 'beta_pending') {
+      return 'Recommended next action: secure auth is not complete yet; finish provider auth in Add Account.'
+    }
+    if ((status === 'connected' || methodKey === selectedConnectorType) && (syncState === 'failed' || syncState === 'retrying' || status === 'sync_error')) {
+      return 'Recommended next action: retry sync and review connector configuration for the selected account.'
+    }
+    if (status === 'connected' || status === 'active' || status === 'paper_connected' || status === 'live_connected' || status === 'account_verified') {
+      return 'Recommended next action: view linked accounts or refresh connector health.'
+    }
+    return 'Recommended next action: open this provider to continue setup for the selected account.'
   }
 
   return (
@@ -118,6 +141,9 @@ function ConnectionsPage({
                 {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
               </div>
               <p className="hint">This account currently drives provider operations context on this page.</p>
+              {selectedConnectorType ? (
+                <p className="hint"><strong>Selected account provider:</strong> {selectedProviderLabel}</p>
+              ) : null}
             </>
           ) : (
             <p className="hint">No active usable account selected yet. Go to Accounts to set active account focus before running provider operations.</p>
@@ -147,20 +173,28 @@ function ConnectionsPage({
           <div key={groupName} className="connections-group-section">
             <h3>{groupName}</h3>
             <div className="meta-grid premium-summary-grid connections-method-grid">
-          {methods.map((method) => {
+          {[...methods].sort((a, b) => {
+            if (!selectedConnectorType) return 0
+            if (a.key === selectedConnectorType) return -1
+            if (b.key === selectedConnectorType) return 1
+            return 0
+          }).map((method) => {
             const connector = findConnector(method.key)
             const action = primaryAction(connector, method.key)
+            const isSelectedProvider = selectedConnectorType && selectedConnectorType === method.key
             return (
-              <div className="meta-card summary-card" key={method.key}>
+              <div className={`meta-card summary-card ${isSelectedProvider ? 'provider-priority-card' : 'provider-secondary-card'}`} key={method.key}>
                 <div className="row">
                   <strong>{method.title}</strong>
-                  {selectedConnectorType && selectedConnectorType === method.key ? <span className="pill primary-pill">Selected account provider</span> : null}
+                  {isSelectedProvider ? <span className="pill primary-pill">Selected account provider</span> : <span className="pill">Other provider</span>}
                   <span className={`badge ${statusTone(connector?.status || 'disconnected')}`}>
                     {connectorActionLabel(connector)}
                   </span>
                 </div>
                 <p className="hint">{method.description}</p>
-                <p className="hint">Next action: {signedIn ? action.label : 'Sign in to begin setup.'}</p>
+                <p className="hint">
+                  {isSelectedProvider ? selectedProviderNextAction(connector, method.key) : `Next action: ${signedIn ? action.label : 'Sign in to begin setup.'}`}
+                </p>
                 <button
                   type="button"
                   className="secondary-button"

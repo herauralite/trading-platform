@@ -414,6 +414,22 @@ textarea {
   margin: 8px 0 14px;
 }
 
+.dashboard-focused-snapshot {
+  border-color: rgba(97, 194, 255, 0.55);
+  box-shadow:
+    0 18px 36px rgba(1, 14, 31, 0.5),
+    inset 0 0 0 1px rgba(95, 206, 255, 0.18);
+}
+
+.dashboard-next-action-card {
+  margin-bottom: 14px;
+}
+
+.current-active-account-strip {
+  margin-bottom: 12px;
+  border-color: rgba(109, 203, 255, 0.5);
+}
+
 .accounts-grid {
   display: grid;
   gap: 10px;
@@ -421,6 +437,13 @@ textarea {
 
 .account-card.selected {
   border-color: rgba(87, 175, 255, 0.75);
+}
+
+.account-card.selected-focused {
+  transform: translateY(-1px);
+  box-shadow:
+    0 22px 40px rgba(0, 12, 29, 0.62),
+    inset 0 0 0 1px rgba(90, 195, 255, 0.36);
 }
 
 .account-card-usable {
@@ -456,6 +479,13 @@ textarea {
 
 .connections-context-panel {
   margin-bottom: 12px;
+}
+
+.provider-priority-card {
+  border-color: rgba(101, 197, 255, 0.82) !important;
+  box-shadow:
+    0 16px 34px rgba(4, 16, 35, 0.55),
+    inset 0 0 0 1px rgba(118, 211, 255, 0.28);
 }
 
 .connector-account-list {

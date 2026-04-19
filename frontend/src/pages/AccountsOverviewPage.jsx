@@ -160,6 +160,7 @@ function AccountsOverviewPage({
       </div>
       <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
       <p className="hint"><strong>Set Active Account</strong> on any card to move workspace focus across Dashboard and Connections.</p>
+      <p className="hint"><strong>Workspace rule:</strong> only usable connected accounts can become active workspace context. Pending and stale records stay visible for truth and recovery workflows.</p>
 
       {recentlyAddedAccountLabel ? (
         <div className="card add-success-banner premium-success-banner">
@@ -185,6 +186,21 @@ function AccountsOverviewPage({
           <strong>{summary.attention}</strong>
         </div>
       </div>
+      {selectedAccount ? (
+        <div className="card current-active-account-strip">
+          <div className="row">
+            <strong>Current active account</strong>
+            {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
+          </div>
+          <p>
+            <strong>{selectedAccount.display_label || selectedAccount.external_account_id || selectedAccount.account_key}</strong>
+            {' · '}
+            <span className="pill">{selectedAccount.source_label || selectedAccount.connector_type}</span>
+            <span className="pill">Connection {selectedAccount.connection_status || 'disconnected'}</span>
+            <span className="pill">Sync {selectedAccount.sync_state || 'idle'}</span>
+          </p>
+        </div>
+      ) : null}
 
       <div className="card selected-account-panel premium-focus-card accounts-focus-panel">
         <div className="row">
