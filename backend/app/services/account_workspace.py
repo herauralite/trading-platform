@@ -30,6 +30,7 @@ CONNECTION_STATUS_MAP = {
     "metadata_saved": "metadata_saved",
     "awaiting_secure_auth": "awaiting_secure_auth",
     "waiting_for_secure_auth_support": "waiting_for_secure_auth_support",
+    "account_verified": "account_verified",
     "paper_connected": "paper_connected",
     "live_connected": "live_connected",
     "validation_failed": "validation_failed",
@@ -75,8 +76,9 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
     user_id = str(row.get("user_id") or fallback_user_id).strip()
     account_key = row.get("account_key") or compute_account_key(connector_type, user_id, external_account_id)
     display_label = row.get("display_label") or external_account_id
+    metadata = row.get("metadata") or {}
 
-    provider_state = str((row.get("metadata") or {}).get("provider_state") or "").strip().lower()
+    provider_state = str(metadata.get("provider_state") or "").strip().lower()
     if provider_state in CONNECTION_STATUS_MAP:
         connector_connection_status = provider_state
     else:
@@ -110,7 +112,10 @@ def _normalize_workspace_row(row: dict[str, Any], *, fallback_user_id: str) -> d
         "last_activity_at": row.get("last_activity_at"),
         "last_sync_at": row.get("last_sync_at"),
         "is_primary": bool(row.get("is_primary")),
-        "provider_state": (row.get("metadata") or {}).get("provider_state"),
+        "provider_state": metadata.get("provider_state"),
+        "environment": metadata.get("environment"),
+        "account_summary": metadata.get("account_summary") if isinstance(metadata.get("account_summary"), dict) else None,
+        "last_validated_at": metadata.get("last_validated_at"),
         "tradingview_activation_state": row.get("tradingview_activation_state"),
         "tradingview_last_event_at": row.get("tradingview_last_event_at"),
         "recent_events": row.get("recent_events") if isinstance(row.get("recent_events"), list) else [],
@@ -268,3 +273,4 @@ async def get_account_workspace(telegram_user_id: str, account_key: str) -> dict
         if workspace["account_key"] == account_key:
             return workspace
     return None
+    metadata = row.get("metadata") or {}

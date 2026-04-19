@@ -29,6 +29,7 @@ import ConnectionsPage from './pages/ConnectionsPage'
 import AppLandingPage from './pages/AppLandingPage'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
 import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS } from './addAccountFlow'
+import { buildAlpacaConnectPayload, clearSensitiveAddAccountDraft } from './alpacaConnectFlow'
 import { checkMt5PairingState, createMt5PairingToken, fetchMt5BridgeRegistrationStatus } from './mt5PairingService'
 import './App.css'
 
@@ -122,7 +123,7 @@ function App() {
     if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
     if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
     if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
-    if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
+    if (connectorType === 'alpaca_api') return 'Alpaca API'
     if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
     if (connectorType === 'binance_api') return 'Binance API (Beta)'
     if (connectorType === 'csv_import') return 'CSV Import'
@@ -680,16 +681,22 @@ function App() {
       }
       if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
         if (provider.connectorType === 'alpaca_api') {
-          await axios.post(
+          const alpacaPayload = buildAlpacaConnectPayload({
+            label: displayLabel || provider.title,
+            environment: addAccountDraft.environment || 'paper',
+            apiKey: addAccountDraft.api_key,
+            apiSecret: addAccountDraft.api_secret,
+          })
+          const connectResponse = await axios.post(
             buildApiUrl('/providers/public-api/alpaca_api/connect'),
-            {
-              label: displayLabel || provider.title,
-              environment: addAccountDraft.environment || 'paper',
-              api_key: (addAccountDraft.api_key || '').trim(),
-              api_secret: (addAccountDraft.api_secret || '').trim(),
-            },
+            alpacaPayload,
             { headers: authHeaders },
           )
+          const providerStatus = String(connectResponse?.data?.status || '').toLowerCase()
+          if (!['paper_connected', 'live_connected'].includes(providerStatus)) {
+            throw new Error(connectResponse?.data?.validation_error || 'Alpaca credentials could not be verified.')
+          }
+          setStatus(`Alpaca ${providerStatus.replace('_', ' ')}.`)
         } else {
           await axios.post(
             buildApiUrl(`/providers/public-api/${provider.connectorType}/beta`),
@@ -725,9 +732,10 @@ function App() {
       closeAddAccountFlow()
       navigate('/app/accounts')
     } catch (error) {
-      setAddAccountError(error?.message || 'Could not complete this add account flow.')
+      const apiDetail = error?.response?.data?.detail
+      setAddAccountError(apiDetail || error?.message || 'Could not complete this add account flow.')
     } finally {
-      setAddAccountDraft((prev) => ({ ...prev, api_key: '', api_secret: '' }))
+      setAddAccountDraft((prev) => clearSensitiveAddAccountDraft(prev))
       setIsAddAccountSubmitting(false)
     }
   }

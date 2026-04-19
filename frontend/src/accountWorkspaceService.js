@@ -13,7 +13,7 @@ function sourceLabel(connectorType) {
   if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
   if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
   if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
-  if (connectorType === 'alpaca_api') return 'Alpaca API (Beta)'
+  if (connectorType === 'alpaca_api') return 'Alpaca API'
   if (connectorType === 'oanda_api') return 'OANDA API (Beta)'
   if (connectorType === 'binance_api') return 'Binance API (Beta)'
   if (connectorType === 'csv_import') return 'CSV Import'
@@ -42,6 +42,9 @@ function normalizeWorkspace(workspace) {
     is_primary: Boolean(workspace?.is_primary),
     source_label: sourceLabel(connectorType),
     provider_state: workspace?.provider_state || null,
+    environment: workspace?.environment || null,
+    account_summary: workspace?.account_summary && typeof workspace.account_summary === 'object' ? workspace.account_summary : null,
+    last_validated_at: workspace?.last_validated_at || null,
     tradingview_activation_state: workspace?.tradingview_activation_state || null,
     tradingview_last_event_at: workspace?.tradingview_last_event_at || null,
     recent_events: Array.isArray(workspace?.recent_events) ? workspace.recent_events : [],
