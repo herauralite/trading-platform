@@ -67,6 +67,7 @@ from app.services.provider_onboarding import (
     create_tradingview_connection,
     ingest_tradingview_event,
 )
+from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -696,6 +697,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     "account_count": 0,
                     "accounts": [],
                     "provider_state": None,
+                    "last_validated_at": None,
                     "recent_events": [],
                 }
 
@@ -714,6 +716,9 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "last_sync_at": row["last_snapshot_at"],
                 "activation_state": row.get("tv_activation_state"),
                 "last_event_at": row.get("tv_last_event_at"),
+                "environment": (row.get("metadata") or {}).get("environment"),
+                "last_validated_at": (row.get("metadata") or {}).get("last_validated_at"),
+                "account_summary": (row.get("metadata") or {}).get("account_summary"),
             })
 
             activity = row["last_activity_at"]
@@ -739,6 +744,11 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
             account_state = (row.get("metadata") or {}).get("provider_state")
             if account_state:
                 connector_obj["provider_state"] = account_state
+            account_last_validated = (row.get("metadata") or {}).get("last_validated_at")
+            if account_last_validated:
+                current_last_validated = connector_obj.get("last_validated_at")
+                if current_last_validated is None or str(account_last_validated) > str(current_last_validated):
+                    connector_obj["last_validated_at"] = account_last_validated
             if row.get("tv_last_event_at"):
                 activity = max(activity, row["tv_last_event_at"]) if activity else row["tv_last_event_at"]
                 if connector_obj["last_activity_at"] is None or activity > connector_obj["last_activity_at"]:
@@ -768,6 +778,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 "account_count": 0,
                 "accounts": [],
                 "provider_state": (row.get("metadata") or {}).get("provider_state"),
+                "last_validated_at": (row.get("metadata") or {}).get("last_validated_at"),
                 "recent_events": [],
             }
 
@@ -801,6 +812,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     "account_count": 0,
                     "accounts": [],
                     "recent_events": [],
+                    "last_validated_at": None,
                 }
             grouped[connector]["current_sync_state"] = row["status"]
             grouped[connector]["current_sync_run_id"] = row["id"]
@@ -2169,24 +2181,30 @@ async def connect_alpaca_public_api_provider(
     label = str(payload.label or "").strip()
     if not label:
         raise HTTPException(status_code=400, detail="label is required")
-    result = await connect_alpaca_api_account(
-        user_id=resolved_uid,
-        label=label,
-        environment=payload.environment,
-        api_key=payload.api_key,
-        api_secret=payload.api_secret,
-    )
+    try:
+        result = await connect_alpaca_api_account(
+            user_id=resolved_uid,
+            label=label,
+            environment=payload.environment,
+            api_key=payload.api_key,
+            api_secret=payload.api_secret,
+        )
+    except AlpacaCredentialValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     return {
         "ok": True,
         "provider": "alpaca_api",
         "status": result["provider_state"],
         "environment": result["environment"],
+        "validation_state": "account_verified",
         "validation_error": result.get("validation_error"),
         "account": {
             "id": result["account"]["id"],
             "display_label": result["account"]["display_label"],
             "environment": result["account"]["environment"],
             "provider_state": result["provider_state"],
+            "validation_state": "account_verified",
             "last_validated_at": result["account"]["last_validated_at"],
             "summary": result["account"].get("account_summary") or {},
         },

@@ -28,6 +28,7 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
       <div className="row">
         <span className="pill">{account.source_label}</span>
         <span className="pill">{account.broker_name || 'Unknown broker'}</span>
+        {account.environment ? <span className="pill">{String(account.environment).toUpperCase()}</span> : null}
         {account.account_type ? <span className="pill">{account.account_type}</span> : null}
       </div>
 
@@ -50,7 +51,14 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
           <span className="hint">Last activity</span>
           <strong>{formatTimestamp(account.last_activity_at)}</strong>
         </div>
+        {account.account_summary?.equity != null ? (
+          <div className="meta-card">
+            <span className="hint">Equity</span>
+            <strong>{account.account_summary.equity}</strong>
+          </div>
+        ) : null}
       </div>
+      {account.last_validated_at ? <p className="hint">Last validated: {formatTimestamp(account.last_validated_at)}</p> : null}
 
       <button type="button" onClick={() => onSelect(account.account_key)}>
         {isSelected ? 'Selected' : 'Open account context'}

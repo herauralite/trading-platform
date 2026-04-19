@@ -9,7 +9,11 @@ from typing import Any
 from sqlalchemy import text
 
 from app.core.database import engine
-from app.services.alpaca_provider import normalize_alpaca_environment, validate_alpaca_credentials
+from app.services.alpaca_provider import (
+    AlpacaCredentialValidationError,
+    normalize_alpaca_environment,
+    validate_alpaca_credentials,
+)
 from app.services.connector_ingest import upsert_connector_lifecycle, upsert_trading_account
 from app.services.secret_crypto import encrypt_secret
 from app.services.tradingview_events import normalize_tradingview_event
@@ -274,16 +278,26 @@ async def connect_alpaca_api_account(
             api_key=normalized_key,
             api_secret=normalized_secret,
         )
-        provider_state = str(account_summary["provider_state"])
-        validation_error: str | None = None
-    except ValueError as exc:
-        provider_state = "validation_failed"
+    except AlpacaCredentialValidationError as exc:
         validation_error = str(exc)
-        account_summary = {
-            "provider_state": provider_state,
-            "environment": env,
-            "alpaca_account_number": f"invalid-{env}-{secrets.token_hex(6)}",
-        }
+        await upsert_connector_lifecycle(
+            user_id=user_id,
+            connector_type="alpaca_api",
+            status="validation_failed",
+            is_connected=False,
+            last_activity_at=now,
+            metadata={
+                "provider_state": "validation_failed",
+                "environment": env,
+                "validation_error": validation_error,
+            },
+            error=validation_error,
+        )
+        raise
+
+    provider_state = str(account_summary["provider_state"])
+    validation_error: str | None = None
+    validation_state = str(account_summary.get("validation_state") or "account_verified")
 
     account = await upsert_trading_account({
         "user_id": user_id,
@@ -293,9 +307,12 @@ async def connect_alpaca_api_account(
         "display_label": display_label,
         "metadata": {
             "provider_state": provider_state,
-            "onboarding_state": "credentials_validated" if validation_error is None else "credentials_rejected",
+            "validation_state": validation_state,
+            "onboarding_state": "credentials_validated",
             "environment": env,
             "alpaca_status": account_summary.get("alpaca_status"),
+            "account_summary": account_summary,
+            "last_validated_at": now.isoformat(),
         },
     })
 
@@ -339,7 +356,8 @@ async def connect_alpaca_api_account(
             "metadata": json.dumps({
                 "provider_state": provider_state,
                 "environment": env,
-                "onboarding_state": "credentials_validated" if validation_error is None else "credentials_rejected",
+                "validation_state": validation_state,
+                "onboarding_state": "credentials_validated",
             }),
             "created_at": now,
         })).mappings().first()
@@ -353,9 +371,10 @@ async def connect_alpaca_api_account(
         metadata={
             "provider_state": provider_state,
             "environment": env,
+            "validation_state": validation_state,
             "validation_error": validation_error,
         },
-        last_error=validation_error,
+        error=validation_error,
     )
     return {
         "provider_state": provider_state,

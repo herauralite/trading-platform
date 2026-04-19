@@ -29,6 +29,7 @@ if "jwt" not in sys.modules:
 from app.core.auth_session import create_session_token
 from app.main import app
 import app.services.provider_onboarding as onboarding_mod
+from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.secret_crypto import decrypt_secret
 
 
@@ -200,18 +201,7 @@ def test_alpaca_connect_success_paper(monkeypatch):
 
 def test_alpaca_connect_invalid_credentials_path(monkeypatch):
     async def fake_connect(**kwargs):
-        return {
-            "provider_state": "validation_failed",
-            "environment": "paper",
-            "validation_error": "invalid_credentials",
-            "account": {
-                "id": 88,
-                "display_label": "My Alpaca",
-                "environment": "paper",
-                "account_summary": {"alpaca_account_number": "invalid-paper-abc"},
-                "last_validated_at": "2026-04-18T12:01:00Z",
-            },
-        }
+        raise AlpacaCredentialValidationError("invalid_credentials")
 
     monkeypatch.setattr("app.main.connect_alpaca_api_account", fake_connect)
 
@@ -231,8 +221,8 @@ def test_alpaca_connect_invalid_credentials_path(monkeypatch):
             )
 
     response = asyncio.run(_run())
-    assert response.status_code == 200
-    assert response.json()["status"] == "validation_failed"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_credentials"
 
 
 def test_alpaca_connect_response_never_echoes_raw_secret(monkeypatch):
@@ -278,6 +268,7 @@ def test_alpaca_secret_storage_is_encrypted(monkeypatch):
     async def fake_validate_alpaca_credentials(**kwargs):
         return {
             "provider_state": "paper_connected",
+            "validation_state": "account_verified",
             "environment": "paper",
             "alpaca_account_number": "PA500",
             "alpaca_status": "ACTIVE",
