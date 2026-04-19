@@ -5,13 +5,17 @@ function AppLandingPage({
   hasZeroConnectedAccounts,
   accountConnectionState,
   selectedAccount,
+  accountWorkspaces,
   managedConnectors,
   syncHistory,
   onAddAccount,
+  onRefreshWorkspace,
   formatDate,
   isWorkspaceLoading,
   workspaceLoadError,
 }) {
+  const usableAccounts = accountWorkspaces.filter((account) => ['connected', 'active', 'paper_connected', 'live_connected', 'account_verified', 'degraded', 'sync_error'].includes(String(account.connection_status || '').toLowerCase()))
+  const pendingAccounts = accountWorkspaces.filter((account) => !usableAccounts.some((item) => item.account_key === account.account_key) && ['awaiting_alerts', 'bridge_required', 'waiting_for_registration', 'ready_for_account_attach', 'beta_pending', 'metadata_saved', 'awaiting_secure_auth', 'waiting_for_secure_auth_support'].includes(String(account.connection_status || '').toLowerCase()))
   const connectorsWithErrors = managedConnectors.filter((connector) => connector.last_error)
   const connectorsSyncing = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state))
   const connectorsConnected = managedConnectors.filter((connector) => connector.account_count > 0 || connector.is_connected)
@@ -82,7 +86,10 @@ function AppLandingPage({
           <h2>Workspace data could not be loaded</h2>
         </div>
         <p className="error-text">{workspaceLoadError}</p>
-        <p className="hint">Use Refresh in the shell header to retry loading account and connector data.</p>
+        <div className="row">
+          <p className="hint">Use refresh to re-hydrate account and connector data.</p>
+          <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Retry workspace load</button>
+        </div>
       </section>
     )
   }
@@ -161,13 +168,17 @@ function AppLandingPage({
       <div className="card selected-account-panel premium-focus-card dashboard-focus-card">
         <h3>Active account focus</h3>
         {selectedAccount ? (
-          <p>
-            <strong>{selectedAccount.display_label || selectedAccount.external_account_id}</strong>
-            {' · '}
-            <span className="pill">{selectedAccount.source_label}</span>
-            {' · Last sync '}
-            {formatDate(selectedAccount.last_sync_at)}
-          </p>
+          <>
+            <p>
+              <strong>{selectedAccount.display_label || selectedAccount.external_account_id}</strong>
+              {' · '}
+              <span className="pill">{selectedAccount.source_label}</span>
+              {selectedAccount.broker_name ? <span className="pill">{selectedAccount.broker_name}</span> : null}
+            </p>
+            <p className="hint">
+              Connection {selectedAccount.connection_status || 'disconnected'} · Sync {selectedAccount.sync_state || 'idle'} · Last sync {formatDate(selectedAccount.last_sync_at)} · Last activity {formatDate(selectedAccount.last_activity_at)}
+            </p>
+          </>
         ) : (
           <p className="hint">Select an account in the shell switcher to focus account context across pages.</p>
         )}
@@ -191,6 +202,27 @@ function AppLandingPage({
           </ul>
         ) : (
           <p className="hint">No connector activity yet. Add and connect an account to start workspace operations.</p>
+        )}
+      </div>
+
+      <div className="card premium-activity-card dashboard-activity-card">
+        <h3>Account readiness snapshot</h3>
+        <p className="hint">
+          Usable accounts: <strong>{usableAccounts.length}</strong> · Pending setup: <strong>{pendingAccounts.length}</strong> · Historical/inactive: <strong>{accountConnectionState.staleInactiveCount}</strong>
+        </p>
+        {usableAccounts.slice(0, 3).length > 0 ? (
+          <ul className="sync-activity-list">
+            {usableAccounts.slice(0, 3).map((account) => (
+              <li key={`usable-${account.account_key}`}>
+                <span className="pill">{account.display_label || account.external_account_id || account.account_key}</span>
+                <span className="pill">{account.source_label || account.connector_type}</span>
+                <span>{account.broker_name || 'Broker pending metadata'}</span>
+                <span className="hint">Last sync {formatDate(account.last_sync_at)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="hint">No usable accounts yet. Use Add Account to connect MT5, FundingPips, TradingView, CSV, Manual, or supported beta API providers.</p>
         )}
       </div>
 
