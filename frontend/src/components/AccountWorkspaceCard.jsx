@@ -8,18 +8,24 @@ function formatTimestamp(value) {
   return date.toLocaleString()
 }
 
-function AccountWorkspaceCard({ account, isSelected, onSelect }) {
+function AccountWorkspaceCard({ account, isSelected, onSelect, accountState = 'stale' }) {
   const connectionMeta = connectionStatusMeta(account.connection_status)
   const displayName = account.display_label || account.external_account_id || account.account_key
+  const stateLabel = accountState === 'usable'
+    ? 'Usable'
+    : accountState === 'pending'
+      ? 'Pending-only'
+      : 'Stale / inactive'
 
   return (
-    <article className={`account-card${isSelected ? ' selected' : ''}`}>
+    <article className={`account-card account-card-${accountState}${isSelected ? ' selected' : ''}`}>
       <div className="row account-card-top">
         <div>
           <h3>{displayName}</h3>
           <p className="hint mono">{account.account_key}</p>
         </div>
         <div className="row">
+          <span className="pill">{stateLabel}</span>
           {account.is_primary ? <span className="pill primary-pill">Primary</span> : null}
           {isSelected ? <span className="pill">Active Context</span> : null}
         </div>
@@ -87,7 +93,7 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
       <p className="hint">Validation: {account.last_validated_at ? 'verified' : 'pending'} · Last validated: {formatTimestamp(account.last_validated_at)}</p>
 
       <button type="button" onClick={() => onSelect(account.account_key)}>
-        {isSelected ? 'Selected' : 'Open account context'}
+        {isSelected ? 'Active account selected' : 'Set Active Account'}
       </button>
     </article>
   )

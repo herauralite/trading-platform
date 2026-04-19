@@ -41,6 +41,12 @@ function AccountsOverviewPage({
     }
   }, [accountWorkspaces])
 
+  function accountState(account) {
+    if (isCurrentlyConnectedAccount(account)) return 'usable'
+    if (isPendingOnlyAccount(account)) return 'pending'
+    return 'stale'
+  }
+
   if (!signedIn) {
     return (
       <section className="panel page-panel premium-workspace-panel accounts-page">
@@ -113,6 +119,7 @@ function AccountsOverviewPage({
                   key={account.account_key}
                   account={account}
                   isSelected={selectedAccount?.account_key === account.account_key}
+                  accountState={accountState(account)}
                   onSelect={onSelectAccount}
                 />
               ))}
@@ -152,6 +159,7 @@ function AccountsOverviewPage({
         </div>
       </div>
       <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
+      <p className="hint"><strong>Set Active Account</strong> on any card to move workspace focus across Dashboard and Connections.</p>
 
       {recentlyAddedAccountLabel ? (
         <div className="card add-success-banner premium-success-banner">
@@ -262,6 +270,7 @@ function AccountsOverviewPage({
             key={account.account_key}
             account={account}
             isSelected={selectedAccount?.account_key === account.account_key}
+            accountState={accountState(account)}
             onSelect={onSelectAccount}
           />
         ))}
@@ -276,6 +285,7 @@ function AccountsOverviewPage({
                 key={account.account_key}
                 account={account}
                 isSelected={selectedAccount?.account_key === account.account_key}
+                accountState={accountState(account)}
                 onSelect={onSelectAccount}
               />
             ))}
