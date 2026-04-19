@@ -62,6 +62,7 @@ function ConnectionsPage({
   const attentionCount = managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error' || connector.config_validation_error).length
   const selectedConnectorType = selectedAccount?.connector_type || ''
   const selectedProviderLabel = selectedAccount?.source_label || selectedAccount?.connector_type || ''
+  const selectedMethod = connectionMethods.find((method) => method.key === selectedConnectorType) || null
 
   function findConnector(methodKey) {
     return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
@@ -142,7 +143,11 @@ function ConnectionsPage({
               </div>
               <p className="hint">This account currently drives provider operations context on this page.</p>
               {selectedConnectorType ? (
-                <p className="hint"><strong>Selected account provider:</strong> {selectedProviderLabel}</p>
+                <>
+                  <p className="hint"><strong>Selected account provider:</strong> {selectedProviderLabel}</p>
+                  <p className="hint"><strong>Manage this connection method next:</strong> {selectedMethod?.title || selectedConnectorType}</p>
+                  <p className="hint">{selectedProviderNextAction(findConnector(selectedConnectorType), selectedConnectorType)}</p>
+                </>
               ) : null}
             </>
           ) : (
