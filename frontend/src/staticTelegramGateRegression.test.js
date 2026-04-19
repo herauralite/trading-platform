@@ -2,11 +2,23 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-test('legacy public/app.html stays a shim redirect into canonical /app shell', async () => {
-  const html = await readFile(new URL('../public/app.html', import.meta.url), 'utf8')
+const STATIC_GATE_FILES = ['app.html', 'public/app.html']
 
-  assert.equal(html.includes('redirectToCanonicalAppShell'), true)
-  assert.equal(html.includes("window.location.replace(target)"), true)
-  assert.equal(html.includes("var target = '/app' + window.location.search + window.location.hash;"), true)
-  assert.equal(html.includes('<a href="/app">Continue</a>'), true)
-})
+for (const relPath of STATIC_GATE_FILES) {
+  test(`static telegram gate keeps token-first + fallback contract in ${relPath}`, async () => {
+    const html = await readFile(new URL(`../${relPath}`, import.meta.url), 'utf8')
+
+    assert.equal(html.includes("const token = String(data.access_token || '')"), true)
+    assert.equal(html.includes("if (!token) throw new Error('missing_session_token')"), true)
+
+    assert.equal(
+      html.includes('normalizeTaliUserShape(data.user) || normalizeTaliUserShape(normalizeWidgetUserShape(widgetUser))')
+        || html.includes('normalizeTaliUserShape(data.user) || normalizeTaliUserShape(normalizeWidgetUserShape(tgUser))'),
+      true,
+    )
+
+    assert.equal(html.includes('/auth/me'), true)
+    assert.equal(html.includes("if (!user) throw new Error('missing_or_invalid_user')"), true)
+    assert.equal(html.includes("setGateTelegramError('Authentication failed. Please try again.')"), true)
+  })
+}

@@ -63,13 +63,6 @@ export function connectionStatusMeta(status) {
       helper: 'Alpaca credentials were validated server-side and account access is read-only.',
     }
   }
-  if (normalized === 'account_verified') {
-    return {
-      toneClass: 'status-connected',
-      label: 'Account Verified',
-      helper: 'Credentials were validated with Alpaca read-only account endpoint.',
-    }
-  }
   if (normalized === 'validation_failed') {
     return {
       toneClass: 'status-error',

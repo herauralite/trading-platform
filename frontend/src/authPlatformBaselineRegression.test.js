@@ -32,8 +32,6 @@ test('react app keeps /app gate behavior and deep-link routes stable', async () 
   assert.equal(appSource.includes('<AppLandingPage'), true)
   assert.equal(appSource.includes('path="/app/accounts"'), true)
   assert.equal(appSource.includes('path="/app/connections"'), true)
-  assert.equal(appSource.includes('className="app-nav-link add-account-nav-link"'), true)
-  assert.equal(appSource.includes('Add Account'), true)
   assert.equal(appSource.includes('<Route path="*" element={<Navigate to="/app/accounts" replace />} />'), true)
 })
 
@@ -41,7 +39,7 @@ test('react app resolves account-presence from workspace inventory once hydrated
   const appSource = await readFrontendFile('src/App.jsx')
 
   assert.equal(appSource.includes('const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)'), true)
-  assert.equal(appSource.includes('if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return dedupeAccountWorkspaces(workspaceApiAccounts)'), true)
+  assert.equal(appSource.includes('if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return workspaceApiAccounts'), true)
   assert.equal(appSource.includes('setWorkspaceApiHydrated(true)'), true)
   assert.equal(appSource.includes('setWorkspaceApiHydrated(false)'), true)
 })
@@ -67,9 +65,5 @@ test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/co
   assert.deepEqual(rewrites, [
     { source: '/app', destination: '/app.html' },
     { source: '/app/:path*', destination: '/app.html' },
-  ])
-  assert.deepEqual(config.redirects, [
-    { source: '/accounts', destination: '/app/accounts', permanent: false },
-    { source: '/connections', destination: '/app/connections', permanent: false },
   ])
 })

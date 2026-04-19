@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { PUBLIC_API_BETA_CONNECTORS } from '../addAccountFlow'
-import { validateAlpacaDraft } from '../alpacaConnectFlow'
 
 const MT5_TOTAL_STEPS = 6
 
@@ -48,7 +47,6 @@ function AddAccountFlowModal({
   onLoadMt5RegistrationStatus,
   isSubmitting,
   error,
-  successMessage,
 }) {
   const [mt5Step, setMt5Step] = useState(1)
   const [mt5Pairing, setMt5Pairing] = useState(null)
@@ -58,7 +56,6 @@ function AddAccountFlowModal({
   const [mt5IsChecking, setMt5IsChecking] = useState(false)
   const [mt5IsCreatingToken, setMt5IsCreatingToken] = useState(false)
   const [copiedField, setCopiedField] = useState('')
-  const [alpacaValidationErrors, setAlpacaValidationErrors] = useState({})
 
   const selectedProvider = providers.find((provider) => provider.connectorType === selectedProviderType) || null
   const isMt5 = selectedProvider?.connectorType === 'mt5_bridge'
@@ -73,7 +70,6 @@ function AddAccountFlowModal({
     setMt5IsChecking(false)
     setMt5IsCreatingToken(false)
     setCopiedField('')
-    setAlpacaValidationErrors({})
   }, [isOpen, selectedProviderType])
 
   const canGoToMt5Confirm = useMemo(() => {
@@ -141,11 +137,6 @@ function AddAccountFlowModal({
   }
 
   async function submitCurrentProvider() {
-    if (selectedProvider?.connectorType === 'alpaca_api') {
-      const errors = validateAlpacaDraft(draft)
-      setAlpacaValidationErrors(errors)
-      if (Object.keys(errors).length > 0) return
-    }
     await onSubmit(selectedProvider)
   }
 
@@ -396,10 +387,7 @@ function AddAccountFlowModal({
                   <input
                     placeholder={selectedProvider.connectorType === 'alpaca_api' ? 'Account label' : 'Display name'}
                     value={draft.display_label}
-                    onChange={(event) => {
-                      setDraft((prev) => ({ ...prev, display_label: event.target.value }))
-                      setAlpacaValidationErrors((prev) => ({ ...prev, display_label: '' }))
-                    }}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
                     required
                   />
                   <select
@@ -418,33 +406,21 @@ function AddAccountFlowModal({
                   ) : null}
                 </div>
                 {selectedProvider.connectorType === 'alpaca_api' ? (
-                  <>
-                    <div className="row">
-                      <input
-                        placeholder="API key"
-                        value={draft.api_key || ''}
-                        onChange={(event) => {
-                          setDraft((prev) => ({ ...prev, api_key: event.target.value }))
-                          setAlpacaValidationErrors((prev) => ({ ...prev, api_key: '' }))
-                        }}
-                        required
-                      />
-                      <input
-                        type="password"
-                        placeholder="API secret"
-                        value={draft.api_secret || ''}
-                        onChange={(event) => {
-                          setDraft((prev) => ({ ...prev, api_secret: event.target.value }))
-                          setAlpacaValidationErrors((prev) => ({ ...prev, api_secret: '' }))
-                        }}
-                        required
-                      />
-                    </div>
-                    {alpacaValidationErrors.display_label ? <p className="error-text">{alpacaValidationErrors.display_label}</p> : null}
-                    {alpacaValidationErrors.api_key ? <p className="error-text">{alpacaValidationErrors.api_key}</p> : null}
-                    {alpacaValidationErrors.api_secret ? <p className="error-text">{alpacaValidationErrors.api_secret}</p> : null}
-                    <p className="hint">Security note: credentials are validated server-side and never echoed back in this UI.</p>
-                  </>
+                  <div className="row">
+                    <input
+                      placeholder="API key"
+                      value={draft.api_key || ''}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, api_key: event.target.value }))}
+                      required
+                    />
+                    <input
+                      type="password"
+                      placeholder="API secret"
+                      value={draft.api_secret || ''}
+                      onChange={(event) => setDraft((prev) => ({ ...prev, api_secret: event.target.value }))}
+                      required
+                    />
+                  </div>
                 ) : (
                   <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
                 )}
@@ -460,7 +436,6 @@ function AddAccountFlowModal({
             ) : null}
 
             {error ? <p className="error-text">{error}</p> : null}
-            {successMessage ? <p className="hint success-text">{successMessage}</p> : null}
             {!isMt5 ? (
               <div className="row">
                 <button type="submit" disabled={isSubmitting}>
