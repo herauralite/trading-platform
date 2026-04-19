@@ -34,6 +34,14 @@ function AccountWorkspaceCard({ account, isSelected, onSelect }) {
 
       <div className="account-card-grid">
         <div className="meta-card">
+          <span className="hint">External account ID</span>
+          <strong className="mono">{account.external_account_id || '—'}</strong>
+        </div>
+        <div className="meta-card">
+          <span className="hint">Trading account ID</span>
+          <strong className="mono">{account.trading_account_id ?? '—'}</strong>
+        </div>
+        <div className="meta-card">
           <span className="hint">Connection status</span>
           <AccountStatusBadge value={account.connection_status} />
           <small className="hint">{connectionMeta.helper}</small>

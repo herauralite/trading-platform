@@ -43,6 +43,7 @@ const AUTH_DEBUG_QUERY_KEY = 'debugAuth'
 const AUTH_DEBUG_STORAGE_KEY = 'tali_debug_auth'
 const USE_ACCOUNT_WORKSPACES_API = import.meta.env.VITE_APP_USE_ACCOUNT_WORKSPACES !== '0'
 const FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY = 'tali_first_run_add_account_prompt_seen'
+const ACTIVE_ACCOUNT_STORAGE_KEY = 'tali_active_account_key'
 
 const normalizeHost = (value) => {
   const raw = String(value || '').trim().toLowerCase()
@@ -62,6 +63,66 @@ function hasWorkspaceIdentity(account) {
       || account.external_account_id
     ),
   )
+}
+
+function normalizeWorkspaceAccount(account, fallbackConnectorType = 'manual') {
+  const connectorType = String(account?.connector_type || fallbackConnectorType || 'manual').trim().toLowerCase()
+  const tradingAccountId = account?.trading_account_id ?? account?.id ?? null
+  const externalAccountId = account?.external_account_id ?? null
+  const accountKey = String(
+    account?.account_key
+    || (connectorType && (externalAccountId || tradingAccountId) ? `${connectorType}:${externalAccountId || tradingAccountId}` : ''),
+  ).trim()
+  if (!accountKey) return null
+  return {
+    ...account,
+    account_key: accountKey,
+    trading_account_id: tradingAccountId,
+    external_account_id: externalAccountId,
+    display_label: account?.display_label || externalAccountId || `Account ${tradingAccountId ?? accountKey}`,
+    connector_type: connectorType,
+    source_label: account?.source_label || connectorType,
+    connection_status: String(account?.connection_status || 'disconnected').toLowerCase(),
+    sync_state: String(account?.sync_state || 'idle').toLowerCase(),
+    broker_name: account?.broker_name || null,
+    account_type: account?.account_type || null,
+    last_activity_at: account?.last_activity_at || null,
+    last_sync_at: account?.last_sync_at || null,
+    is_primary: Boolean(account?.is_primary),
+    provider_state: account?.provider_state || null,
+    environment: account?.environment || null,
+    account_summary: account?.account_summary && typeof account.account_summary === 'object' ? account.account_summary : null,
+    last_validated_at: account?.last_validated_at || null,
+  }
+}
+
+function dedupeAccountWorkspaces(accounts = []) {
+  const map = new Map()
+  for (const account of accounts) {
+    const normalized = normalizeWorkspaceAccount(account)
+    if (!normalized?.account_key) continue
+    const existing = map.get(normalized.account_key)
+    if (!existing) {
+      map.set(normalized.account_key, normalized)
+      continue
+    }
+    const normalizedIsUsable = isCurrentlyConnectedAccount(normalized)
+    const existingIsUsable = isCurrentlyConnectedAccount(existing)
+    if (normalizedIsUsable && !existingIsUsable) {
+      map.set(normalized.account_key, { ...existing, ...normalized })
+      continue
+    }
+    const normalizedSyncTs = new Date(normalized.last_sync_at || normalized.last_activity_at || 0).getTime()
+    const existingSyncTs = new Date(existing.last_sync_at || existing.last_activity_at || 0).getTime()
+    if (normalizedSyncTs >= existingSyncTs) {
+      map.set(normalized.account_key, { ...existing, ...normalized })
+    }
+  }
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.is_primary && !b.is_primary) return -1
+    if (!a.is_primary && b.is_primary) return 1
+    return String(a.display_label || '').localeCompare(String(b.display_label || ''))
+  })
 }
 
 function App() {
@@ -89,7 +150,7 @@ function App() {
   const [connectorDrafts, setConnectorDrafts] = useState({})
   const [configDrafts, setConfigDrafts] = useState({})
   const [syncHistory, setSyncHistory] = useState({})
-  const [selectedAccountKey, setSelectedAccountKey] = useState('')
+  const [selectedAccountKey, setSelectedAccountKey] = useState(() => localStorage.getItem(ACTIVE_ACCOUNT_STORAGE_KEY) || '')
   const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
   const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
@@ -113,6 +174,7 @@ function App() {
   const [pendingAccountFocus, setPendingAccountFocus] = useState(null)
   const [recentlyAddedAccountLabel, setRecentlyAddedAccountLabel] = useState('')
   const [authActionPrompt, setAuthActionPrompt] = useState('')
+  const [addAccountReturnPath, setAddAccountReturnPath] = useState('/app/accounts')
 
   const signedIn = Boolean(sessionToken && sessionUser?.telegram_user_id)
   const authDebugEnabled = useMemo(() => {
@@ -165,8 +227,8 @@ function App() {
   )
 
   const unifiedAccountWorkspaces = useMemo(() => {
-    if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return workspaceApiAccounts
-    return accountWorkspaces
+    if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return dedupeAccountWorkspaces(workspaceApiAccounts)
+    return dedupeAccountWorkspaces(accountWorkspaces)
   }, [workspaceApiAccounts, accountWorkspaces, workspaceApiHydrated])
 
   const selectedAccount = useMemo(
@@ -292,6 +354,15 @@ function App() {
     const firstPending = unifiedAccountWorkspaces.find((account) => !isCurrentlyConnectedAccount(account) && ['queued', 'running', 'retrying'].includes(String(account.sync_state || '').toLowerCase()))
     setSelectedAccountKey(primary?.account_key || firstConnected?.account_key || firstPending?.account_key || '')
   }, [unifiedAccountWorkspaces, selectedAccountKey])
+
+  useEffect(() => {
+    if (!signedIn) return
+    if (!selectedAccountKey) {
+      localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)
+      return
+    }
+    localStorage.setItem(ACTIVE_ACCOUNT_STORAGE_KEY, selectedAccountKey)
+  }, [signedIn, selectedAccountKey])
 
 
   useEffect(() => {
@@ -469,8 +540,10 @@ function App() {
     setWorkspaceApiHydrated(false)
     setIsWorkspaceLoading(false)
     setRecentlyAddedAccountLabel('')
+    setSelectedAccountKey('')
     localStorage.removeItem(SESSION_STORAGE_KEY)
     localStorage.removeItem(USER_STORAGE_KEY)
+    localStorage.removeItem(ACTIVE_ACCOUNT_STORAGE_KEY)
     sessionStorage.removeItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY)
   }
 
@@ -667,6 +740,7 @@ function App() {
     }
     setAuthActionPrompt('')
     setSelectedProviderType(defaultProviderType)
+    setAddAccountReturnPath(location.pathname.startsWith('/app') ? location.pathname : '/app/accounts')
     setAddAccountError('')
     setAddAccountSuccessMessage('')
     setIsAddAccountOpen(true)
@@ -725,7 +799,7 @@ function App() {
           return
         }
         closeAddAccountFlow()
-        navigate('/app/accounts')
+        navigate(addAccountReturnPath)
         return
       }
       if (PUBLIC_API_BETA_CONNECTORS.includes(provider.connectorType)) {
@@ -766,7 +840,7 @@ function App() {
           await new Promise((resolve) => window.setTimeout(resolve, 900))
         }
         closeAddAccountFlow()
-        navigate('/app/accounts')
+        navigate(addAccountReturnPath)
         return
       }
 
@@ -786,7 +860,7 @@ function App() {
       await connectorAction(provider.connectorType, 'connect', payload)
       setPendingAccountFocus({ connectorType: provider.connectorType, externalAccountId })
       closeAddAccountFlow()
-      navigate('/app/accounts')
+      navigate(addAccountReturnPath)
     } catch (error) {
       const apiDetail = error?.response?.data?.detail
       setAddAccountError(apiDetail || error?.message || 'Could not complete this add account flow.')

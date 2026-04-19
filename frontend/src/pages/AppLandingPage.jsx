@@ -14,6 +14,17 @@ function AppLandingPage({
 }) {
   const connectorsWithErrors = managedConnectors.filter((connector) => connector.last_error)
   const connectorsSyncing = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state))
+  const connectorsConnected = managedConnectors.filter((connector) => connector.account_count > 0 || connector.is_connected)
+  const latestConnectorActivity = managedConnectors
+    .map((connector) => ({
+      connectorType: connector.connector_type,
+      sourceName: connector.source_label || connector.connector_type,
+      status: connector.status || 'disconnected',
+      lastActivityAt: connector.last_activity_at || connector.last_sync_at || null,
+      accountCount: Number(connector.account_count || 0),
+    }))
+    .sort((a, b) => new Date(b.lastActivityAt || 0).getTime() - new Date(a.lastActivityAt || 0).getTime())
+    .slice(0, 3)
   const latestRuns = Object.values(syncHistory)
     .flatMap((runs) => runs || [])
     .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
@@ -98,6 +109,7 @@ function AppLandingPage({
           <li><strong>Public API connectors</strong> (Alpaca, OANDA, Binance beta paths)</li>
         </ul>
         <div className="row app-onboarding-links">
+          <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
           <NavLink className="app-nav-link" to="/app/accounts">Go to Accounts (primary)</NavLink>
           <NavLink className="app-nav-link" to="/app/connections">Go to Connections (operations)</NavLink>
         </div>
@@ -118,10 +130,18 @@ function AppLandingPage({
         <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
       </div>
 
-      <div className="meta-grid accounts-summary-grid premium-summary-grid dashboard-summary-grid">
+        <div className="meta-grid accounts-summary-grid premium-summary-grid dashboard-summary-grid">
+        <div className="meta-card summary-card">
+          <span className="hint">Total account rows</span>
+          <strong>{accountConnectionState.totalCount}</strong>
+        </div>
         <div className="meta-card summary-card">
           <span className="hint">Connected accounts</span>
           <strong>{accountConnectionState.connectedUsableCount}</strong>
+        </div>
+        <div className="meta-card summary-card">
+          <span className="hint">Stale / inactive accounts</span>
+          <strong>{accountConnectionState.staleInactiveCount}</strong>
         </div>
         <div className="meta-card summary-card">
           <span className="hint">Connectors syncing now</span>
@@ -131,6 +151,11 @@ function AppLandingPage({
           <span className="hint">Connectors needing review</span>
           <strong>{connectorsWithErrors.length}</strong>
         </div>
+      </div>
+      <div className="row app-onboarding-links">
+        <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
+        <NavLink className="app-nav-link" to="/app/accounts">Go to Accounts</NavLink>
+        <NavLink className="app-nav-link" to="/app/connections">Go to Connections</NavLink>
       </div>
 
       <div className="card selected-account-panel premium-focus-card dashboard-focus-card">
@@ -145,6 +170,27 @@ function AppLandingPage({
           </p>
         ) : (
           <p className="hint">Select an account in the shell switcher to focus account context across pages.</p>
+        )}
+      </div>
+
+      <div className="card premium-activity-card dashboard-activity-card">
+        <h3>Connector health snapshot</h3>
+        <p className="hint">
+          Connected connectors: <strong>{connectorsConnected.length}</strong> · Syncing: <strong>{connectorsSyncing.length}</strong> · Needs review: <strong>{connectorsWithErrors.length}</strong>
+        </p>
+        {latestConnectorActivity.length > 0 ? (
+          <ul className="sync-activity-list">
+            {latestConnectorActivity.map((entry) => (
+              <li key={`connector-activity-${entry.connectorType}`}>
+                <span className="pill">{entry.connectorType}</span>
+                <span className="pill">{entry.status}</span>
+                <span>{entry.accountCount} linked account(s)</span>
+                <span className="hint">Last activity {formatDate(entry.lastActivityAt)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="hint">No connector activity yet. Add and connect an account to start workspace operations.</p>
         )}
       </div>
 
