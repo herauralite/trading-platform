@@ -26,8 +26,8 @@ function accountIdentityRows(account) {
 
 function statusClassCopy(accountState) {
   if (accountState === 'usable') return { label: 'Usable', helper: 'This account can be active workspace context right now.' }
-  if (accountState === 'pending') return { label: 'Pending', helper: 'Setup is in progress. Actions stay limited until the connection is usable.' }
-  return { label: 'Stale', helper: 'Historical/disconnected record. Reconnect first to restore active workspace use.' }
+  if (accountState === 'pending') return { label: 'Pending', helper: 'Setup is still in progress. Complete provider setup before this account becomes usable.' }
+  return { label: 'Stale', helper: 'This record is disconnected or historical. Reconnect first to restore active workspace use.' }
 }
 
 function AccountDetailPanel({
@@ -35,8 +35,11 @@ function AccountDetailPanel({
   accountState,
   isSelected,
   onSetActive,
-  connectionsPath = '/app/connections',
   onRefreshWorkspace,
+  dashboardPath = '/app',
+  connectionsManagePath = '/app/connections',
+  connectionsSetupPath = '/app/connections',
+  connectionsReconnectPath = '/app/connections',
 }) {
   if (!account) {
     return (
@@ -50,23 +53,6 @@ function AccountDetailPanel({
   const connectionMeta = connectionStatusMeta(account.connection_status)
   const stateClass = statusClassCopy(accountState)
   const canSetActive = accountState === 'usable' && !isSelected
-  const setActiveDisabledReason = isSelected
-    ? 'Already the active workspace account.'
-    : accountState === 'pending'
-      ? 'Pending accounts must complete setup before activation.'
-      : accountState === 'stale'
-        ? 'Stale/disconnected records cannot be activated until reconnected.'
-        : ''
-  const connectionsActionLabel = accountState === 'pending'
-    ? 'Continue setup in Connections'
-    : accountState === 'stale'
-      ? 'Open reconnection in Connections'
-      : 'Open connections'
-  const connectionsActionHelper = accountState === 'pending'
-    ? 'This opens the provider setup path so you can finish pending steps.'
-    : accountState === 'stale'
-      ? 'This opens provider operations so you can reconnect and restore usability.'
-      : 'Use Connections for provider-level operations for this active account.'
 
   return (
     <aside className="card account-detail-panel premium-focus-card" aria-live="polite">
@@ -117,15 +103,44 @@ function AccountDetailPanel({
         </ul>
       </div>
 
-      <div className="row">
-        <button type="button" className={canSetActive ? 'primary-cta' : 'secondary-button'} disabled={!canSetActive} onClick={() => onSetActive(account.account_key)}>
-          {isSelected ? 'Current Active Account' : accountState === 'usable' ? 'Set Active Account' : 'Not eligible for active workspace'}
-        </button>
-        <NavLink className="app-nav-link" to={connectionsPath}>{connectionsActionLabel}</NavLink>
-        <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh Workspace</button>
-      </div>
-      {!canSetActive ? <p className="hint">{setActiveDisabledReason}</p> : null}
-      <p className="hint">{connectionsActionHelper}</p>
+      {accountState === 'usable' ? (
+        <>
+          <div className="row">
+            {canSetActive ? (
+              <button type="button" className="primary-cta" onClick={() => onSetActive(account.account_key)}>Set as active</button>
+            ) : null}
+            <NavLink className="app-nav-link" to={dashboardPath}>Open dashboard</NavLink>
+            <NavLink className="app-nav-link" to={connectionsManagePath}>Manage connection</NavLink>
+            <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh workspace</button>
+          </div>
+          {!canSetActive && isSelected ? <p className="hint">Already the active workspace account.</p> : null}
+          <p className="hint">This account is usable now. Manage provider operations in Connections or jump to Dashboard.</p>
+        </>
+      ) : null}
+
+      {accountState === 'pending' ? (
+        <>
+          <p className="hint"><strong>Setup still required:</strong> this account is pending and cannot be set active yet.</p>
+          <div className="row">
+            <NavLink className="app-nav-link" to={connectionsSetupPath}>Continue setup</NavLink>
+            <NavLink className="app-nav-link" to={connectionsManagePath}>Open connections</NavLink>
+            <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh workspace</button>
+          </div>
+          <p className="hint">Provider setup and first successful sync are required before activation is allowed.</p>
+        </>
+      ) : null}
+
+      {accountState === 'stale' ? (
+        <>
+          <p className="hint"><strong>Reconnect required:</strong> this account is stale/disconnected and not currently usable.</p>
+          <div className="row">
+            <NavLink className="app-nav-link" to={connectionsReconnectPath}>Reconnect account</NavLink>
+            <NavLink className="app-nav-link" to={connectionsManagePath}>Open connections</NavLink>
+            <button type="button" className="secondary-button" onClick={onRefreshWorkspace}>Refresh workspace</button>
+          </div>
+          <p className="hint">Reconnect the provider in Connections to restore usable account status.</p>
+        </>
+      ) : null}
     </aside>
   )
 }
