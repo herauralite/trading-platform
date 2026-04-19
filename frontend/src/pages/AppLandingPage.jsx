@@ -21,7 +21,7 @@ function AppLandingPage({
 
   if (!signedIn) {
     return (
-      <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
+      <section className="panel page-panel app-dashboard-hub premium-workspace-panel dashboard-page">
         <div className="panel-header">
           <p className="kicker">Workspace</p>
           <h2>Preview the TaliTrade workspace, then unlock it with Telegram</h2>
@@ -49,7 +49,7 @@ function AppLandingPage({
 
   if (isWorkspaceLoading) {
     return (
-      <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
+      <section className="panel page-panel app-dashboard-hub premium-workspace-panel dashboard-page">
         <div className="panel-header">
           <p className="kicker">Dashboard</p>
           <h2>Loading account workspace</h2>
@@ -65,7 +65,7 @@ function AppLandingPage({
 
   if (workspaceLoadError) {
     return (
-      <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
+      <section className="panel page-panel app-dashboard-hub premium-workspace-panel dashboard-page">
         <div className="panel-header">
           <p className="kicker">Dashboard</p>
           <h2>Workspace data could not be loaded</h2>
@@ -78,7 +78,7 @@ function AppLandingPage({
 
   if (hasZeroConnectedAccounts) {
     return (
-      <section className="panel page-panel app-onboarding-hub premium-workspace-panel">
+      <section className="panel page-panel app-onboarding-hub premium-workspace-panel dashboard-page">
         <div className="panel-header row">
           <div>
             <p className="kicker">Onboarding</p>
@@ -109,7 +109,7 @@ function AppLandingPage({
   }
 
   return (
-    <section className="panel page-panel app-dashboard-hub premium-workspace-panel">
+    <section className="panel page-panel app-dashboard-hub premium-workspace-panel dashboard-page">
       <div className="panel-header row">
         <div>
           <p className="kicker">Dashboard</p>
@@ -118,7 +118,7 @@ function AppLandingPage({
         <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
       </div>
 
-      <div className="meta-grid accounts-summary-grid premium-summary-grid">
+      <div className="meta-grid accounts-summary-grid premium-summary-grid dashboard-summary-grid">
         <div className="meta-card summary-card">
           <span className="hint">Connected accounts</span>
           <strong>{accountConnectionState.connectedUsableCount}</strong>
@@ -133,7 +133,7 @@ function AppLandingPage({
         </div>
       </div>
 
-      <div className="card selected-account-panel premium-focus-card">
+      <div className="card selected-account-panel premium-focus-card dashboard-focus-card">
         <h3>Active account focus</h3>
         {selectedAccount ? (
           <p>
@@ -148,7 +148,7 @@ function AppLandingPage({
         )}
       </div>
 
-      <div className="card premium-activity-card">
+      <div className="card premium-activity-card dashboard-activity-card">
         <h3>Recent sync activity</h3>
         {latestRuns.length > 0 ? (
           <ul className="sync-activity-list">

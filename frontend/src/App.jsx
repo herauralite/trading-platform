@@ -900,29 +900,41 @@ function App() {
       ) : null}
       {!signedIn ? (
         <section className="panel auth-shell-gate" aria-live="polite">
-          <h2>Secure Telegram sign-in for your workspace</h2>
-          {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-          <p>Authenticate to unlock the account workspace, live sync operations, and connector controls. This in-shell gate keeps you in the product flow.</p>
-          {telegramConfig?.oidcEnabled ? (
-            <button onClick={startOidcFlow}>Continue with Telegram</button>
-          ) : (
-            <div ref={widgetWrapRef}>
-              {!isCanonicalHost ? (
-                <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
-              ) : (
-                isConfigLoading ? <p className="hint">Loading Telegram sign-in…</p> : null
-              )}
-              {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
-              {configLoadFailed ? (
-                <button onClick={() => loadTelegramAuthConfig()} type="button">
-                  Retry Telegram setup
-                </button>
-              ) : null}
-              {authDebugEnabled && widgetDiagnostics.length ? (
-                <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
-              ) : null}
+          <div className="auth-gate-content">
+            <div className="auth-gate-copy">
+              <p className="kicker">Session gate</p>
+              <h2>Secure Telegram sign-in for your workspace</h2>
+              {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
+              <p>Authenticate to unlock the account workspace, live sync operations, and connector controls. This in-shell gate keeps you in the product flow.</p>
+              <ul className="auth-gate-feature-list">
+                <li>Account-aware dashboard context</li>
+                <li>Provider onboarding and Add Account flows</li>
+                <li>Connector sync controls and diagnostics</li>
+              </ul>
             </div>
-          )}
+            <div className="auth-gate-widget-wrap">
+              {telegramConfig?.oidcEnabled ? (
+                <button className="primary-cta" onClick={startOidcFlow}>Continue with Telegram</button>
+              ) : (
+                <div ref={widgetWrapRef}>
+                  {!isCanonicalHost ? (
+                    <p className="error-text">Open www.talitrade.com to continue with Telegram sign-in.</p>
+                  ) : (
+                    isConfigLoading ? <p className="hint">Loading Telegram sign-in…</p> : null
+                  )}
+                  {widgetStatus ? <p className="error-text">{widgetStatus}</p> : null}
+                  {configLoadFailed ? (
+                    <button onClick={() => loadTelegramAuthConfig()} type="button">
+                      Retry Telegram setup
+                    </button>
+                  ) : null}
+                  {authDebugEnabled && widgetDiagnostics.length ? (
+                    <pre className="hint">{widgetDiagnostics.join('\n')}</pre>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          </div>
         </section>
       ) : null}
 
