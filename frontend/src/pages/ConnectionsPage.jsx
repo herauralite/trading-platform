@@ -126,7 +126,7 @@ function ConnectionsPage({
           <strong>Accounts</strong> is your account-centric workspace. <strong>Connections</strong> handles provider configuration and sync operations for the current workspace context.
         </p>
         <div className="card selected-account-panel premium-focus-card connections-context-panel">
-          <h3>Current workspace account context</h3>
+          <h3>Selected account context</h3>
           {selectedAccount ? (
             <>
               <p>
@@ -137,11 +137,11 @@ function ConnectionsPage({
               <div className="row">
                 <span className="pill">{selectedAccount.source_label || selectedAccount.connector_type}</span>
                 <span className="pill">{selectedAccount.broker_name || 'Broker metadata pending'}</span>
-                <span className="pill">Connection {selectedAccount.connection_status || 'disconnected'}</span>
-                <span className="pill">Sync {selectedAccount.sync_state || 'idle'}</span>
+                <span className="pill">Connection {selectedAccount.connection_status || 'unavailable'}</span>
+                <span className="pill">Sync {selectedAccount.sync_state || 'unavailable'}</span>
                 {selectedAccount.is_primary ? <span className="pill primary-pill">Primary</span> : null}
               </div>
-              <p className="hint">This account currently drives provider operations context on this page.</p>
+              <p className="hint">Connections actions stay scoped around this selected account/provider context.</p>
               {selectedConnectorType ? (
                 <>
                   <p className="hint"><strong>Selected account provider:</strong> {selectedProviderLabel}</p>

@@ -1,5 +1,4 @@
-import { useMemo, useState } from 'react'
-import { NavLink } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
 import AccountStatusBadge from '../components/AccountStatusBadge'
 import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
 import AccountDetailPanel from '../components/AccountDetailPanel'
@@ -55,6 +54,20 @@ function AccountsOverviewPage({
     () => accountWorkspaces.find((account) => account.account_key === detailAccountKey) || null,
     [accountWorkspaces, detailAccountKey],
   )
+
+  useEffect(() => {
+    if (!accountWorkspaces.length) {
+      if (detailAccountKey) setDetailAccountKey('')
+      return
+    }
+    if (selectedAccount?.account_key && selectedAccount.account_key !== detailAccountKey) {
+      setDetailAccountKey(selectedAccount.account_key)
+      return
+    }
+    if (!detailAccountKey || !accountWorkspaces.some((account) => account.account_key === detailAccountKey)) {
+      setDetailAccountKey(accountWorkspaces[0].account_key)
+    }
+  }, [accountWorkspaces, detailAccountKey, selectedAccount])
 
   if (!signedIn) {
     return (
@@ -296,62 +309,72 @@ function AccountsOverviewPage({
         )}
       </div>
 
-      <div className="accounts-grid">
-        {summary.usableAccounts.map((account) => (
-          <AccountWorkspaceCard
-            key={account.account_key}
-            account={account}
-            isSelected={selectedAccount?.account_key === account.account_key}
-            accountState={accountState(account)}
-            onSelect={onSelectAccount}
-            onOpenDetails={setDetailAccountKey}
-          />
-        ))}
-      </div>
-      {summary.pendingAccounts.length > 0 ? (
-        <div className="card">
-          <h3>Pending setup accounts</h3>
-          <p className="hint">These accounts exist but still require connector setup or sync completion before becoming fully usable.</p>
+      <div className="accounts-workspace-layout">
+        <div className="accounts-workspace-list">
           <div className="accounts-grid">
-            {summary.pendingAccounts.map((account) => (
+            {summary.usableAccounts.map((account) => (
               <AccountWorkspaceCard
                 key={account.account_key}
                 account={account}
                 isSelected={selectedAccount?.account_key === account.account_key}
                 accountState={accountState(account)}
-                onSelect={onSelectAccount}
+                onSelect={(accountKey) => {
+                  onSelectAccount(accountKey)
+                  setDetailAccountKey(accountKey)
+                }}
                 onOpenDetails={setDetailAccountKey}
               />
             ))}
           </div>
+          {summary.pendingAccounts.length > 0 ? (
+            <div className="card">
+              <h3>Pending setup accounts</h3>
+              <p className="hint">These accounts exist but still require connector setup or sync completion before becoming fully usable.</p>
+              <div className="accounts-grid">
+                {summary.pendingAccounts.map((account) => (
+                  <AccountWorkspaceCard
+                    key={account.account_key}
+                    account={account}
+                    isSelected={selectedAccount?.account_key === account.account_key}
+                    accountState={accountState(account)}
+                    onSelect={onSelectAccount}
+                    onOpenDetails={setDetailAccountKey}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+          {summary.staleAccounts.length > 0 ? (
+            <div className="card">
+              <h3>Historical / disconnected records</h3>
+              <p className="hint">These rows are shown for audit context and are intentionally not treated as active account presence.</p>
+              <div className="accounts-grid">
+                {summary.staleAccounts.map((account) => (
+                  <AccountWorkspaceCard
+                    key={account.account_key}
+                    account={account}
+                    isSelected={selectedAccount?.account_key === account.account_key}
+                    accountState={accountState(account)}
+                    onSelect={onSelectAccount}
+                    onOpenDetails={setDetailAccountKey}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
-      ) : null}
-      {summary.staleAccounts.length > 0 ? (
-        <div className="card">
-          <h3>Historical / disconnected records</h3>
-          <p className="hint">These rows are shown for audit context and are intentionally not treated as active account presence.</p>
-          <ul className="connector-account-list">
-            {summary.staleAccounts.map((account) => (
-              <li key={`stale-${account.account_key}`}>
-                <span>{account.display_label || account.external_account_id || account.account_key}</span>
-                <span className="pill">{account.connection_status || 'disconnected'}</span>
-                <span className="hint">Last sync {formatDate(account.last_sync_at)}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {detailAccount ? (
+
         <AccountDetailPanel
           account={detailAccount}
-          accountState={accountState(detailAccount)}
-          isSelected={selectedAccount?.account_key === detailAccount.account_key}
-          onSetActive={onSelectAccount}
+          accountState={detailAccount ? accountState(detailAccount) : 'stale'}
+          isSelected={selectedAccount?.account_key === detailAccount?.account_key}
+          onSetActive={(accountKey) => {
+            onSelectAccount(accountKey)
+            setDetailAccountKey(accountKey)
+          }}
           onRefreshWorkspace={onRefreshWorkspace}
-          onClose={() => setDetailAccountKey('')}
         />
-      ) : null}
-      <p className="hint">Need provider operations? <NavLink className="app-nav-link" to="/app/connections">Go to Connections</NavLink></p>
+      </div>
     </section>
   )
 }

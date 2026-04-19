@@ -233,12 +233,12 @@ function AppLandingPage({
 
       <div className="card selected-account-panel premium-focus-card dashboard-focus-card dashboard-focused-snapshot">
         <div className="row">
-          <h3>Focused account snapshot</h3>
+          <h3>Current workspace account</h3>
           {selectedUsableAccount?.is_primary ? <span className="pill primary-pill">Primary</span> : null}
         </div>
         {selectedUsableAccount ? (
           <>
-            <p className="hint"><strong>Focused workspace:</strong> Dashboard widgets and connection guidance are currently scoped to this active usable account.</p>
+            <p className="hint"><strong>Active account context:</strong> Dashboard context mirrors the account selected in Accounts.</p>
             <p>
               <strong>{selectedUsableAccount.display_label || selectedUsableAccount.external_account_id}</strong>
               {' · '}
@@ -290,8 +290,9 @@ function AppLandingPage({
               ))}
             </div>
             <div className="row">
-              <NavLink className="app-nav-link" to="/app/accounts">Change focused account</NavLink>
-              <NavLink className="app-nav-link" to="/app/connections">Manage selected provider</NavLink>
+              <NavLink className="app-nav-link" to="/app/accounts">Manage accounts</NavLink>
+              <NavLink className="app-nav-link" to="/app/connections">Open connections</NavLink>
+              <button type="button" className="secondary-button" onClick={() => onAddAccount('mt5_bridge')}>Add another account</button>
             </div>
           </>
         ) : (
@@ -300,7 +301,11 @@ function AppLandingPage({
             {hasPendingOnly ? <p className="hint">Current mode: pending-only workspace context.</p> : null}
             {hasStaleOnly ? <p className="hint">Current mode: stale/inactive-only workspace context.</p> : null}
             {hasMixedNonUsable ? <p className="hint">Current mode: mixed non-usable workspace context (pending + stale records).</p> : null}
-            <NavLink className="app-nav-link" to="/app/accounts">Go to Accounts to set active context</NavLink>
+            <div className="row">
+              <NavLink className="app-nav-link" to="/app/accounts">Manage accounts</NavLink>
+              <NavLink className="app-nav-link" to="/app/connections">Open connections</NavLink>
+              <button type="button" className="secondary-button" onClick={() => onAddAccount('mt5_bridge')}>Add another account</button>
+            </div>
           </>
         )}
       </div>
