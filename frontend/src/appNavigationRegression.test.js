@@ -14,6 +14,6 @@ test('app shell exposes visible routes to Accounts and Connections regardless of
 
   assert.equal(landingSource.includes('Review Accounts surface'), true)
   assert.equal(landingSource.includes('Review Connections surface'), true)
-  assert.equal(landingSource.includes('unlock your trading workspace'), true)
+  assert.equal(landingSource.includes('unlock it with Telegram'), true)
   assert.equal(accountsSource.includes('manage account cards'), true)
 })

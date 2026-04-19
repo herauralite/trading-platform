@@ -835,16 +835,18 @@ function App() {
         <div className="app-brand-row">
           <div className="brand-avatar">{signedIn ? (sessionUser?.first_name?.[0] || sessionUser?.telegram_username?.[0] || 'T') : 'T'}</div>
           <div>
+            <p className="kicker shell-kicker">Premium workspace</p>
             <h1>TaliTrade</h1>
             <p className="hint">{signedIn ? 'Connected workspace' : 'Waiting for Telegram sign-in'}</p>
           </div>
         </div>
         <div className="app-header-actions">
-          <span className="header-clock">{new Date().toLocaleTimeString()}</span>
-          <span className="header-bell" aria-hidden>🔔</span>
-          <span className="header-profile">{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'Guest'}</span>
-          {signedIn ? <button onClick={() => loadConnectorData()} type="button">Refresh</button> : null}
-          {signedIn ? <button onClick={clearSession} type="button">Sign out</button> : null}
+          <div className="app-identity-chip">
+            <span className="header-profile">{signedIn ? `@${sessionUser?.telegram_username || sessionUser?.telegram_user_id}` : 'Guest'}</span>
+            <span className="header-clock">{new Date().toLocaleTimeString()}</span>
+          </div>
+          {signedIn ? <button onClick={() => loadConnectorData()} type="button" className="secondary-button">Refresh</button> : null}
+          {signedIn ? <button onClick={clearSession} type="button" className="secondary-button">Sign out</button> : null}
         </div>
       </header>
       <section className="panel app-shell-health-strip">
@@ -862,7 +864,7 @@ function App() {
 
       <section className="panel app-shell-top">
         <div className="app-shell-nav-block">
-          <p className="kicker">Workspace</p>
+          <p className="kicker">Workspace navigation</p>
           <nav className="app-nav" aria-label="Primary app navigation">
             <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app">Dashboard</NavLink>
             <NavLink className={({ isActive }) => `app-nav-link${isActive ? ' active' : ''}`} to="/app/accounts">Accounts</NavLink>
@@ -898,9 +900,9 @@ function App() {
       ) : null}
       {!signedIn ? (
         <section className="panel auth-shell-gate" aria-live="polite">
-          <h2>Secure Telegram sign-in</h2>
+          <h2>Secure Telegram sign-in for your workspace</h2>
           {isBootstrapping ? <p>Restoring authenticated session…</p> : null}
-          <p>Authenticate to unlock the account workspace, live sync operations, and connector controls.</p>
+          <p>Authenticate to unlock the account workspace, live sync operations, and connector controls. This in-shell gate keeps you in the product flow.</p>
           {telegramConfig?.oidcEnabled ? (
             <button onClick={startOidcFlow}>Continue with Telegram</button>
           ) : (

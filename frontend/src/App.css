@@ -1,12 +1,19 @@
+:root {
+  color-scheme: dark;
+}
+
 body {
-  background: radial-gradient(circle at 20% -10%, #223d64 0%, #0c1a2d 35%, #060c17 75%, #04070f 100%);
+  background:
+    radial-gradient(circle at 10% -20%, rgba(70, 150, 255, 0.2) 0%, rgba(7, 14, 27, 0) 45%),
+    radial-gradient(circle at 100% 0%, rgba(129, 90, 255, 0.16) 0%, rgba(7, 14, 27, 0) 42%),
+    linear-gradient(180deg, #08111f 0%, #060c18 46%, #03070f 100%);
   color: #e8f0ff;
 }
 
 #root {
   width: 100%;
   margin: 0 auto;
-  padding: 12px 12px 92px;
+  padding: 14px 14px 92px;
   font-family: Inter, system-ui, sans-serif;
   color: #e6eefc;
   box-sizing: border-box;
@@ -16,7 +23,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-width: 1120px;
+  max-width: 1160px;
   margin: 0 auto;
 }
 
@@ -26,17 +33,17 @@ body {
 .meta-card,
 .empty-state,
 .account-card {
-  border: 1px solid rgba(100, 138, 198, 0.3);
+  border: 1px solid rgba(100, 138, 198, 0.28);
   border-radius: 14px;
-  background: linear-gradient(160deg, rgba(16, 29, 48, 0.96), rgba(8, 16, 30, 0.96));
-  box-shadow: 0 8px 28px rgba(0, 8, 22, 0.45);
+  background: linear-gradient(175deg, rgba(14, 24, 42, 0.96), rgba(8, 15, 29, 0.98));
+  box-shadow: 0 18px 38px rgba(0, 6, 18, 0.5);
 }
 
 .app-header-shell {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
+  padding: 12px 14px;
 }
 
 .app-brand-row {
@@ -46,20 +53,25 @@ body {
 }
 
 .brand-avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
   display: grid;
   place-items: center;
   font-weight: 700;
-  background: linear-gradient(160deg, #36b4ff, #1375ce);
-  color: #04172b;
+  background: linear-gradient(160deg, #5dd2ff, #356cff);
+  color: #041226;
 }
 
 .app-header-shell h1 {
-  font-size: 1.5rem;
+  font-size: 1.35rem;
   line-height: 1.1;
   margin: 0;
+  letter-spacing: 0.01em;
+}
+
+.shell-kicker {
+  margin: 0 0 4px;
 }
 
 .app-header-actions {
@@ -70,11 +82,21 @@ body {
   justify-content: flex-end;
 }
 
+.app-identity-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(96, 136, 204, 0.45);
+  background: rgba(8, 15, 29, 0.9);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+
 .header-clock,
 .header-profile,
 .header-bell {
   font-size: 12px;
-  color: #96b3da;
+  color: #aac1e6;
 }
 
 .panel,
@@ -101,14 +123,15 @@ h3 {
 
 .kicker {
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  font-size: 11px;
-  color: #4eb5ff;
+  letter-spacing: 0.11em;
+  font-size: 10px;
+  color: #58c5ff;
   margin: 0 0 6px;
 }
 
 .auth-shell-gate {
-  border-color: rgba(76, 195, 255, 0.42);
+  border-color: rgba(96, 208, 255, 0.55);
+  background: linear-gradient(165deg, rgba(11, 26, 45, 0.97), rgba(8, 20, 36, 0.97));
 }
 
 .app-shell-top {
@@ -130,7 +153,7 @@ h3 {
 .app-shell-nav-block {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
 
 .app-nav {
@@ -143,23 +166,26 @@ h3 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(93, 126, 181, 0.52);
-  border-radius: 999px;
-  padding: 7px 12px;
-  color: #d6e3fa;
-  background: rgba(17, 27, 45, 0.85);
+  border: 1px solid rgba(101, 136, 197, 0.58);
+  border-radius: 10px;
+  padding: 8px 13px;
+  color: #dbe7fb;
+  background: linear-gradient(165deg, rgba(18, 29, 48, 0.95), rgba(10, 18, 32, 0.95));
+  font-weight: 500;
 }
 
 .app-nav-link.active {
-  border-color: #4cc3ff;
-  background: linear-gradient(140deg, #3477ee, #0bb5ff);
-  color: #001224;
+  border-color: rgba(92, 197, 255, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(127, 214, 255, 0.45);
+  background: linear-gradient(160deg, rgba(52, 110, 208, 0.96), rgba(25, 175, 244, 0.96));
+  color: #04152b;
 }
 
 .add-account-nav-link {
-  border-color: rgba(169, 136, 252, 0.8);
-  color: #e3d3ff;
+  border-color: rgba(181, 150, 255, 0.85);
+  color: #ece1ff;
   font-weight: 600;
+  background: linear-gradient(145deg, rgba(119, 71, 238, 0.95), rgba(94, 48, 206, 0.95));
 }
 
 .app-shell-actions {
@@ -205,6 +231,19 @@ h3 {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.premium-summary-grid .summary-card {
+  border: 1px solid rgba(107, 146, 212, 0.34);
+  background: linear-gradient(165deg, rgba(18, 35, 59, 0.9), rgba(11, 21, 38, 0.9));
+}
+
+.premium-focus-card,
+.premium-activity-card,
+.premium-auth-helper,
+.premium-success-banner,
+.premium-workspace-panel {
+  border-color: rgba(107, 146, 212, 0.35);
 }
 
 .badge,
@@ -255,7 +294,7 @@ h3 {
   font-weight: 600;
   border: 1px solid rgba(153, 122, 255, 0.75);
   color: #f2ecff;
-  background: linear-gradient(140deg, #8252ff, #6538d4);
+  background: linear-gradient(140deg, #8658ff, #6434d0);
 }
 
 .secondary-button {
@@ -392,7 +431,7 @@ textarea {
     bottom: 0;
     z-index: 110;
     padding: 10px;
-    background: rgba(13, 24, 41, 0.95);
+    background: rgba(10, 20, 36, 0.97);
     border-top: 1px solid rgba(102, 133, 190, 0.35);
   }
 
