@@ -16,7 +16,7 @@ from app.services.alpaca_provider import (
 )
 from app.services.connector_ingest import upsert_connector_config, upsert_connector_lifecycle, upsert_trading_account
 from app.services.secret_crypto import encrypt_secret
-from app.services.tradelocker_provider import TradeLockerAuthError, TradeLockerClient
+from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient
 from app.services.tradingview_events import normalize_tradingview_event
 
 TRADINGVIEW_CONNECTOR = "tradingview_webhook"
@@ -415,6 +415,16 @@ async def connect_tradelocker_api_account(
             password=normalized_password,
             server=server,
         )
+        accessible_accounts = await client.list_accounts(session["access_token"])
+        matched_account = next(
+            (
+                row for row in accessible_accounts
+                if str(row.get("id") or row.get("accountId") or row.get("account_id") or "").strip() == normalized_account_id
+            ),
+            None,
+        )
+        if matched_account is None:
+            raise TradeLockerAuthError("account_not_accessible")
         account_payload = await client.get_account(session["access_token"], normalized_account_id)
     except TradeLockerAuthError as exc:
         await upsert_connector_lifecycle(
@@ -431,6 +441,21 @@ async def connect_tradelocker_api_account(
             error=str(exc),
         )
         raise
+    except TradeLockerApiError as exc:
+        await upsert_connector_lifecycle(
+            user_id=user_id,
+            connector_type="tradelocker_api",
+            status="validation_failed",
+            is_connected=False,
+            last_activity_at=now,
+            metadata={
+                "provider_state": "validation_failed",
+                "validation_error": str(exc),
+                "environment": normalized_env,
+            },
+            error=str(exc),
+        )
+        raise ValueError("provider_unavailable") from exc
 
     external_account_id = str(
         account_payload.get("id")
