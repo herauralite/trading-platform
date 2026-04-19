@@ -30,6 +30,7 @@ from app.core.auth_session import create_session_token
 from app.main import app
 import app.services.provider_onboarding as onboarding_mod
 from app.services.alpaca_provider import AlpacaCredentialValidationError
+from app.services.tradelocker_provider import TradeLockerAuthError
 from app.services.secret_crypto import decrypt_secret
 
 
@@ -47,6 +48,7 @@ def test_catalog_includes_new_provider_foundation():
     assert "alpaca_api" in types_seen
     assert "oanda_api" in types_seen
     assert "binance_api" in types_seen
+    assert "tradelocker_api" in types_seen
 
 
 def test_tradingview_create_returns_safe_webhook_metadata(monkeypatch):
@@ -333,3 +335,71 @@ def test_alpaca_secret_storage_is_encrypted(monkeypatch):
     assert captured_params["encrypted_api_secret"] != "raw-api-secret"
     assert decrypt_secret(captured_params["encrypted_api_key"]) == "raw-api-key"
     assert decrypt_secret(captured_params["encrypted_api_secret"]) == "raw-api-secret"
+
+
+def test_tradelocker_connect_success(monkeypatch):
+    async def fake_connect(**kwargs):
+        assert kwargs["account_id"] == "acct-9001"
+        return {
+            "provider_state": "connected",
+            "environment": "demo",
+            "validation_error": None,
+            "account": {
+                "id": 201,
+                "display_label": "TL Primary",
+                "external_account_id": "acct-9001",
+                "last_validated_at": "2026-04-18T12:00:00Z",
+            },
+        }
+
+    monkeypatch.setattr("app.main.connect_tradelocker_api_account", fake_connect)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-tl")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/tradelocker_api/connect",
+                json={
+                    "label": "TL Primary",
+                    "base_url": "https://tl.example.com",
+                    "account_id": "acct-9001",
+                    "email": "tl@example.com",
+                    "password": "secret",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["provider"] == "tradelocker_api"
+    assert payload["status"] == "connected"
+    assert payload["account"]["external_account_id"] == "acct-9001"
+
+
+def test_tradelocker_connect_invalid_credentials(monkeypatch):
+    async def fake_connect(**kwargs):
+        raise TradeLockerAuthError("invalid_credentials")
+
+    monkeypatch.setattr("app.main.connect_tradelocker_api_account", fake_connect)
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        token = create_session_token("u-tl")
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.post(
+                "/providers/public-api/tradelocker_api/connect",
+                json={
+                    "label": "TL Primary",
+                    "base_url": "https://tl.example.com",
+                    "account_id": "acct-9001",
+                    "email": "tl@example.com",
+                    "password": "bad",
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+    response = asyncio.run(_run())
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid_credentials"
