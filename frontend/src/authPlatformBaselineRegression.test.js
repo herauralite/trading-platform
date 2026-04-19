@@ -41,7 +41,7 @@ test('react app resolves account-presence from workspace inventory once hydrated
   const appSource = await readFrontendFile('src/App.jsx')
 
   assert.equal(appSource.includes('const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)'), true)
-  assert.equal(appSource.includes('if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return workspaceApiAccounts'), true)
+  assert.equal(appSource.includes('if (USE_ACCOUNT_WORKSPACES_API && workspaceApiHydrated) return dedupeAccountWorkspaces(workspaceApiAccounts)'), true)
   assert.equal(appSource.includes('setWorkspaceApiHydrated(true)'), true)
   assert.equal(appSource.includes('setWorkspaceApiHydrated(false)'), true)
 })

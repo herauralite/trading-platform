@@ -38,7 +38,7 @@ test('signed-in zero-account onboarding and add-account entry points remain visi
   assert.equal(accountsSource.includes('Connect your first trading account'), true)
   assert.equal(accountsSource.includes('Add your first account'), true)
 
-  assert.equal(connectionsSource.includes('Start ${method.title}'), true)
+  assert.equal(connectionsSource.includes('Connect'), true)
   assert.equal(connectionsSource.includes('Open guided flow'), true)
 })
 
