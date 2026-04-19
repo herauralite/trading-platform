@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from app.core.database import engine
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
-from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient, token_is_expiring_soon
+from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient, parse_expiry, token_is_expiring_soon
 
 SNAPSHOT_DEDUPE_WINDOW_SECONDS = 30
 USER_SCOPED_CONNECTORS = {"manual", "csv_import"}
@@ -860,7 +860,7 @@ async def _perform_tradelocker_sync(run: dict[str, Any]) -> dict[str, Any]:
     if not access_token or token_is_expiring_soon(non_secret.get("access_token_expires_at")):
         access_token, refresh_token, access_expires_at = await _refresh_or_login()
     else:
-        access_expires_at = _parse_dt(non_secret.get("access_token_expires_at")) or datetime.now(timezone.utc)
+        access_expires_at = parse_expiry(non_secret.get("access_token_expires_at"))
 
     try:
         account_payload = await client.get_account(access_token, account_id)

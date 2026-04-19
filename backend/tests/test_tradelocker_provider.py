@@ -8,7 +8,7 @@ import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerClient
+from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient
 
 
 class FakeResponse:
@@ -74,3 +74,21 @@ def test_accounts_payload_shape_error(monkeypatch):
     with pytest.raises(TradeLockerApiError) as exc:
         asyncio.run(client.list_accounts("token"))
     assert str(exc.value) == "unexpected_accounts_payload"
+
+
+def test_login_maps_unauthorized_to_invalid_credentials(monkeypatch):
+    monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=20.0: FakeClient([FakeResponse(status_code=401, payload={"error": "bad creds"})]))
+    client = TradeLockerClient(base_url="https://tl.example.com")
+
+    with pytest.raises(TradeLockerAuthError) as exc:
+        asyncio.run(client.login_password(email="e", password="bad"))
+    assert str(exc.value) == "invalid_credentials"
+
+
+def test_refresh_preserves_unauthorized_error(monkeypatch):
+    monkeypatch.setattr(httpx, "AsyncClient", lambda timeout=20.0: FakeClient([FakeResponse(status_code=401, payload={"error": "expired"})]))
+    client = TradeLockerClient(base_url="https://tl.example.com")
+
+    with pytest.raises(TradeLockerAuthError) as exc:
+        asyncio.run(client.refresh_token("stale-refresh"))
+    assert str(exc.value) == "unauthorized"
