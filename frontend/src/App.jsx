@@ -21,7 +21,7 @@ import {
 import { buildConnectorConfigDraft } from './connectorConfig'
 import { buildApiUrl, formatTelegramConfigDiagnostics, resolveApiBase } from './apiBase'
 import { fetchAccountWorkspaces } from './accountWorkspaceService'
-import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from './accountConnectionState'
+import { deriveAccountConnectionState, isCurrentlyConnectedAccount } from './accountConnectionState'
 import { deriveAppOnboardingState } from './onboardingState'
 import AccountSwitcher from './components/AccountSwitcher'
 import AccountsOverviewPage from './pages/AccountsOverviewPage'
@@ -297,9 +297,7 @@ function App() {
   }), [signedIn, workspaceApiHydrated, workspaceApiAccounts, accountWorkspaces])
   const hasZeroConnectedAccounts = onboardingState.hasZeroUsableAccounts
   const switcherAccounts = useMemo(
-    () => unifiedAccountWorkspaces.filter((account) => (
-      isCurrentlyConnectedAccount(account) || isPendingOnlyAccount(account)
-    )),
+    () => unifiedAccountWorkspaces.filter((account) => isCurrentlyConnectedAccount(account)),
     [unifiedAccountWorkspaces],
   )
   const shellSyncingCount = useMemo(
@@ -351,7 +349,7 @@ function App() {
   useEffect(() => {
     if (selectedAccountKey) {
       const existingSelected = unifiedAccountWorkspaces.find((account) => account.account_key === selectedAccountKey)
-      if (existingSelected) return
+      if (existingSelected && isCurrentlyConnectedAccount(existingSelected)) return
     }
     const primaryUsable = usableAccountWorkspaces.find((account) => account.is_primary)
     const fallbackUsable = usableAccountWorkspaces[0] || null
@@ -378,7 +376,7 @@ function App() {
       )
     ))
     if (!matched) return
-    setSelectedAccountKey(matched.account_key)
+    if (isCurrentlyConnectedAccount(matched)) setSelectedAccountKey(matched.account_key)
     setRecentlyAddedAccountLabel(matched.display_label || matched.external_account_id || matched.account_key)
     setPendingAccountFocus(null)
   }, [pendingAccountFocus, unifiedAccountWorkspaces])

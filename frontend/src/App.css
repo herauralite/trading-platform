@@ -537,6 +537,49 @@ textarea {
   color: #ffb5b5;
 }
 
+.current-active-account-hero {
+  border-color: rgba(122, 185, 255, 0.55);
+  background:
+    radial-gradient(circle at 100% 0%, rgba(64, 156, 255, 0.16), transparent 45%),
+    linear-gradient(170deg, rgba(20, 37, 62, 0.97), rgba(10, 20, 36, 0.98));
+}
+
+.account-detail-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 7, 14, 0.62);
+  display: flex;
+  justify-content: flex-end;
+  z-index: 120;
+  padding: 16px;
+}
+
+.account-detail-drawer {
+  width: min(620px, 100%);
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  border-color: rgba(129, 191, 255, 0.52);
+}
+
+.account-detail-identity-card h4 {
+  margin: 0 0 8px;
+}
+
+@media (max-width: 900px) {
+  .account-detail-overlay {
+    align-items: flex-end;
+    justify-content: stretch;
+    padding: 0;
+  }
+
+  .account-detail-drawer {
+    width: 100%;
+    max-height: 84vh;
+    border-radius: 16px 16px 0 0;
+    border-bottom-width: 0;
+  }
+}
+
 @media (max-width: 760px) {
   #root {
     padding: 10px 10px 92px;

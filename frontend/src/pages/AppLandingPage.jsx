@@ -238,6 +238,7 @@ function AppLandingPage({
         </div>
         {selectedUsableAccount ? (
           <>
+            <p className="hint"><strong>Focused workspace:</strong> Dashboard widgets and connection guidance are currently scoped to this active usable account.</p>
             <p>
               <strong>{selectedUsableAccount.display_label || selectedUsableAccount.external_account_id}</strong>
               {' · '}
@@ -287,6 +288,10 @@ function AppLandingPage({
                   <strong>{String(value)}</strong>
                 </div>
               ))}
+            </div>
+            <div className="row">
+              <NavLink className="app-nav-link" to="/app/accounts">Change focused account</NavLink>
+              <NavLink className="app-nav-link" to="/app/connections">Manage selected provider</NavLink>
             </div>
           </>
         ) : (

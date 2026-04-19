@@ -8,7 +8,13 @@ function formatTimestamp(value) {
   return date.toLocaleString()
 }
 
-function AccountWorkspaceCard({ account, isSelected, onSelect, accountState = 'stale' }) {
+function accountStateHelper(accountState) {
+  if (accountState === 'usable') return 'This account is usable now and can become your active workspace focus.'
+  if (accountState === 'pending') return 'Setup is still in progress. Finish provider setup before this can be active.'
+  return 'Historical/disconnected record. Reconnect or resync provider before this can be active.'
+}
+
+function AccountWorkspaceCard({ account, isSelected, onSelect, onOpenDetails, accountState = 'stale' }) {
   const connectionMeta = connectionStatusMeta(account.connection_status)
   const displayName = account.display_label || account.external_account_id || account.account_key
   const stateLabel = accountState === 'usable'
@@ -100,15 +106,21 @@ function AccountWorkspaceCard({ account, isSelected, onSelect, accountState = 's
         ) : null}
       </div>
       <p className="hint">Validation: {account.last_validated_at ? 'verified' : 'pending'} · Last validated: {formatTimestamp(account.last_validated_at)}</p>
+      <p className="hint">{accountStateHelper(accountState)}</p>
 
-      <button
-        type="button"
-        className={canSetActive ? 'primary-cta' : 'secondary-button'}
-        disabled={!canSetActive}
-        onClick={() => onSelect(account.account_key)}
-      >
-        {buttonLabel}
-      </button>
+      <div className="row">
+        <button type="button" className="secondary-button" onClick={() => onOpenDetails?.(account.account_key)}>
+          View details
+        </button>
+        <button
+          type="button"
+          className={canSetActive ? 'primary-cta' : 'secondary-button'}
+          disabled={!canSetActive}
+          onClick={() => onSelect(account.account_key)}
+        >
+          {buttonLabel}
+        </button>
+      </div>
     </article>
   )
 }
