@@ -21,7 +21,7 @@ function AccountSwitcher({
         onChange={(event) => onSelectAccount(event.target.value)}
         disabled={!hasAccounts}
       >
-        {!hasAccounts ? <option value="">No usable or pending accounts yet</option> : null}
+        {!hasAccounts ? <option value="">No usable accounts yet</option> : null}
         {accounts.map((account) => (
           <option key={account.account_key} value={account.account_key}>
             {accountOptionLabel(account)}

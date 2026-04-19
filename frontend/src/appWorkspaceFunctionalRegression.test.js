@@ -12,6 +12,7 @@ test('dashboard, accounts, and connections keep functional workspace summaries a
   const accountsSource = await readFrontendFile('pages/AccountsOverviewPage.jsx')
   const connectionsSource = await readFrontendFile('pages/ConnectionsPage.jsx')
   const cardSource = await readFrontendFile('components/AccountWorkspaceCard.jsx')
+  const detailSource = await readFrontendFile('components/AccountDetailPanel.jsx')
 
   assert.equal(landingSource.includes('Focused account snapshot'), true)
   assert.equal(landingSource.includes('What to do next'), true)
@@ -19,6 +20,7 @@ test('dashboard, accounts, and connections keep functional workspace summaries a
   assert.equal(landingSource.includes('Retry workspace load'), true)
 
   assert.equal(accountsSource.includes('Current active account'), true)
+  assert.equal(accountsSource.includes('No active usable account is selected right now.'), true)
   assert.equal(accountsSource.includes('only usable connected accounts can become active workspace context'), true)
   assert.equal(accountsSource.includes('Current state:</strong> pending-only workspace'), true)
   assert.equal(accountsSource.includes('Current state:</strong> stale/inactive only.'), true)
@@ -26,7 +28,12 @@ test('dashboard, accounts, and connections keep functional workspace summaries a
 
   assert.equal(cardSource.includes('Pending setup (not active yet)'), true)
   assert.equal(cardSource.includes('Inactive record (not active)'), true)
+  assert.equal(cardSource.includes('View details'), true)
   assert.equal(cardSource.includes('disabled={!canSetActive}'), true)
+
+  assert.equal(detailSource.includes('State class:'), true)
+  assert.equal(detailSource.includes('Go to Connections'), true)
+  assert.equal(detailSource.includes('Refresh Workspace'), true)
 
   assert.equal(connectionsSource.includes('Connected connectors'), true)
   assert.equal(connectionsSource.includes('Selected account provider'), true)
@@ -59,4 +66,6 @@ test('post-add-account flow routes users to accounts workspace and triggers rout
   assert.equal(appSource.includes("navigate('/app/accounts')"), true)
   assert.equal(appSource.includes('routeRefreshGuardRef'), true)
   assert.equal(appSource.includes("void loadConnectorData({ silent: true })"), true)
+  assert.equal(appSource.includes('if (existingSelected && isCurrentlyConnectedAccount(existingSelected)) return'), true)
+  assert.equal(appSource.includes('if (isCurrentlyConnectedAccount(matched)) setSelectedAccountKey(matched.account_key)'), true)
 })
