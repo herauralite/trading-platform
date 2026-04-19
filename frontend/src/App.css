@@ -423,6 +423,18 @@ textarea {
   border-color: rgba(87, 175, 255, 0.75);
 }
 
+.account-card-usable {
+  border-color: rgba(66, 187, 129, 0.5);
+}
+
+.account-card-pending {
+  border-color: rgba(228, 173, 71, 0.5);
+}
+
+.account-card-stale {
+  border-color: rgba(136, 149, 171, 0.5);
+}
+
 .account-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -440,6 +452,10 @@ textarea {
 
 .connections-group-section h3 {
   margin: 2px 0 8px;
+}
+
+.connections-context-panel {
+  margin-bottom: 12px;
 }
 
 .connector-account-list {
