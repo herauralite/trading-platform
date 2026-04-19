@@ -507,6 +507,15 @@ textarea {
   margin: 2px 0 8px;
 }
 
+
+.connections-intent-focus {
+  margin-bottom: 12px;
+  border-color: rgba(126, 208, 255, 0.84);
+  box-shadow:
+    0 14px 26px rgba(2, 12, 28, 0.58),
+    inset 0 0 0 1px rgba(134, 222, 255, 0.24);
+}
+
 .connections-context-panel {
   margin-bottom: 12px;
 }
