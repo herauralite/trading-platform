@@ -34,7 +34,7 @@ test('dashboard, accounts, and connections keep functional workspace summaries a
 
   assert.equal(detailSource.includes('Connection class:'), true)
   assert.equal(detailSource.includes('Open connections'), true)
-  assert.equal(detailSource.includes('Refresh Workspace'), true)
+  assert.equal(detailSource.includes('Refresh workspace'), true)
 
   assert.equal(connectionsSource.includes('Connected connectors'), true)
   assert.equal(connectionsSource.includes('Selected account provider'), true)

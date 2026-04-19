@@ -4,6 +4,7 @@ import AccountWorkspaceCard from '../components/AccountWorkspaceCard'
 import AccountDetailPanel from '../components/AccountDetailPanel'
 import { deriveAccountConnectionState, isCurrentlyConnectedAccount, isPendingOnlyAccount } from '../accountConnectionState'
 import { classifyWorkspaceAccountState, resolvePreferredDetailAccountKey } from '../workspaceAccountSelection'
+import { buildConnectionsIntentPath } from '../accountConnectionIntent'
 
 function countBy(items, predicate) {
   return items.reduce((count, item) => (predicate(item) ? count + 1 : count), 0)
@@ -362,13 +363,10 @@ function AccountsOverviewPage({
             onSelectAccount(accountKey)
             onDetailAccountChange(accountKey)
           }}
-          connectionsPath={
-            detailAccount?.connector_type === 'csv_import'
-              ? '/app/connections?addFlow=csv'
-              : detailAccount?.connector_type === 'manual'
-                ? '/app/connections?addFlow=manual'
-                : '/app/connections'
-          }
+          dashboardPath="/app"
+          connectionsManagePath={detailAccount ? buildConnectionsIntentPath(detailAccount, 'manage') : '/app/connections'}
+          connectionsSetupPath={detailAccount ? buildConnectionsIntentPath(detailAccount, 'setup') : '/app/connections'}
+          connectionsReconnectPath={detailAccount ? buildConnectionsIntentPath(detailAccount, 'reconnect') : '/app/connections'}
           onRefreshWorkspace={onRefreshWorkspace}
         />
       </div>

@@ -1,3 +1,5 @@
+import { useMemo } from 'react'
+import { useLocation } from 'react-router-dom'
 import { buildConnectorConfigDraft, connectorConfigStateLabel } from '../connectorConfig'
 import { formatSyncRunDiagnostics } from '../syncRunDiagnostics'
 import { isGuidedAddAccountConnector } from '../addAccountFlow'
@@ -36,6 +38,16 @@ function ConnectionsPage({
   isWorkspaceLoading,
   onRefreshWorkspace,
 }) {
+  const location = useLocation()
+  const inboundIntent = useMemo(() => {
+    const params = new URLSearchParams(location.search)
+    return {
+      provider: String(params.get('provider') || '').trim().toLowerCase(),
+      account: String(params.get('account') || '').trim(),
+      intent: String(params.get('intent') || '').trim().toLowerCase(),
+    }
+  }, [location.search])
+
   const connectionMethods = [
     { key: 'mt5_bridge', title: 'MT5', description: 'Pair bridge worker + account metadata, then run sync.', group: 'Core connectors' },
     { key: 'fundingpips_extension', title: 'FundingPips Extension', description: 'Attach extension-backed account and hydrate workspace records.', group: 'Core connectors' },
@@ -61,8 +73,18 @@ function ConnectionsPage({
   const syncingCount = managedConnectors.filter((connector) => ['sync_running', 'sync_retrying', 'sync_queued'].includes(connector.current_sync_state)).length
   const attentionCount = managedConnectors.filter((connector) => connector.last_error || connector.status === 'sync_error' || connector.config_validation_error).length
   const selectedConnectorType = selectedAccount?.connector_type || ''
+  const prioritizedProviderKey = inboundIntent.provider || selectedConnectorType
   const selectedProviderLabel = selectedAccount?.source_label || selectedAccount?.connector_type || ''
   const selectedMethod = connectionMethods.find((method) => method.key === selectedConnectorType) || null
+  const inboundMethod = connectionMethods.find((method) => method.key === inboundIntent.provider) || null
+
+  const intentHeadline = inboundIntent.intent === 'setup'
+    ? 'Continue provider setup'
+    : inboundIntent.intent === 'reconnect'
+      ? 'Reconnect provider and account'
+      : inboundIntent.intent === 'manage'
+        ? 'Manage provider connection'
+        : ''
 
   function findConnector(methodKey) {
     return managedConnectors.find((connector) => connector.connector_type === methodKey) || null
@@ -125,6 +147,16 @@ function ConnectionsPage({
         <p className="hint">
           <strong>Accounts</strong> is your account-centric workspace. <strong>Connections</strong> handles provider configuration and sync operations for the current workspace context.
         </p>
+        {inboundIntent.provider ? (
+          <div className="card connections-intent-focus">
+            <div className="row">
+              <strong>{intentHeadline || 'Focused provider context'}</strong>
+              <span className="pill primary-pill">{inboundMethod?.title || inboundIntent.provider}</span>
+              {inboundIntent.account ? <span className="pill mono">{inboundIntent.account}</span> : null}
+            </div>
+            <p className="hint">This section is focused from Account details so you can continue the exact provider flow without reselecting context.</p>
+          </div>
+        ) : null}
         <div className="card selected-account-panel premium-focus-card connections-context-panel">
           <h3>Selected account context</h3>
           {selectedAccount ? (
@@ -147,6 +179,8 @@ function ConnectionsPage({
                   <p className="hint"><strong>Selected account provider:</strong> {selectedProviderLabel}</p>
                   <p className="hint"><strong>Manage this connection method next:</strong> {selectedMethod?.title || selectedConnectorType}</p>
                   <p className="hint">{selectedProviderNextAction(findConnector(selectedConnectorType), selectedConnectorType)}</p>
+                  {inboundIntent.provider && inboundIntent.provider !== selectedConnectorType ? <p className="hint"><strong>Route focus provider:</strong> {inboundMethod?.title || inboundIntent.provider}</p> : null}
+                  {inboundIntent.account && inboundIntent.account !== selectedAccount.account_key ? <p className="hint"><strong>Route focus account key:</strong> <span className="mono">{inboundIntent.account}</span></p> : null}
                 </>
               ) : null}
             </>
@@ -179,19 +213,19 @@ function ConnectionsPage({
             <h3>{groupName}</h3>
             <div className="meta-grid premium-summary-grid connections-method-grid">
           {[...methods].sort((a, b) => {
-            if (!selectedConnectorType) return 0
-            if (a.key === selectedConnectorType) return -1
-            if (b.key === selectedConnectorType) return 1
+            if (!prioritizedProviderKey) return 0
+            if (a.key === prioritizedProviderKey) return -1
+            if (b.key === prioritizedProviderKey) return 1
             return 0
           }).map((method) => {
             const connector = findConnector(method.key)
             const action = primaryAction(connector, method.key)
-            const isSelectedProvider = selectedConnectorType && selectedConnectorType === method.key
+            const isSelectedProvider = prioritizedProviderKey && prioritizedProviderKey === method.key
             return (
               <div className={`meta-card summary-card ${isSelectedProvider ? 'provider-priority-card' : 'provider-secondary-card'}`} key={method.key}>
                 <div className="row">
                   <strong>{method.title}</strong>
-                  {isSelectedProvider ? <span className="pill primary-pill">Selected account provider</span> : <span className="pill">Other provider</span>}
+                  {isSelectedProvider ? <span className="pill primary-pill">Focused provider</span> : <span className="pill">Other provider</span>}
                   <span className={`badge ${statusTone(connector?.status || 'disconnected')}`}>
                     {connectorActionLabel(connector)}
                   </span>
@@ -224,14 +258,14 @@ function ConnectionsPage({
         ) : null}
 
         {managedConnectors.map((connector) => (
-          <div key={connector.connector_type} className="card connector-card connections-connector-card">
+          <div key={connector.connector_type} className={`card connector-card connections-connector-card${prioritizedProviderKey && prioritizedProviderKey === connector.connector_type ? ' provider-priority-card' : ''}`}>
             {(() => {
               const lifecycle = deriveConnectorLifecycleState(connector)
               return (
                 <>
             <div className="row">
               <strong>{sourceLabel(connector.connector_type)}</strong>
-              {selectedConnectorType && selectedConnectorType === connector.connector_type ? <span className="pill primary-pill">Active account provider</span> : null}
+              {prioritizedProviderKey && prioritizedProviderKey === connector.connector_type ? <span className="pill primary-pill">Focused provider</span> : null}
               <span className={`badge ${statusTone(connector.status)}`}>{connector.status}</span>
               <span className={`badge ${lifecycle.toneClass}`}>{lifecycle.label}</span>
               {connector.integration_status ? <span className="pill">{connector.integration_status}</span> : null}
