@@ -42,7 +42,7 @@ function AccountsOverviewPage({
 
   if (!signedIn) {
     return (
-      <section className="panel page-panel">
+      <section className="panel page-panel premium-workspace-panel">
         <div className="panel-header row">
           <h2>Accounts</h2>
           <button type="button" disabled onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
@@ -56,7 +56,7 @@ function AccountsOverviewPage({
 
   if (isWorkspaceLoading) {
     return (
-      <section className="panel page-panel">
+      <section className="panel page-panel premium-workspace-panel">
         <div className="panel-header row">
           <h2>Accounts</h2>
           <button type="button" disabled>Add Account</button>
@@ -72,7 +72,7 @@ function AccountsOverviewPage({
 
   if (summary.hasZeroConnectedAccounts) {
     return (
-      <section className="panel page-panel">
+      <section className="panel page-panel premium-workspace-panel">
         <div className="panel-header row">
           <h2>Accounts</h2>
           <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
@@ -80,7 +80,7 @@ function AccountsOverviewPage({
         <div className="empty-state account-onboarding-empty-state">
           <h3>Connect your first trading account</h3>
           <p className="empty-state-copy">
-            Start onboarding here, then complete connector-specific setup and sync controls in Connections.
+            Accounts is the primary place to attach providers and shape your real workspace identity.
           </p>
           <ul className="onboarding-path-list">
             <li><strong>MT5 Bridge</strong> onboarding</li>
@@ -97,7 +97,7 @@ function AccountsOverviewPage({
   }
 
   return (
-    <section className="panel page-panel">
+    <section className="panel page-panel premium-workspace-panel">
       <div className="panel-header row">
         <div>
           <p className="kicker">Accounts</p>
@@ -108,12 +108,12 @@ function AccountsOverviewPage({
       <p className="hint">This workspace shows account health, broker source, sync freshness, and active account context.</p>
 
       {recentlyAddedAccountLabel ? (
-        <div className="card add-success-banner">
+        <div className="card add-success-banner premium-success-banner">
           <strong>Account added.</strong>
           <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>.</p>
         </div>
       ) : null}
-      <div className="meta-grid accounts-summary-grid">
+      <div className="meta-grid accounts-summary-grid premium-summary-grid">
         <div className="meta-card summary-card">
           <span className="hint">All accounts</span>
           <strong>{summary.total}</strong>
@@ -132,7 +132,7 @@ function AccountsOverviewPage({
         </div>
       </div>
 
-      <div className="card selected-account-panel">
+      <div className="card selected-account-panel premium-focus-card">
         <div className="row">
           <h3>Active account context</h3>
           {selectedAccount?.is_primary ? <span className="pill primary-pill">Primary</span> : null}

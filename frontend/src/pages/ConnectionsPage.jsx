@@ -48,7 +48,7 @@ function ConnectionsPage({
 
   return (
     <>
-      <section className="panel page-panel">
+      <section className="panel page-panel premium-workspace-panel">
         <div className="panel-header row">
           <div>
             <p className="kicker">Connections</p>
@@ -57,15 +57,15 @@ function ConnectionsPage({
           <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <p className="hint">
-          Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management.
+          Configure providers, run sync actions, and manage connector credentials here. Use <strong>Accounts</strong> for account-centric management and Add Account onboarding.
         </p>
         {!signedIn ? (
-          <div className="card">
+          <div className="card premium-auth-helper">
             <strong>Signed out: setup actions are disabled.</strong>
             <p className="hint">Sign in with Telegram in the shell gate to connect providers, run sync jobs, import CSV rows, or write manual journal entries.</p>
           </div>
         ) : null}
-        <div className="meta-grid">
+        <div className="meta-grid premium-summary-grid">
           {connectionMethods.map((method) => {
             const connector = findConnector(method.key)
             return (
