@@ -42,9 +42,12 @@ function AccountsOverviewPage({
 
   if (!signedIn) {
     return (
-      <section className="panel page-panel premium-workspace-panel">
+      <section className="panel page-panel premium-workspace-panel accounts-page">
         <div className="panel-header row">
-          <h2>Accounts</h2>
+          <div>
+            <p className="kicker">Accounts</p>
+            <h2>Accounts</h2>
+          </div>
           <button type="button" disabled onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
         </div>
         <p className="hint">
@@ -56,7 +59,7 @@ function AccountsOverviewPage({
 
   if (isWorkspaceLoading) {
     return (
-      <section className="panel page-panel premium-workspace-panel">
+      <section className="panel page-panel premium-workspace-panel accounts-page">
         <div className="panel-header row">
           <h2>Accounts</h2>
           <button type="button" disabled>Add Account</button>
@@ -72,7 +75,7 @@ function AccountsOverviewPage({
 
   if (summary.hasZeroConnectedAccounts) {
     return (
-      <section className="panel page-panel premium-workspace-panel">
+      <section className="panel page-panel premium-workspace-panel accounts-page">
         <div className="panel-header row">
           <h2>Accounts</h2>
           <button type="button" className="primary-cta" onClick={() => onAddAccount('mt5_bridge')}>Add Account</button>
@@ -97,7 +100,7 @@ function AccountsOverviewPage({
   }
 
   return (
-    <section className="panel page-panel premium-workspace-panel">
+    <section className="panel page-panel premium-workspace-panel accounts-page">
       <div className="panel-header row">
         <div>
           <p className="kicker">Accounts</p>
@@ -113,7 +116,7 @@ function AccountsOverviewPage({
           <p className="hint">Focused account: <strong>{recentlyAddedAccountLabel}</strong>.</p>
         </div>
       ) : null}
-      <div className="meta-grid accounts-summary-grid premium-summary-grid">
+      <div className="meta-grid accounts-summary-grid premium-summary-grid accounts-summary-premium-grid">
         <div className="meta-card summary-card">
           <span className="hint">All accounts</span>
           <strong>{summary.total}</strong>
@@ -132,7 +135,7 @@ function AccountsOverviewPage({
         </div>
       </div>
 
-      <div className="card selected-account-panel premium-focus-card">
+      <div className="card selected-account-panel premium-focus-card accounts-focus-panel">
         <div className="row">
           <h3>Active account context</h3>
           {selectedAccount?.is_primary ? <span className="pill primary-pill">Primary</span> : null}
