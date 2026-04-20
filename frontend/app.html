@@ -200,6 +200,26 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .trade-sym{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;width:70px;}
 .trade-time{font-size:10px;color:var(--t3);flex:1;}
 .trade-pl{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;text-align:right;}
+.history-shell{display:flex;flex-direction:column;gap:10px;}
+.history-top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;}
+.history-count{font-size:10px;color:var(--t3);font-family:'JetBrains Mono',monospace;}
+.history-filter-row,.history-date-row{display:flex;gap:6px;flex-wrap:wrap;}
+.history-chip{padding:5px 9px;font-size:10px;}
+.history-chip.active{background:var(--blue-dim);border-color:var(--border2);color:var(--blue);}
+.history-range{display:flex;gap:6px;align-items:center;flex-wrap:wrap;}
+.history-input{background:var(--s2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:6px 8px;font-size:10px;font-family:'JetBrains Mono',monospace;}
+.history-list{display:flex;flex-direction:column;gap:7px;}
+.history-row{display:grid;grid-template-columns:1fr auto;gap:8px;padding:10px 11px;background:var(--s2);border:1px solid var(--border);border-radius:10px;}
+.history-row.win{border-color:rgba(77,205,138,0.22);}
+.history-row.loss{border-color:rgba(224,92,92,0.22);}
+.history-main{display:flex;align-items:center;gap:8px;min-width:0;}
+.history-symbol{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
+.history-side{font-size:9px;font-weight:600;letter-spacing:0.7px;text-transform:uppercase;border-radius:999px;padding:2px 7px;border:1px solid var(--border);color:var(--t2);}
+.history-meta{font-size:10px;color:var(--t3);margin-top:4px;display:flex;gap:8px;flex-wrap:wrap;}
+.history-pnl{text-align:right;font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
+.history-prices{font-size:10px;color:var(--t2);margin-top:4px;}
+.history-state{padding:18px 10px;text-align:center;color:var(--t3);font-size:12px;line-height:1.7;}
+.history-loadmore{margin-top:2px;}
 .journal-entry{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:8px;transition:border-color .25s,transform .3s var(--out);}
 .journal-entry:hover{transform:translateY(-2px);border-color:var(--border2);}
 .je-head{display:flex;align-items:center;padding:13px 16px;gap:10px;}
@@ -1784,9 +1804,20 @@ document.getElementById('btnProfile').addEventListener('click',()=>{
 let acctBalances={};
 let tradesCache={};
 let liveAccountsCache={};  // stores last-seen data for all accounts, for the sheet
-let historyPage=1;
-let historyFilter='all';
 const HISTORY_PAGE_SIZE=20;
+const historyState={
+  filter:'all',
+  datePreset:'30d',
+  customStart:'',
+  customEnd:'',
+  offset:0,
+  rows:[],
+  hasMore:true,
+  loading:false,
+  error:null,
+  accountId:'',
+  reqId:0
+};
 
 function openAcctSheet(){
   renderAcctSheet();
@@ -2082,7 +2113,8 @@ function switchAccount(id){
   const je=document.getElementById('journalEntries');
   if(je)je.innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px">Loading...</div>';
   const rt=document.getElementById('recentTradesEl');
-  if(rt)rt.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div>';
+  if(rt)rt.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading history...</div>';
+  resetHistoryState(true);
 
   // Refetch everything for new account
   fetchStatus();
@@ -2218,6 +2250,7 @@ function renderNoAccountState(kind='default'){
   if(journalEntries)journalEntries.innerHTML=journalEmpty;
   const recentTrades=document.getElementById('recentTradesEl');
   if(recentTrades)recentTrades.innerHTML=recentEmpty;
+  resetHistoryState(true);
 
   ['wr','pf','netpl','totalTrades','avgWin','avgLoss','bestSym','bestSymPnl','greenStreak'].forEach(id=>{
     const el=document.getElementById(id);
@@ -3235,6 +3268,135 @@ function updateRulesSheet(modelType, accountSize, accountLabel){
   buildRulesSheet(modelType, accountSize, accountLabel);
 }
 
+
+function tradeDateISO(t){
+  const raw=t?.closedAt||t?.loggedAt||t?.openTime||t?.openAt||'';
+  if(!raw)return '';
+  const d=new Date(raw);
+  return Number.isNaN(d.getTime())?'':d.toISOString().slice(0,10);
+}
+function tradeKey(t){
+  return [t.id||t.ticket||t.orderId||'',t.closedAt||t.loggedAt||'',t.symbol||'',t.pnl||0,t.volume||t.size||''].join('|');
+}
+function passesHistoryFilter(t){
+  const p=Number(t.pnl)||0;
+  if(historyState.filter==='wins'&&p<=0)return false;
+  if(historyState.filter==='losses'&&p>=0)return false;
+  const iso=tradeDateISO(t);
+  if(!iso)return historyState.datePreset==='all';
+  if(historyState.datePreset==='all')return true;
+  if(historyState.datePreset==='custom'){
+    if(historyState.customStart&&iso<historyState.customStart)return false;
+    if(historyState.customEnd&&iso>historyState.customEnd)return false;
+    return true;
+  }
+  const days=historyState.datePreset==='7d'?7:30;
+  const cutoff=new Date();
+  cutoff.setUTCHours(0,0,0,0);
+  cutoff.setUTCDate(cutoff.getUTCDate()-(days-1));
+  return new Date(iso+'T00:00:00Z')>=cutoff;
+}
+function resetHistoryState(clearRows=false){
+  historyState.offset=0;
+  historyState.hasMore=true;
+  historyState.loading=false;
+  historyState.error=null;
+  historyState.reqId+=1;
+  if(clearRows)historyState.rows=[];
+}
+function setHistoryFilter(v){
+  historyState.filter=v;
+  resetHistoryState(true);
+  renderHistoryPanel();
+  loadHistoryPage(true);
+}
+function setHistoryDatePreset(v){
+  historyState.datePreset=v;
+  resetHistoryState(true);
+  renderHistoryPanel();
+  loadHistoryPage(true);
+}
+function applyCustomHistoryRange(){
+  const start=document.getElementById('historyStartDate')?.value||'';
+  const end=document.getElementById('historyEndDate')?.value||'';
+  historyState.customStart=start;
+  historyState.customEnd=end;
+  historyState.datePreset='custom';
+  resetHistoryState(true);
+  renderHistoryPanel();
+  loadHistoryPage(true);
+}
+async function loadHistoryPage(reset=false){
+  if(!activeAcct||historyState.loading)return;
+  if(reset){
+    historyState.offset=0;
+    historyState.rows=[];
+    historyState.hasMore=true;
+    historyState.error=null;
+  }
+  if(!historyState.hasMore)return;
+  historyState.loading=true;
+  historyState.accountId=activeAcct;
+  const rid=++historyState.reqId;
+  renderHistoryPanel();
+  try{
+    const res=await fetch(API+`/extension/journal?account_id=${activeAcct}&limit=${HISTORY_PAGE_SIZE}&offset=${historyState.offset}&order=desc&source=scraper`);
+    if(!res.ok)throw new Error('status '+res.status);
+    const data=await res.json();
+    if(rid!==historyState.reqId||historyState.accountId!==activeAcct)return;
+    const chunk=(data.trades||[]).filter(t=>Math.abs(t.pnl||0)<=(t.accountSize||10000));
+    const keys=new Set(historyState.rows.map(tradeKey));
+    for(const t of chunk){const k=tradeKey(t);if(!keys.has(k)){historyState.rows.push(t);keys.add(k);}}
+    historyState.offset+=chunk.length;
+    historyState.hasMore=chunk.length===HISTORY_PAGE_SIZE;
+    historyState.error=null;
+  }catch(e){
+    if(rid!==historyState.reqId)return;
+    historyState.error='Could not load trade history. Tap retry.';
+  }finally{
+    if(rid===historyState.reqId){historyState.loading=false;renderHistoryPanel();}
+  }
+}
+function formatHistoryTime(t){
+  const dt=t.closedAt||t.loggedAt||t.openTime||t.openAt;
+  if(!dt)return '—';
+  return new Date(dt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+}
+function renderHistoryPanel(){
+  const host=document.getElementById('recentTradesEl');
+  const meta=document.getElementById('recentTradesMeta');
+  if(!host)return;
+  const filtered=historyState.rows.filter(passesHistoryFilter);
+  if(meta){
+    const suffix=historyState.hasMore?'+':'';
+    meta.textContent=`${filtered.length}${suffix} shown · ${historyState.filter==='all'?'all':historyState.filter} · ${historyState.datePreset.toUpperCase()}`;
+  }
+  const rows=filtered.map(t=>{
+    const pnlVal=Number(t.pnl)||0;
+    const win=pnlVal>0;
+    const side=(t.direction||t.side||'—').toUpperCase();
+    const size=t.volume??t.size;
+    const entry=t.openPrice??t.entryPrice;
+    const exit=t.closePrice??t.exitPrice;
+    return `<div class="history-row ${win?'win':'loss'} rip">
+      <div>
+        <div class="history-main"><span class="history-symbol">${t.symbol||'—'}</span><span class="history-side">${side}</span></div>
+        <div class="history-meta"><span>Open ${t.openedAt?formatHistoryTime({closedAt:t.openedAt}):'—'}</span><span>Close ${formatHistoryTime(t)}</span>${size!=null?`<span>Size ${size}</span>`:''}</div>
+        <div class="history-prices">${entry!=null?`Entry ${entry}`:'Entry —'} · ${exit!=null?`Exit ${exit}`:'Exit —'}</div>
+      </div>
+      <div class="history-pnl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(pnlVal)}</div>
+    </div>`;
+  }).join('');
+  const empty=historyState.loading?'Loading trades...':(historyState.rows.length?'No trades match current filters.':'No trades synced for this account yet.');
+  host.innerHTML=`<div class="history-shell">
+    <div class="history-top"><div class="history-filter-row"><button class="btn btn-ghost history-chip ${historyState.filter==='all'?'active':''}" onclick="setHistoryFilter('all')">All</button><button class="btn btn-ghost history-chip ${historyState.filter==='wins'?'active':''}" onclick="setHistoryFilter('wins')">Wins</button><button class="btn btn-ghost history-chip ${historyState.filter==='losses'?'active':''}" onclick="setHistoryFilter('losses')">Losses</button></div><div class="history-count">Loaded ${historyState.rows.length}${historyState.hasMore?'+':''}</div></div>
+    <div class="history-date-row"><button class="btn btn-ghost history-chip ${historyState.datePreset==='7d'?'active':''}" onclick="setHistoryDatePreset('7d')">7D</button><button class="btn btn-ghost history-chip ${historyState.datePreset==='30d'?'active':''}" onclick="setHistoryDatePreset('30d')">30D</button><button class="btn btn-ghost history-chip ${historyState.datePreset==='all'?'active':''}" onclick="setHistoryDatePreset('all')">All</button><span class="history-range"><input id="historyStartDate" class="history-input" type="date" value="${historyState.customStart||''}"><input id="historyEndDate" class="history-input" type="date" value="${historyState.customEnd||''}"><button class="btn btn-ghost history-chip ${historyState.datePreset==='custom'?'active':''}" onclick="applyCustomHistoryRange()">Apply</button></span></div>
+    ${historyState.error?`<div class="history-state" style="color:var(--red)">${historyState.error}<br><button class="btn btn-ghost history-chip" onclick="loadHistoryPage(false)">Retry</button></div>`:''}
+    <div class="history-list">${rows||`<div class="history-state">${empty}</div>`}</div>
+    <div class="history-loadmore">${historyState.loading?'<div class="history-state">Loading…</div>':(historyState.hasMore&&filtered.length>=0?'<button class="btn btn-ghost btn-full" onclick="loadHistoryPage(false)">Load more</button>':'')}</div>
+  </div>`;
+}
+
 // JOURNAL
 async function fetchJournal(){
   if(!activeAcct||!hasLinkedAccounts()){
@@ -3294,7 +3456,8 @@ async function fetchAnalytics(){
         winRate:null,winRateSub:'Waiting for trade history',winRateTone:'txt-dim'
       };
       renderOverviewCards();
-      document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>No trades recorded yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>';
+      resetHistoryState(true);
+      renderHistoryPanel();
       return;
     }
     // reveal analytics skeletons
@@ -3393,31 +3556,20 @@ async function fetchAnalytics(){
       if(cgStop)cgStop.setAttribute('stop-color',isGreen?'#4dcd8a':'#e05c5c');
     }
 
-    // Recent trades list with filter + pagination
-    const el=document.getElementById('recentTradesEl');
-    const rtMeta=document.getElementById('recentTradesMeta');
-    const sorted=trades.slice().sort((a,b)=>new Date(b.closedAt||b.loggedAt||0)-new Date(a.closedAt||a.loggedAt||0));
-    const filtered=sorted.filter(t=>historyFilter==='all' || (historyFilter==='wins'?(t.pnl||0)>0:(t.pnl||0)<=0));
-    const totalPages=Math.max(1,Math.ceil(filtered.length/HISTORY_PAGE_SIZE));
-    if(historyPage>totalPages) historyPage=totalPages;
-    const start=(historyPage-1)*HISTORY_PAGE_SIZE;
-    const pageRows=filtered.slice(start,start+HISTORY_PAGE_SIZE);
-    if(rtMeta)rtMeta.textContent=`${filtered.length} trades · page ${historyPage}/${totalPages}`;
-    const rowsHtml=pageRows.map(t=>{
-      const win=(t.pnl||0)>0;
-      const dt=t.closedAt?new Date(t.closedAt).toLocaleString('en-US',{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'—';
-      return`<div class="trade-row rip">
-        <div class="trade-sym">${t.symbol||'?'}</div>
-        <div><div style="font-size:12px;font-weight:500">${t.direction||'?'} · ${t.volume||'?'} lot</div><div class="trade-time">${dt}</div></div>
-        <div class="trade-pl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(t.pnl)}</div>
-      </div>`;
-    }).join('') || '<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">No trades match this filter.</div>';
-    el.innerHTML=`<div style="display:flex;gap:6px;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="display:flex;gap:6px"><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="historyFilter='all';historyPage=1;fetchAnalytics()">All</button><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="historyFilter='wins';historyPage=1;fetchAnalytics()">Wins</button><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="historyFilter='losses';historyPage=1;fetchAnalytics()">Losses</button></div><div style="display:flex;gap:6px"><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="if(historyPage>1){historyPage--;fetchAnalytics();}">Prev</button><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="if(historyPage<${totalPages}){historyPage++;fetchAnalytics();}">Next</button></div></div>${rowsHtml}`;
+    // Recent history panel (native legacy shell surface)
+    renderHistoryPanel();
+    if(historyState.accountId!==activeAcct){
+      resetHistoryState(true);
+      historyState.accountId=activeAcct;
+    }
+    if(!historyState.rows.length) await loadHistoryPage(true);
+    else renderHistoryPanel();
   }catch(e){
     console.error('fetchAnalytics error:',e);
     overviewState.analytics={dailyPnl:null,overallPnl:null,winRate:null,dailySub:'Unavailable',overallSub:'Could not load analytics',winRateSub:'Could not load analytics'};
     renderOverviewCards();
-    document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Error loading analytics — tap to retry</div>';
+    historyState.error='Analytics loaded, but history is currently unavailable.';
+    renderHistoryPanel();
   }
 }
 
