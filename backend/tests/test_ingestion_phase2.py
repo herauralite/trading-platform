@@ -1404,3 +1404,141 @@ def test_mt5_config_validation_requires_bridge_fields(monkeypatch):
     assert captured["connector_type"] == "mt5_bridge"
     assert captured["kwargs"]["status"] == "incomplete"
     assert "bridge_url is required" in (captured["kwargs"]["validation_error"] or "")
+
+
+def test_fundingpips_hydration_backfills_legacy_accounts_and_lifecycle(monkeypatch):
+    from app.services import fundingpips_hydration as hydration_mod
+
+    captured_upserts = []
+    captured_lifecycle = []
+
+    class FakeResult:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def mappings(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    captured_sql = {"legacy_query": None}
+
+    class FakeConn:
+        async def execute(self, stmt, params=None):
+            sql = str(stmt)
+            if "FROM prop_accounts" in sql:
+                captured_sql["legacy_query"] = sql
+                return FakeResult([
+                    {
+                        "account_id": "1917136",
+                        "broker": "fundingpips",
+                        "account_type": "2_step_master",
+                        "account_size": 10000,
+                        "label": "Legacy FundingPips",
+                        "created_at": datetime(2026, 4, 1, tzinfo=timezone.utc),
+                    },
+                    {
+                        "account_id": "OTHER-1",
+                        "broker": "otherbroker",
+                        "account_type": "phase1",
+                        "account_size": 5000,
+                        "label": "Non FundingPips",
+                        "created_at": datetime(2026, 4, 2, tzinfo=timezone.utc),
+                    },
+                ])
+            if "FROM trading_accounts" in sql:
+                return FakeResult([])
+            raise AssertionError(f"Unexpected SQL: {sql}")
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    async def fake_upsert_trading_account(payload):
+        captured_upserts.append(payload)
+        return {"id": 77, "external_account_id": payload["external_account_id"]}
+
+    async def fake_get_lifecycle(user_id, connector_type):
+        assert user_id == "hydration-user"
+        assert connector_type == "fundingpips_extension"
+        return None
+
+    async def fake_upsert_lifecycle(**kwargs):
+        captured_lifecycle.append(kwargs)
+        return kwargs
+
+    monkeypatch.setattr(hydration_mod, "engine", FakeEngine())
+    monkeypatch.setattr(hydration_mod, "upsert_trading_account", fake_upsert_trading_account)
+    monkeypatch.setattr(hydration_mod, "get_connector_lifecycle", fake_get_lifecycle)
+    monkeypatch.setattr(hydration_mod, "upsert_connector_lifecycle", fake_upsert_lifecycle)
+
+    result = asyncio.run(
+        hydration_mod.hydrate_fundingpips_canonical_state("hydration-user", trigger="auth_me")
+    )
+
+    assert "LOWER(COALESCE(broker, 'fundingpips')) = 'fundingpips'" in (captured_sql["legacy_query"] or "")
+    assert result["legacy_account_count"] == 2
+    assert result["created_trading_accounts"] == 1
+    assert result["connector_lifecycle_updated"] is True
+    assert len(captured_upserts) == 1
+    assert captured_upserts[0]["connector_type"] == "fundingpips_extension"
+    assert captured_upserts[0]["external_account_id"] == "1917136"
+    assert captured_lifecycle[0]["status"] == "connected"
+
+
+def test_auth_me_hydrates_legacy_accounts_before_listing(monkeypatch):
+    calls = []
+
+    async def fake_hydrate(uid: str, *, trigger: str):
+        calls.append((uid, trigger))
+        return {"created_trading_accounts": 1}
+
+    async def fake_accounts(uid):
+        assert uid == "123"
+        return [{"account_id": "1917136", "source_model": "trading_accounts"}]
+
+    class FakeResult:
+        def mappings(self):
+            return self
+
+        def first(self):
+            return {"telegram_user_id": "123", "telegram_username": "alice"}
+
+    class FakeConn:
+        async def execute(self, _stmt, _params=None):
+            return FakeResult()
+
+    class FakeConnect:
+        async def __aenter__(self):
+            return FakeConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnect()
+
+    monkeypatch.setattr("app.core.database.engine", FakeEngine())
+    monkeypatch.setattr(main_mod, "hydrate_fundingpips_canonical_state", fake_hydrate)
+    monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+
+    token = create_session_token("123")
+
+    async def _run():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+            return await client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    response = asyncio.run(_run())
+    assert response.status_code == 200
+    assert calls == [("123", "auth_me")]
+    assert response.json()["accounts"][0]["source_model"] == "trading_accounts"
