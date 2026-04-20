@@ -1304,19 +1304,20 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
 <!-- DASHBOARD -->
 <div id="page-dash" class="page active">
   <div class="sec-head"><div class="sec-label">Overview</div><div class="sec-meta" id="clock">--:--:--</div></div>
-  <!-- ONBOARDING CARD — shown only for new users with no extension data yet -->
+  <!-- ONBOARDING CARD — shown only for users with no linked account data yet -->
   <div id="onboardCard" style="display:none;background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.2);border-radius:14px;padding:20px;margin-bottom:14px">
     <div style="font-size:13px;font-weight:700;color:var(--blue);margin-bottom:12px">👋 Get started in 2 steps</div>
     <div style="display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">1</div>
-        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Install the Chrome Extension</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Install TaliTrade extension, then open FundingPips in a new tab</div></div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--text)">Connect your first account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Use the FundingPips extension, link a broker/API account, or add any supported integration path.</div></div>
       </div>
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">2</div>
-        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Open your account on FundingPips</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Navigate to mtr-platform.fundingpips.com — data syncs automatically</div></div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--text)">Start tracking performance</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Unlock your dashboard, analytics, history, and challenge/payout progress the moment your account is connected.</div></div>
       </div>
     </div>
+    <button class="btn btn-blue rip" style="margin-top:14px" onclick="openAddAccountFlow()">Connect account</button>
   </div>
   <div class="sk-wrap" id="acctWrap" style="margin-bottom:10px">
     <!-- SKELETON -->
@@ -1810,15 +1811,15 @@ function renderAcctSheet(){
   }).join('');
   html+=`<div class="as-add rip" onclick="openAddAccountFlow()">
     <div class="as-add-ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg></div>
-    <div><div style="font-size:13px;font-weight:500">Add Account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect another FundingPips account</div></div>
+    <div><div style="font-size:13px;font-weight:500">Add Account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect another supported account</div></div>
   </div>`;
   document.getElementById('acctSheetBody').innerHTML=html;
 }
 
 async function openAddAccountFlow(){
-  const accountId=prompt('FundingPips Account ID');
+  const accountId=prompt('Account ID');
   if(!accountId)return;
-  const label=prompt('Label (optional)','FundingPips '+accountId) || '';
+  const label=prompt('Label (optional)','Account '+accountId) || '';
   const accountType=prompt('Account type (e.g. 2_step_master)','2_step') || '';
   const sizeRaw=prompt('Account size (e.g. 10000)','10000') || '';
   const accountSize=Number(sizeRaw)||null;
