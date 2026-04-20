@@ -48,6 +48,7 @@ async def hydrate_fundingpips_canonical_state(
                     FROM prop_accounts
                     WHERE telegram_user_id = :uid
                       AND is_active = TRUE
+                      AND LOWER(COALESCE(broker, 'fundingpips')) = 'fundingpips'
                     ORDER BY created_at ASC, account_id ASC
                     """
                 ),
@@ -80,6 +81,7 @@ async def hydrate_fundingpips_canonical_state(
         row
         for row in legacy_accounts
         if str(row.get("account_id") or "").strip()
+        and (str(row.get("broker") or "fundingpips").strip().lower() == "fundingpips")
         and str(row.get("account_id") or "").strip() not in canonical_external_ids
     ]
 

@@ -1422,10 +1422,13 @@ def test_fundingpips_hydration_backfills_legacy_accounts_and_lifecycle(monkeypat
         def all(self):
             return self._rows
 
+    captured_sql = {"legacy_query": None}
+
     class FakeConn:
         async def execute(self, stmt, params=None):
             sql = str(stmt)
             if "FROM prop_accounts" in sql:
+                captured_sql["legacy_query"] = sql
                 return FakeResult([
                     {
                         "account_id": "1917136",
@@ -1434,7 +1437,15 @@ def test_fundingpips_hydration_backfills_legacy_accounts_and_lifecycle(monkeypat
                         "account_size": 10000,
                         "label": "Legacy FundingPips",
                         "created_at": datetime(2026, 4, 1, tzinfo=timezone.utc),
-                    }
+                    },
+                    {
+                        "account_id": "OTHER-1",
+                        "broker": "otherbroker",
+                        "account_type": "phase1",
+                        "account_size": 5000,
+                        "label": "Non FundingPips",
+                        "created_at": datetime(2026, 4, 2, tzinfo=timezone.utc),
+                    },
                 ])
             if "FROM trading_accounts" in sql:
                 return FakeResult([])
@@ -1473,9 +1484,11 @@ def test_fundingpips_hydration_backfills_legacy_accounts_and_lifecycle(monkeypat
         hydration_mod.hydrate_fundingpips_canonical_state("hydration-user", trigger="auth_me")
     )
 
-    assert result["legacy_account_count"] == 1
+    assert "LOWER(COALESCE(broker, 'fundingpips')) = 'fundingpips'" in (captured_sql["legacy_query"] or "")
+    assert result["legacy_account_count"] == 2
     assert result["created_trading_accounts"] == 1
     assert result["connector_lifecycle_updated"] is True
+    assert len(captured_upserts) == 1
     assert captured_upserts[0]["connector_type"] == "fundingpips_extension"
     assert captured_upserts[0]["external_account_id"] == "1917136"
     assert captured_lifecycle[0]["status"] == "connected"
