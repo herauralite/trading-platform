@@ -251,6 +251,37 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .as-add:hover{border-color:var(--border2);color:var(--blue);}
 .as-add-ico{width:38px;height:38px;border-radius:50%;border:1.5px dashed currentColor;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 
+/* ── ADD ACCOUNT FLOW ── */
+#add-acct-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:360;pointer-events:none;transition:background .28s;}
+#add-acct-overlay.open{background:rgba(0,0,0,0.62);pointer-events:all;}
+#add-acct-sheet{position:fixed;left:0;right:0;bottom:0;z-index:361;background:var(--s1);border-top:1px solid var(--border);border-radius:20px 20px 0 0;max-width:680px;margin:0 auto;transform:translateY(102%);transition:transform .38s var(--out);padding-bottom:max(20px,env(safe-area-inset-bottom));display:flex;flex-direction:column;max-height:88vh;}
+#add-acct-sheet.open{transform:translateY(0);}
+.aaf-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 10px;gap:10px;}
+.aaf-title-wrap{display:flex;flex-direction:column;gap:2px;}
+.aaf-title{font-size:15px;font-weight:700;color:var(--text);}
+.aaf-step{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:1px;}
+.aaf-close{width:30px;height:30px;border-radius:50%;background:var(--s3);display:flex;align-items:center;justify-content:center;color:var(--t2);transition:background .18s,transform .2s var(--spring);}
+.aaf-close:hover{background:var(--s2);color:var(--text);transform:scale(1.07);}
+.aaf-body{padding:2px 14px 10px;overflow-y:auto;}
+.aaf-flow-note{font-size:11px;color:var(--t3);line-height:1.5;margin:2px 2px 10px;}
+.aaf-option{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:12px 13px;margin-bottom:8px;transition:border-color .2s,transform .2s var(--spring);}
+.aaf-option:hover{border-color:var(--border2);transform:translateY(-1px);}
+.aaf-option-top{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.aaf-option-title{font-size:13px;font-weight:600;color:var(--text);}
+.aaf-option-desc{font-size:11px;color:var(--t3);margin-top:4px;line-height:1.45;}
+.aaf-coming{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--orange);background:var(--orange-dim);border:1px solid rgba(232,146,74,0.28);padding:3px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.7px;}
+.aaf-functional{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.26);padding:3px 7px;border-radius:100px;text-transform:uppercase;letter-spacing:.7px;}
+.aaf-form{display:grid;grid-template-columns:1fr;gap:8px;margin-top:6px;}
+.aaf-input{width:100%;background:var(--s2);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:10px 11px;font-size:12px;font-family:'Inter',sans-serif;outline:none;transition:border-color .2s,box-shadow .2s;}
+.aaf-input:focus{border-color:var(--border2);box-shadow:0 0 0 2px rgba(42,171,238,0.12);}
+.aaf-input::placeholder{color:var(--t3);}
+.aaf-field-label{font-size:10px;color:var(--t3);letter-spacing:.7px;text-transform:uppercase;margin:0 2px;}
+.aaf-status{font-size:11px;border-radius:9px;padding:9px 10px;border:1px solid;margin-top:8px;line-height:1.45;}
+.aaf-status.error{color:var(--red);background:var(--red-dim);border-color:rgba(224,92,92,0.25);}
+.aaf-status.success{color:var(--green);background:var(--green-dim);border-color:rgba(77,205,138,0.23);}
+.aaf-footer{display:flex;gap:8px;padding:8px 14px 0;}
+.aaf-footer .btn{flex:1;}
+
 /* ── NOTIFICATION DRAWER ── */
 #notif-overlay{position:fixed;inset:0;background:rgba(0,0,0,0);z-index:300;pointer-events:none;transition:background .3s;top:56px;}
 #notif-overlay.open{background:rgba(0,0,0,0.55);pointer-events:all;top:0;}
@@ -1254,6 +1285,22 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
   <div class="as-body" id="acctSheetBody"></div>
 </div>
 
+<div id="add-acct-overlay"></div>
+<div id="add-acct-sheet">
+  <div class="as-handle"></div>
+  <div class="aaf-header">
+    <div class="aaf-title-wrap">
+      <div class="aaf-title">Add Account</div>
+      <div class="aaf-step" id="addAcctStepLabel">Step 1 · Choose connection</div>
+    </div>
+    <div class="aaf-close rip" id="addAcctClose">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </div>
+  </div>
+  <div class="aaf-body" id="addAcctFlowBody"></div>
+  <div class="aaf-footer" id="addAcctFooter"></div>
+</div>
+
 <div id="notif-overlay"></div>
 <div id="notif-drawer">
   <div class="drawer-handle"></div>
@@ -1771,6 +1818,11 @@ document.getElementById('acct-overlay').addEventListener('click',closeAcctSheet)
 let asTouch=0;
 document.getElementById('acct-sheet').addEventListener('touchstart',e=>{asTouch=e.touches[0].clientY;},{passive:true});
 document.getElementById('acct-sheet').addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-asTouch>60)closeAcctSheet();},{passive:true});
+document.getElementById('addAcctClose').addEventListener('click',closeAddAccountFlow);
+document.getElementById('add-acct-overlay').addEventListener('click',closeAddAccountFlow);
+let addAcctTouch=0;
+document.getElementById('add-acct-sheet').addEventListener('touchstart',e=>{addAcctTouch=e.touches[0].clientY;},{passive:true});
+document.getElementById('add-acct-sheet').addEventListener('touchend',e=>{if(e.changedTouches[0].clientY-addAcctTouch>60)closeAddAccountFlow();},{passive:true});
 
 function renderAcctSheet(){
   const gradients=['linear-gradient(135deg,var(--blue),var(--blue-dark))','linear-gradient(135deg,var(--t3),#3d5a6e)'];
@@ -1816,24 +1868,178 @@ function renderAcctSheet(){
   document.getElementById('acctSheetBody').innerHTML=html;
 }
 
-async function openAddAccountFlow(){
-  const accountId=prompt('Account ID');
-  if(!accountId)return;
-  const label=prompt('Label (optional)','Account '+accountId) || '';
-  const accountType=prompt('Account type (e.g. 2_step_master)','2_step') || '';
-  const sizeRaw=prompt('Account size (e.g. 10000)','10000') || '';
-  const accountSize=Number(sizeRaw)||null;
+const ADD_ACCOUNT_PATHS={
+  fundingpips:{title:'FundingPips extension',status:'functional',desc:'Link any account currently synced by the TaliTrade browser extension.'},
+  brokerApi:{title:'Broker / API account',status:'functional',desc:'Connect an account manually through the secure link-account backend flow.'},
+  manualPath:{title:'Manual / supported integration path',status:'coming_soon',desc:'Guided onboarding for additional supported integrations is rolling out soon.'}
+};
+let addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
+
+function openAddAccountFlow(){
+  closeAcctSheet();
+  addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
+  renderAddAccountFlow();
+  document.getElementById('add-acct-overlay').classList.add('open');
+  document.getElementById('add-acct-sheet').classList.add('open');
+  document.body.style.overflow='hidden';
+}
+
+function closeAddAccountFlow(){
+  document.getElementById('add-acct-overlay').classList.remove('open');
+  document.getElementById('add-acct-sheet').classList.remove('open');
+  document.body.style.overflow='';
+}
+
+function setAddAccountPath(path){
+  addAcctFlowState.path=path;
+  addAcctFlowState.step=2;
+  addAcctFlowState.error='';
+  addAcctFlowState.success='';
+  addAcctFlowState.loading=false;
+  renderAddAccountFlow();
+}
+
+function backAddAccountStep(){
+  addAcctFlowState.step=1;
+  addAcctFlowState.path='';
+  addAcctFlowState.error='';
+  addAcctFlowState.success='';
+  addAcctFlowState.loading=false;
+  renderAddAccountFlow();
+}
+
+function renderAddAccountFlow(){
+  const body=document.getElementById('addAcctFlowBody');
+  const footer=document.getElementById('addAcctFooter');
+  const stepEl=document.getElementById('addAcctStepLabel');
+  if(!body||!footer||!stepEl)return;
+
+  if(addAcctFlowState.step===1){
+    stepEl.textContent='Step 1 · Choose connection';
+    body.innerHTML=`<div class="aaf-flow-note">Choose how you want to connect this account. Only grounded backend paths are fully enabled today.</div>
+      <button class="aaf-option rip" onclick="setAddAccountPath('fundingpips')">
+        <div class="aaf-option-top"><div class="aaf-option-title">${ADD_ACCOUNT_PATHS.fundingpips.title}</div><span class="aaf-functional">live now</span></div>
+        <div class="aaf-option-desc">${ADD_ACCOUNT_PATHS.fundingpips.desc}</div>
+      </button>
+      <button class="aaf-option rip" onclick="setAddAccountPath('brokerApi')">
+        <div class="aaf-option-top"><div class="aaf-option-title">${ADD_ACCOUNT_PATHS.brokerApi.title}</div><span class="aaf-functional">live now</span></div>
+        <div class="aaf-option-desc">${ADD_ACCOUNT_PATHS.brokerApi.desc}</div>
+      </button>
+      <button class="aaf-option rip" onclick="setAddAccountPath('manualPath')">
+        <div class="aaf-option-top"><div class="aaf-option-title">${ADD_ACCOUNT_PATHS.manualPath.title}</div><span class="aaf-coming">coming soon</span></div>
+        <div class="aaf-option-desc">${ADD_ACCOUNT_PATHS.manualPath.desc}</div>
+      </button>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="closeAddAccountFlow()">Cancel</button>`;
+    return;
+  }
+
+  stepEl.textContent='Step 2 · Complete details';
+  let content='';
+  if(addAcctFlowState.path==='fundingpips'){
+    content=`<div class="aaf-flow-note">Open FundingPips in your browser with the TaliTrade extension active, then run a sync scan below. We only link accounts already detected by <code>/extension/status</code>.</div>
+      <div class="aaf-option" style="margin-bottom:0"><div class="aaf-option-top"><div class="aaf-option-title">Extension-based linking</div><span class="aaf-functional">linked in-shell</span></div>
+      <div class="aaf-option-desc">This keeps onboarding native to the legacy shell and reuses your authenticated account-link endpoint.</div></div>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button>
+      <button class="btn btn-blue rip" onclick="submitFundingPipsAccountFlow()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Linking…':'Scan & link accounts'}</button>`;
+  } else if(addAcctFlowState.path==='brokerApi'){
+    content=`<div class="aaf-flow-note">Enter your account metadata to connect through <code>/auth/link-account</code>.</div>
+      <div class="aaf-form">
+        <label><div class="aaf-field-label">Account ID</div><input class="aaf-input" id="addAcctIdInput" placeholder="e.g. FP-102938" maxlength="64"></label>
+        <label><div class="aaf-field-label">Label</div><input class="aaf-input" id="addAcctLabelInput" placeholder="e.g. My Evaluation"></label>
+        <label><div class="aaf-field-label">Account Type</div><input class="aaf-input" id="addAcctTypeInput" placeholder="e.g. 2_step_master" value="2_step"></label>
+        <label><div class="aaf-field-label">Account Size</div><input class="aaf-input" id="addAcctSizeInput" placeholder="e.g. 10000" inputmode="numeric" value="10000"></label>
+      </div>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button>
+      <button class="btn btn-blue rip" onclick="submitBrokerApiAccountFlow()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Connecting…':'Connect account'}</button>`;
+  } else {
+    content=`<div class="aaf-option" style="margin-bottom:0"><div class="aaf-option-top"><div class="aaf-option-title">Manual / supported integration path</div><span class="aaf-coming">coming soon</span></div>
+      <div class="aaf-option-desc">This guided path is not fully wired in backend yet. Use Broker / API account for live account linking right now.</div></div>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button>
+      <button class="btn btn-blue rip" onclick="backAddAccountStep()">Use live options</button>`;
+  }
+
+  const statusHtml=addAcctFlowState.error?`<div class="aaf-status error">${addAcctFlowState.error}</div>`:(addAcctFlowState.success?`<div class="aaf-status success">${addAcctFlowState.success}</div>`:'');
+  body.innerHTML=content+statusHtml;
+}
+
+async function refreshAfterAccountLink(newActiveAccountId=''){
+  if(newActiveAccountId)activeAcct=newActiveAccountId;
+  fetchStatus();
+  fetchAnalytics();
+  fetchJournal();
+  fetchPayout();
+  fetchChallenges();
+  renderAcctSheet();
+}
+
+async function submitFundingPipsAccountFlow(){
+  addAcctFlowState.loading=true;addAcctFlowState.error='';addAcctFlowState.success='';renderAddAccountFlow();
   try{
-    const params=new URLSearchParams({account_id:accountId.trim(),label,account_type:accountType});
-    if(accountSize)params.set('account_size',String(accountSize));
+    const statusRes=await authFetch('/extension/status');
+    if(!statusRes.ok) throw new Error('extension_status_'+statusRes.status);
+    const statusData=await statusRes.json();
+    const liveAccounts=statusData.accounts||{};
+    const entries=Object.entries(liveAccounts);
+    if(!entries.length) throw new Error('No synced FundingPips accounts detected yet. Open FundingPips with the extension first, then retry.');
+
+    let lastAccountId='';
+    for(const [acctId,acct] of entries){
+      const params=new URLSearchParams({
+        account_id:acctId,
+        account_type:String(acct.accountType||''),
+        account_size:String(acct.accountSize||0),
+        label:String(acct.accountLabel||acctId),
+        broker:'fundingpips',
+      });
+      const res=await authFetch('/auth/link-account?'+params.toString(),{method:'POST'});
+      if(!res.ok) throw new Error('Could not link FundingPips account '+acctId+'.');
+      const data=await res.json();
+      hydrateAccountsMap(data.accounts||[],false);
+      lastAccountId=acctId;
+    }
+
+    addAcctFlowState.loading=false;
+    addAcctFlowState.success='FundingPips account sync complete.';
+    renderAddAccountFlow();
+    await refreshAfterAccountLink(lastAccountId);
+    setTimeout(closeAddAccountFlow,350);
+  }catch(err){
+    addAcctFlowState.loading=false;
+    addAcctFlowState.error=String(err?.message||'Could not link FundingPips accounts right now.');
+    renderAddAccountFlow();
+  }
+}
+
+async function submitBrokerApiAccountFlow(){
+  const accountId=(document.getElementById('addAcctIdInput')?.value||'').trim();
+  const label=(document.getElementById('addAcctLabelInput')?.value||'').trim();
+  const accountType=(document.getElementById('addAcctTypeInput')?.value||'').trim();
+  const accountSizeRaw=(document.getElementById('addAcctSizeInput')?.value||'').trim();
+  const accountSize=Number(accountSizeRaw);
+  if(!accountId){
+    addAcctFlowState.error='Account ID is required.';addAcctFlowState.success='';renderAddAccountFlow();return;
+  }
+  if(accountSizeRaw && !Number.isFinite(accountSize)){
+    addAcctFlowState.error='Account size must be numeric.';addAcctFlowState.success='';renderAddAccountFlow();return;
+  }
+
+  addAcctFlowState.loading=true;addAcctFlowState.error='';addAcctFlowState.success='';renderAddAccountFlow();
+  try{
+    const params=new URLSearchParams({account_id:accountId,label,account_type:accountType});
+    if(accountSizeRaw)params.set('account_size',String(accountSize));
     const res=await authFetch('/auth/link-account?'+params.toString(),{method:'POST'});
-    if(!res.ok) throw new Error('link failed: '+res.status);
+    if(!res.ok) throw new Error('Could not connect this account right now.');
     const data=await res.json();
     hydrateAccountsMap(data.accounts||[],false);
-    activeAcct=accountId.trim();
-    fetchStatus();fetchAnalytics();fetchJournal();fetchPayout();fetchChallenges();
-  }catch(e){
-    alert('Could not connect account right now.');
+    addAcctFlowState.loading=false;
+    addAcctFlowState.success='Account linked successfully.';
+    renderAddAccountFlow();
+    await refreshAfterAccountLink(accountId);
+    setTimeout(closeAddAccountFlow,350);
+  }catch(err){
+    addAcctFlowState.loading=false;
+    addAcctFlowState.error=String(err?.message||'Could not connect account right now.');
+    renderAddAccountFlow();
   }
 }
 
