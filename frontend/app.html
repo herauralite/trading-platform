@@ -1530,6 +1530,40 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div style="flex:1"><div style="font-size:13px;font-weight:600" id="alertTitle">All limits safe</div><div style="font-size:11px;color:var(--t3)" id="alertSub">No alerts fired · monitoring active</div></div>
     <div class="alert-pill" id="alertPill" style="color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)">0 alerts</div>
   </div>
+  <div class="card card-p" style="margin-top:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Today Focus</div><div class="h-r" id="dashHealthMeta">Waiting for active account</div></div>
+    <div id="dashHealthSummary" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Sync</div><div id="dashHealthSync" style="font-size:12px;margin-top:4px">—</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Progress</div><div id="dashHealthProgress" style="font-size:12px;margin-top:4px">—</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Risk Usage</div><div id="dashHealthRisk" style="font-size:12px;margin-top:4px">—</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Open Positions</div><div id="dashHealthPositions" style="font-size:12px;margin-top:4px">—</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Today P&amp;L</div><div id="dashHealthDaily" style="font-size:12px;margin-top:4px">—</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Overall P&amp;L</div><div id="dashHealthOverall" style="font-size:12px;margin-top:4px">—</div></div>
+    </div>
+  </div>
+  <div class="card card-p" style="margin-top:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Alerts & News</div><div class="h-r" id="dashAlertsMeta">No active feed items</div></div>
+    <div id="dashAlertsList" style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">Waiting for live alerts and news feed.</div>
+    </div>
+  </div>
+  <div class="card card-p" style="margin-top:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Upcoming Events</div><div class="h-r" id="dashEventsMeta">Calendar</div></div>
+    <div id="dashEventsList" style="display:flex;flex-direction:column;gap:8px">
+      <div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">Waiting for economic calendar.</div>
+    </div>
+  </div>
+  <div class="card card-p" style="margin-top:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Quick Actions</div><div class="h-r" id="dashQuickMeta">In-shell controls</div></div>
+    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openAddAccountFlow()">Add account</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" id="dashSyncBtn" onclick="dashboardSyncNow()">Sync now</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openRules()">Trading rules</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('account');fetchPayout();">Payout</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('challenges');fetchChallenges();fetchLeaderboard();">Challenge</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openAcctSheet()">Switch account</button>
+    </div>
+  </div>
   <div class="footer-card"><span>TaliTrade v3.2</span><span id="footerTime">--:--:--</span><span id="footerAcct">10K 2-Step</span></div>
 </div>
 
@@ -2190,6 +2224,7 @@ function refreshAccountSettingsSurface(reason='state'){
     const p=overviewState.payout||{};
     qaProgress.textContent=p.progressSub||'Waiting for challenge/payout status';
   }
+  refreshDashboardQuickActions();
 
   if(reason==='manual') showAccountActionStatus('Account settings refreshed.','info');
 }
@@ -2474,7 +2509,13 @@ function switchAccount(id){
   overviewState.status=null;
   overviewState.analytics=null;
   overviewState.payout=null;
+  dashboardState.status=null;
+  dashboardState.analytics=null;
+  dashboardState.payout=null;
+  dashboardState.alerts=[];
+  dashboardState.news=[];
   renderOverviewCards();
+  renderDashboardCards();
   dashRevealed=false;
   const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
   if(sr){sr.classList.remove('sk-out');sr.classList.add('sk-in');}
@@ -2500,6 +2541,7 @@ function switchAccount(id){
   fetchStatus();
   fetchAnalytics();
   fetchPayout();
+  fetchNews();
   refreshChartForActiveAccount('switch');
   const curPage=document.querySelector('.page.active');
   if(curPage&&curPage.id==='page-analytics')fetchJournal();
@@ -2578,6 +2620,17 @@ function hasLinkedAccounts(){
 }
 
 const overviewState={status:null,analytics:null,payout:null};
+const dashboardState={
+  status:null,
+  analytics:null,
+  payout:null,
+  alerts:[],
+  news:[]
+};
+let statusFetchSeq=0;
+let analyticsFetchSeq=0;
+let payoutFetchSeq=0;
+let newsFetchSeq=0;
 
 function setOverviewStat(id,val,sub,tone='txt-dim'){
   const valEl=document.getElementById(id);
@@ -2610,6 +2663,144 @@ function renderOverviewCards(){
   setOverviewStat('ovPositions',s.positionsVal||'—',s.positionsSub||'Live account exposure',s.positionsTone||'txt-dim');
 }
 
+function prettyRelativeFromIso(iso){
+  if(!iso) return '—';
+  const t=new Date(iso).getTime();
+  if(!Number.isFinite(t)) return '—';
+  const mins=Math.max(0,Math.round((Date.now()-t)/60000));
+  if(mins<1) return 'just now';
+  if(mins<60) return mins+'m ago';
+  const hrs=Math.round(mins/60);
+  if(hrs<24) return hrs+'h ago';
+  const days=Math.round(hrs/24);
+  return days+'d ago';
+}
+function formatStartsIn(minutes){
+  if(minutes==null||!Number.isFinite(Number(minutes))) return '—';
+  const m=Math.max(0,Math.round(Number(minutes)));
+  if(m<1) return 'starting now';
+  if(m<60) return 'starts in '+m+'m';
+  const hrs=Math.floor(m/60);
+  const rem=m%60;
+  return 'starts in '+hrs+'h'+(rem?' '+rem+'m':'');
+}
+function escapeHtml(v){
+  return String(v??'').replace(/[&<>"']/g,s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]));
+}
+function renderDashboardFocusCard(){
+  const hasActive=!!(activeAcct&&hasLinkedAccounts());
+  const meta=document.getElementById('dashHealthMeta');
+  const set=(id,val,tone='var(--text)')=>{
+    const el=document.getElementById(id);
+    if(!el) return;
+    el.textContent=val;
+    el.style.color=tone;
+  };
+  if(!hasActive){
+    if(meta)meta.textContent='No active account';
+    set('dashHealthSync','Connect account','var(--t3)');
+    set('dashHealthProgress','Waiting for eligibility','var(--t3)');
+    set('dashHealthRisk','No telemetry','var(--t3)');
+    set('dashHealthPositions','—','var(--t3)');
+    set('dashHealthDaily','—','var(--t3)');
+    set('dashHealthOverall','—','var(--t3)');
+    return;
+  }
+  const s=dashboardState.status||{};
+  const a=dashboardState.analytics||{};
+  const p=dashboardState.payout||{};
+  if(meta)meta.textContent='Account '+activeAcct;
+  const sync=s.lastSyncLabel||s.syncSub||'Waiting for sync';
+  const syncTone=s.syncTone==='txt-green'?'var(--green)':s.syncTone==='txt-red'?'var(--red)':s.syncTone==='txt-orange'?'var(--orange)':'var(--text)';
+  set('dashHealthSync',sync,syncTone);
+  const progressTxt=p.progressSub||p.progressVal||'Waiting for challenge/payout data';
+  const progressTone=p.progressTone==='txt-green'?'var(--green)':p.progressTone==='txt-red'?'var(--red)':p.progressTone==='txt-orange'?'var(--orange)':p.progressTone==='txt-blue'?'var(--blue)':'var(--text)';
+  set('dashHealthProgress',progressTxt,progressTone);
+  set('dashHealthRisk',s.riskSummary||'No risk telemetry','var(--text)');
+  set('dashHealthPositions',s.positionsSummary||'0 open','var(--text)');
+  const dailyVal=a.dailyPnl!=null?pnl(a.dailyPnl):'Unavailable';
+  set('dashHealthDaily',dailyVal,a.dailyPnl>0?'var(--green)':a.dailyPnl<0?'var(--red)':'var(--text)');
+  const overallVal=a.overallPnl!=null?pnl(a.overallPnl):'Unavailable';
+  set('dashHealthOverall',overallVal,a.overallPnl>0?'var(--green)':a.overallPnl<0?'var(--red)':'var(--text)');
+}
+function renderDashboardAlertsPanel(){
+  const host=document.getElementById('dashAlertsList');
+  const meta=document.getElementById('dashAlertsMeta');
+  if(!host||!meta) return;
+  const alertItems=(dashboardState.alerts||[]).map(a=>({...a,__kind:'alert'}));
+  const newsItems=(dashboardState.news||[]).slice(0,3).map(n=>({...n,__kind:'news'}));
+  const items=[...alertItems,...newsItems].sort((a,b)=>(a.minutes_until??0)-(b.minutes_until??0)).slice(0,5);
+  if(!items.length){
+    meta.textContent='No active feed items';
+    host.innerHTML='<div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">No risk alerts or calendar headlines are active right now.</div>';
+    return;
+  }
+  meta.textContent=items.length+' item'+(items.length===1?'':'s');
+  host.innerHTML=items.map(item=>{
+    if(item.__kind==='alert'){
+      const lvl=String(item.level||'info').toLowerCase();
+      const tag=lvl==='critical'?'Critical':lvl==='warn'?'Warning':'Info';
+      const tone=lvl==='critical'?'var(--red)':lvl==='warn'?'var(--orange)':'var(--blue)';
+      const stamp=item.updated_at?prettyRelativeFromIso(item.updated_at):'active';
+      const unread=item.read===false;
+      const unreadMark=unread?'<span style="font-size:9px;color:var(--blue);margin-left:6px">UNREAD</span>':'';
+      const symbol=item.symbol||item.currency||'';
+      const symbolHtml=symbol?`<div style="font-size:10px;color:var(--t3);margin-top:4px">${escapeHtml(symbol)}</div>`:'';
+      return `<div style="padding:10px;border:1px solid var(--border);border-left:3px solid ${tone};border-radius:10px;background:${unread?'rgba(42,171,238,0.08)':'var(--s2)'}"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(item.message||item.title||'Risk alert')}${unreadMark}${symbolHtml}</div><div class="tag" style="white-space:nowrap;color:${tone};border-color:${tone};font-size:9px">${tag}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(stamp)}</div></div>`;
+    }
+    const m=item.minutes_until;
+    const when=m==null?'Scheduled':formatStartsIn(m);
+    const impact=item.impact||item.severity||'News';
+    const symbol=item.symbol||item.currency||'';
+    const symbolHtml=symbol?` · ${escapeHtml(symbol)}`:'';
+    return `<div style="padding:10px;border:1px solid var(--border);border-left:3px solid var(--orange);border-radius:10px;background:var(--s2)"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(item.title||'Event')}${symbolHtml}</div><div class="tag" style="font-size:9px">${escapeHtml(String(impact))}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(item.time_et||'Time unavailable')} · ${escapeHtml(when)}</div></div>`;
+  }).join('');
+}
+function renderDashboardEventsPanel(){
+  const host=document.getElementById('dashEventsList');
+  const meta=document.getElementById('dashEventsMeta');
+  if(!host||!meta) return;
+  const events=(dashboardState.news||[]).slice(0,4);
+  if(!events.length){
+    meta.textContent='No scheduled events';
+    host.innerHTML='<div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">No upcoming economic events are currently returned by the live calendar feed.</div>';
+    return;
+  }
+  meta.textContent=events.length+' event'+(events.length===1?'':'s');
+  host.innerHTML=events.map(e=>{
+    const impact=e.impact||e.severity||(e.minutes_until<=15?'High':'Scheduled');
+    return `<div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--s2)"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(e.title||'Event')}</div><div class="tag" style="font-size:9px">${escapeHtml(String(impact))}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(e.time_et||'Time unavailable')}</div><div style="font-size:10px;color:var(--blue);margin-top:4px">${escapeHtml(formatStartsIn(e.minutes_until))}</div></div>`;
+  }).join('');
+}
+function refreshDashboardQuickActions(){
+  const btn=document.getElementById('dashSyncBtn');
+  const meta=document.getElementById('dashQuickMeta');
+  if(!btn||!meta) return;
+  if(!activeAcct){
+    btn.disabled=true;
+    btn.textContent='Sync now';
+    meta.textContent='Connect an account for actions';
+    return;
+  }
+  const capability=accountSupportsManualSync(activeAcct);
+  const syncUiState=getManualSyncState(activeAcct);
+  const syncing=syncUiState.status==='syncing';
+  btn.textContent=syncing?'Syncing…':'Sync now';
+  btn.disabled=syncing||!capability.supported;
+  meta.textContent=capability.supported?'In-shell controls':'Sync unavailable for this account';
+}
+function dashboardSyncNow(){
+  if(!activeAcct) return;
+  triggerManualSync(activeAcct);
+  refreshDashboardQuickActions();
+}
+function renderDashboardCards(){
+  renderDashboardFocusCard();
+  renderDashboardAlertsPanel();
+  renderDashboardEventsPanel();
+  refreshDashboardQuickActions();
+}
+
 const bootstrapTaliUser=getTaliUser();
 if(!bootstrapTaliUser){
   pushGateDiagnostic('gate_reason=no_local_authenticated_user');
@@ -2620,6 +2811,7 @@ if(bootstrapTaliUser){
 }
 applyAccountPreferences();
 refreshAccountSettingsSurface();
+renderDashboardCards();
 
 function showOnboardingCard(show=true){
   const el=document.getElementById('onboardCard');
@@ -2636,7 +2828,13 @@ function renderNoAccountState(kind='default'){
   overviewState.status=null;
   overviewState.analytics=null;
   overviewState.payout=null;
+  dashboardState.status=null;
+  dashboardState.analytics=null;
+  dashboardState.payout=null;
+  dashboardState.alerts=[];
+  dashboardState.news=[];
   renderOverviewCards();
+  renderDashboardCards();
 
   const analyticsMeta=document.getElementById('analyticsMeta');
   if(analyticsMeta)analyticsMeta.textContent='No account connected';
@@ -2759,9 +2957,12 @@ function setBar(idx,pct,used,limit,remaining,chips){
 
 // MAIN STATUS POLL
 async function fetchStatus(){
+  const requestSeq=++statusFetchSeq;
+  const requestedAcct=activeAcct;
   try{
     const res=await fetch(API+'/extension/status');
     const data=await res.json();
+    if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
     const acct=data.accounts&&data.accounts[activeAcct];
     // Track all accounts received (live ones) for sheet display
     if(data.accounts) Object.assign(liveAccountsCache, data.accounts);
@@ -2780,7 +2981,15 @@ async function fetchStatus(){
         positionsSub:'No live feed',
         positionsTone:'txt-dim'
       };
+      dashboardState.status={
+        syncSub:hadData?'Extension feed is offline':'Waiting for extension handshake',
+        syncTone:hadData?'txt-orange':'txt-dim',
+        lastSyncLabel:hadData?'Feed delayed':'Never synced',
+        positionsSummary:'No live feed',
+        riskSummary:'No risk telemetry'
+      };
       renderOverviewCards();
+      renderDashboardCards();
       accountContextSnapshot.accountType='';
       accountContextSnapshot.accountLabel='';
       refreshAccountSettingsSurface();
@@ -2828,7 +3037,17 @@ async function fetchStatus(){
       positionsSub:acct.hasPositions?'position(s) open':'No open positions',
       positionsTone:acct.hasPositions?'txt-blue':'txt-dim'
     };
+    const riskPcts=[ri?.pct,dl?.pct,ol?.pct].filter(v=>typeof v==='number');
+    const maxRisk=riskPcts.length?Math.max(...riskPcts):null;
+    dashboardState.status={
+      syncSub:overviewState.status.syncSub,
+      syncTone:overviewState.status.syncTone,
+      lastSyncLabel:acct.last_sync?('Synced '+prettyRelativeFromIso(acct.last_sync)):overviewState.status.syncSub,
+      positionsSummary:acct.hasPositions?String(acct.openPositionCount||0)+' open':'0 open',
+      riskSummary:maxRisk==null?'No risk telemetry':Math.round(maxRisk)+'% of rule limits used'
+    };
     renderOverviewCards();
+    renderDashboardCards();
 
     // ── Labels / badges ────────────────────────────────────────────────────────
     document.getElementById('footerAcct').textContent=fullLabel;
@@ -2862,11 +3081,19 @@ async function fetchStatus(){
         progressSub:maxUsage==null?'Waiting for rule telemetry':'Rule usage against limits',
         progressTone:maxUsage==null?'txt-dim':maxUsage>=90?'txt-red':maxUsage>=75?'txt-orange':'txt-blue'
       };
+      dashboardState.payout={...overviewState.payout};
       renderOverviewCards();
+      renderDashboardCards();
     }
     const aBar=document.getElementById('alertBar'),aIco=document.getElementById('alertIco');
     const aTitle=document.getElementById('alertTitle'),aSub=document.getElementById('alertSub'),aPill=document.getElementById('alertPill');
     pushAlertsToDrawer(alerts,acct);
+    dashboardState.alerts=(alerts||[]).map(a=>({
+      ...a,
+      message:a.message||a.title||'Risk alert',
+      updated_at:a.updated_at||a.timestamp||a.created_at||new Date().toISOString()
+    }));
+    renderDashboardCards();
     if(alerts&&alerts.length){
       const a=alerts[0],w=a.level==='warn';
       aBar.style.borderColor=w?'rgba(232,146,74,0.3)':'rgba(224,92,92,0.3)';
@@ -2891,6 +3118,7 @@ async function fetchStatus(){
     refreshChartForActiveAccount('status');
     refreshAccountSettingsSurface();
   }catch(e){
+    if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
     document.getElementById('tb-status').textContent='connection error';
     document.getElementById('tb-status').style.color='var(--red)';
     overviewState.status={
@@ -2900,6 +3128,13 @@ async function fetchStatus(){
       syncTone:'txt-red'
     };
     renderOverviewCards();
+    dashboardState.status={
+      ...(dashboardState.status||{}),
+      syncSub:'Could not refresh status',
+      syncTone:'txt-red',
+      lastSyncLabel:'Status unavailable'
+    };
+    renderDashboardCards();
     refreshAccountSettingsSurface();
   }
 }
@@ -2908,6 +3143,7 @@ fetchAnalytics();
 fetchPayout();
 fetchChallenges();
 fetchNews(); // populate drawer on load
+setInterval(fetchNews,60000);
 // Pre-load trades on boot so balance inferral works from the start
 // and analytics tab shows data instantly when first tapped
 if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
@@ -2971,6 +3207,8 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
 
 // ── PAYOUT PAGE ───────────────────────────────────────────────────────────────
 async function fetchPayout(){
+  const requestSeq=++payoutFetchSeq;
+  const requestedAcct=activeAcct;
   if(!activeAcct||!hasLinkedAccounts()){
     renderNoAccountState('payout');
     return;
@@ -2978,10 +3216,15 @@ async function fetchPayout(){
   try{
     const res=await fetch(API+'/extension/payout?account_id='+activeAcct);
     if(!res.ok)throw new Error('status '+res.status);
-    renderPayout(await res.json());
+    const payload=await res.json();
+    if(requestSeq!==payoutFetchSeq||requestedAcct!==activeAcct) return;
+    renderPayout(payload);
   }catch(e){
+    if(requestSeq!==payoutFetchSeq||requestedAcct!==activeAcct) return;
     overviewState.payout={progressVal:'Offline',progressSub:'Could not load payout/challenge status',progressTone:'txt-red'};
     renderOverviewCards();
+    dashboardState.payout={...overviewState.payout};
+    renderDashboardCards();
     // dismiss skeleton, show error in real card
     const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
     if(sp){sp.classList.remove('sk-in');sp.classList.add('sk-out');}
@@ -3167,6 +3410,8 @@ function renderPayout(ev){
     document.getElementById('ppPct').textContent=Math.round(progress)+'%';
     document.getElementById('ppDays').textContent=tradingDays+'/'+minDays+' days';
   }
+  dashboardState.payout={...(overviewState.payout||{})};
+  renderDashboardCards();
 }
 
 function buildChecks(checks){
@@ -3837,12 +4082,15 @@ async function fetchJournal(){
 
 // ANALYTICS
 async function fetchAnalytics(){
+  const requestSeq=++analyticsFetchSeq;
+  const requestedAcct=activeAcct;
   if(!activeAcct||!hasLinkedAccounts()){
     renderNoAccountState('analytics');
     return;
   }
   try{
     let trades=await fetchAllTrades(activeAcct);
+    if(requestSeq!==analyticsFetchSeq||requestedAcct!==activeAcct) return;
     // Guard: filter out any rows where |pnl| > accountSize.
     trades=trades.filter(t=>{
       const sz=t.accountSize||10000;
@@ -3860,6 +4108,8 @@ async function fetchAnalytics(){
         winRate:null,winRateSub:'Waiting for trade history',winRateTone:'txt-dim'
       };
       renderOverviewCards();
+      dashboardState.analytics={...overviewState.analytics};
+      renderDashboardCards();
       resetHistoryState(true);
       renderHistoryPanel();
       return;
@@ -3898,6 +4148,8 @@ async function fetchAnalytics(){
       winRateTone:wr>=50?'txt-green':'txt-red'
     };
     renderOverviewCards();
+    dashboardState.analytics={...overviewState.analytics};
+    renderDashboardCards();
 
     // Best/worst symbol
     const symPnl={};
@@ -3970,9 +4222,12 @@ async function fetchAnalytics(){
     else renderHistoryPanel();
     refreshChartForActiveAccount('analytics');
   }catch(e){
+    if(requestSeq!==analyticsFetchSeq||requestedAcct!==activeAcct) return;
     console.error('fetchAnalytics error:',e);
     overviewState.analytics={dailyPnl:null,overallPnl:null,winRate:null,dailySub:'Unavailable',overallSub:'Could not load analytics',winRateSub:'Could not load analytics'};
     renderOverviewCards();
+    dashboardState.analytics={...overviewState.analytics};
+    renderDashboardCards();
     historyState.error='Analytics loaded, but history is currently unavailable.';
     renderHistoryPanel();
   }
@@ -3980,11 +4235,16 @@ async function fetchAnalytics(){
 
 // NEWS
 async function fetchNews(){
+  const requestSeq=++newsFetchSeq;
+  const requestedAcct=activeAcct;
   try{
     const res=await fetch(API+'/extension/news');
     const data=await res.json();
+    if(requestSeq!==newsFetchSeq||requestedAcct!==activeAcct) return;
     const events=data.events||[];
+    dashboardState.news=events;
     pushNewsToDrawer(events);
+    renderDashboardCards();
     const el=document.getElementById('newsList');
     if(!events.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">No high-impact events in the next 8 hours</div>';return;}
     el.innerHTML=events.map(e=>{
@@ -3998,7 +4258,12 @@ async function fetchNews(){
         <div class="news-meta"><div class="news-time-str"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${e.time_et}</div><div class="news-pill ${pillCls}">${when}</div></div>
       </div>`;
     }).join('');
-  }catch(e){document.getElementById('newsList').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Could not load calendar</div>';}
+  }catch(e){
+    if(requestSeq!==newsFetchSeq||requestedAcct!==activeAcct) return;
+    dashboardState.news=[];
+    renderDashboardCards();
+    document.getElementById('newsList').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Could not load calendar</div>';
+  }
 }
 
 
