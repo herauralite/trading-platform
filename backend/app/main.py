@@ -51,6 +51,7 @@ from app.services.account_workspace import (
     get_account_workspace,
     list_account_workspaces,
 )
+from app.services.fundingpips_hydration import hydrate_fundingpips_canonical_state
 from app.services.mt5_bridge import (
     check_mt5_pairing_state,
     create_mt5_pairing_token,
@@ -1590,6 +1591,7 @@ async def telegram_login(data: TelegramAuthData):
         "last_name": data.last_name,
         "photo_url": data.photo_url,
     })
+    await hydrate_fundingpips_canonical_state(str(data.id), trigger="auth_telegram")
     accounts = await db_get_user_accounts(str(data.id))
     logger.info("Telegram legacy login: %s (%s accounts)", data.username or data.id, len(accounts))
     return build_auth_success_payload(str(data.id), data.username, data.first_name, data.last_name, data.photo_url, accounts)
@@ -1611,6 +1613,7 @@ async def telegram_login_oidc(data: TelegramOidcAuthData):
         return JSONResponse(status_code=401, content={"detail": "Invalid Telegram OIDC token", "reason": str(exc)})
 
     await db_upsert_user(tg_profile)
+    await hydrate_fundingpips_canonical_state(tg_profile["id"], trigger="auth_telegram_oidc")
     accounts = await db_get_user_accounts(tg_profile["id"])
     logger.info("Telegram OIDC login: %s (%s accounts)", tg_profile.get("username") or tg_profile["id"], len(accounts))
     return build_auth_success_payload(
@@ -1638,6 +1641,7 @@ async def get_me(
         user = dict(result.mappings().first() or {})
     if not user:
         return JSONResponse(status_code=404, content={"detail": "User not found"})
+    await hydrate_fundingpips_canonical_state(resolved_uid, trigger="auth_me")
     accounts = await db_get_user_accounts(resolved_uid)
     return {"user": user, "accounts": accounts}
 
