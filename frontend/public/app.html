@@ -1204,11 +1204,15 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
       idx: i + 1,
       accountType: acct.accountType || '',
       accountSize: acct.accountSize || null,
+      connectorType: String(acct.connectorType||acct.connector_type||''),
       isPrimary: Boolean(acct.is_primary || acct.isPrimary),
       isActive: acct.is_active,
       status: acct.status || '',
       deactivated: Boolean(acct.deactivated || acct.is_deactivated)
     };
+  });
+  Object.keys(manualSyncStateByAccount).forEach(acctId=>{
+    if(!ACCOUNTS[acctId]) clearManualSyncState(acctId);
   });
   if (deduped.length > 0) {
     const hasPrev = keepActive && prevActive && ACCOUNTS[prevActive];
@@ -1907,6 +1911,113 @@ let accountContextSnapshot={
   syncByAccount:{}
 };
 
+let manualSyncStateByAccount={};
+let manualSyncRequestSeq=0;
+
+function connectorTypeForAccount(acctId){
+  if(!acctId) return '';
+  return String(ACCOUNTS[acctId]?.connectorType||'').trim().toLowerCase();
+}
+
+function accountSupportsManualSync(acctId){
+  const connector=connectorTypeForAccount(acctId);
+  if(!connector) return {supported:false,reason:'Connector is unavailable for this account.'};
+  if(connector==='fundingpips_extension'||connector==='tradelocker_api'){
+    return {supported:true,connector};
+  }
+  if(connector==='manual'||connector==='csv_import'){
+    return {supported:false,reason:'This account uses manual import and cannot sync remotely.'};
+  }
+  return {supported:false,reason:'Manual sync is not available for this provider yet.'};
+}
+
+function getManualSyncState(acctId){
+  const state=manualSyncStateByAccount[acctId]||{status:'idle',message:'Ready to sync.',requestSeq:0};
+  return state;
+}
+
+function setManualSyncState(acctId,next){
+  if(!acctId) return;
+  manualSyncStateByAccount[acctId]={...getManualSyncState(acctId),...next};
+  refreshAccountSettingsSurface();
+}
+
+function clearManualSyncState(acctId){
+  if(!acctId) return;
+  delete manualSyncStateByAccount[acctId];
+}
+
+function manualSyncStateChip(state){
+  if(state.status==='syncing') return {label:'syncing',cls:'syncing'};
+  if(state.status==='success') return {label:'success',cls:'connected'};
+  if(state.status==='failed') return {label:'failed',cls:'error'};
+  return null;
+}
+
+function manualSyncStateMessage(acctId,defaultMessage){
+  const st=getManualSyncState(acctId);
+  if(st.status==='syncing') return st.message||'Sync in progress…';
+  if(st.status==='success') return st.message||'Sync completed.';
+  if(st.status==='failed') return st.message||'Sync failed.';
+  return defaultMessage;
+}
+
+async function refreshAfterManualSync(acctId){
+  if(acctId) activeAcct=acctId;
+  rememberActiveAccountPreference();
+  fetchStatus();
+  fetchAnalytics();
+  fetchJournal();
+  loadHistoryPage(true);
+  fetchPayout();
+  fetchChallenges();
+  renderAcctSheet();
+  refreshAccountSettingsSurface();
+}
+
+async function triggerManualSync(acctId){
+  if(!acctId||!ACCOUNTS[acctId]) return;
+  const capability=accountSupportsManualSync(acctId);
+  if(!capability.supported){
+    setManualSyncState(acctId,{status:'failed',message:capability.reason,updatedAt:Date.now()});
+    return;
+  }
+  const currentState=getManualSyncState(acctId);
+  if(currentState.status==='syncing') return;
+
+  const requestSeq=++manualSyncRequestSeq;
+  setManualSyncState(acctId,{status:'syncing',message:'Starting sync…',requestSeq,updatedAt:Date.now()});
+
+  try{
+    const res=await authFetch('/connectors/'+encodeURIComponent(capability.connector)+'/sync',{method:'POST'});
+    const body=await res.json().catch(()=>({}));
+    if(getManualSyncState(acctId).requestSeq!==requestSeq) return;
+    if(!res.ok){
+      const detail=String(body?.detail||'').toLowerCase();
+      const unsupported=detail.includes('does not support remote sync')||detail.includes('not support');
+      const manualOnly=unsupported||res.status===409;
+      const message=manualOnly
+        ? 'This provider does not allow manual sync right now.'
+        : (body?.detail||'Could not start sync right now.');
+      setManualSyncState(acctId,{status:'failed',message,updatedAt:Date.now()});
+      return;
+    }
+
+    const runStatus=String(body?.run?.status||'').toLowerCase();
+    const started=runStatus==='queued'||runStatus==='running'||runStatus==='created'||runStatus==='pending';
+    if(!started){
+      setManualSyncState(acctId,{status:'failed',message:'Sync could not be queued.',updatedAt:Date.now()});
+      return;
+    }
+
+    setManualSyncState(acctId,{status:'success',message:'Sync queued. Refreshing account data…',updatedAt:Date.now()});
+    await refreshAfterManualSync(acctId);
+  }catch(_){
+    if(getManualSyncState(acctId).requestSeq!==requestSeq) return;
+    setManualSyncState(acctId,{status:'failed',message:'Could not reach sync service.',updatedAt:Date.now()});
+  }
+}
+
 function showAccountActionStatus(message,tone='info'){
   const el=document.getElementById('accountActionStatus');
   if(!el)return;
@@ -2041,7 +2152,15 @@ function refreshAccountSettingsSurface(reason='state'){
   const syncMeta=document.getElementById('syncHealthMeta');
   if(syncMeta){
     const liveCount=entries.filter(([id])=>deriveSyncState(id).cls==='connected').length;
-    syncMeta.textContent=entries.length?(liveCount+' / '+entries.length+' connected'):'Read-only status';
+    const activeConnector=connectorTypeForAccount(activeAcct);
+    const cap=accountSupportsManualSync(activeAcct);
+    const suffix=activeConnector?(' · '+activeConnector.replace(/_/g,' ')):'';
+    syncMeta.textContent=entries.length
+      ?(liveCount+' / '+entries.length+' connected'+suffix)
+      :'Sync status';
+    if(entries.length&&cap.supported===false&&activeAcct){
+      syncMeta.textContent+=' · manual sync unavailable';
+    }
   }
   if(syncList){
     if(!entries.length){
@@ -2049,8 +2168,18 @@ function refreshAccountSettingsSurface(reason='state'){
     }else{
       syncList.innerHTML=entries.map(([id])=>{
         const sync=deriveSyncState(id);
-        return `<div class="account-row"><div style="min-width:0;flex:1"><div class="title">${id}</div><div class="meta">${sync.sub}</div></div><span class="sync-pill ${sync.cls}">${sync.label}</span></div>`;
-      }).join('')+'<div style="font-size:10px;color:var(--t3);margin-top:2px">Sync trigger endpoint is not exposed in this shell, so status is read-only.</div>';
+        const isActive=id===activeAcct;
+        const capability=accountSupportsManualSync(id);
+        const syncUiState=getManualSyncState(id);
+        const overrideChip=manualSyncStateChip(syncUiState);
+        const chip=overrideChip||sync;
+        const statusText=manualSyncStateMessage(id,sync.sub);
+        const buttonText=syncUiState.status==='syncing'?'Syncing…':'Sync now';
+        const disableSync=syncUiState.status==='syncing'||!isActive||!capability.supported;
+        const helper=!capability.supported?capability.reason:(isActive?'':'Switch to this account to sync.');
+        const helperHtml=helper?`<div class="meta">${helper}</div>`:'';
+        return `<div class="account-row"><div style="min-width:0;flex:1"><div class="title">${id}</div><div class="meta">${statusText}</div>${helperHtml}</div><div class="actions"><span class="sync-pill ${chip.cls}">${chip.label}</span><button class="btn btn-ghost rip" style="padding:4px 8px;font-size:10px" ${disableSync?'disabled':''} onclick="triggerManualSync('${id}')">${buttonText}</button></div></div>`;
+      }).join('');
     }
   }
 
