@@ -383,6 +383,20 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .toggle::after{content:'';position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:right .2s var(--spring);}
 .toggle.off{background:var(--s3);}
 .toggle.off::after{right:auto;left:3px;}
+
+.account-row{display:flex;gap:10px;align-items:flex-start;background:var(--s2);border:1px solid var(--border);border-radius:10px;padding:10px;}
+.account-row.inactive{opacity:.7;border-color:rgba(224,92,92,.25);}
+.account-row .meta{font-size:10px;color:var(--t3);margin-top:2px;}
+.account-row .title{font-size:12px;color:var(--text);font-weight:600;}
+.account-row .actions{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+.sync-pill{padding:2px 8px;border-radius:999px;font-size:9px;letter-spacing:.5px;text-transform:uppercase;font-weight:700;border:1px solid var(--border);background:var(--s1);color:var(--t2);}
+.sync-pill.connected{color:var(--green);background:var(--green-dim);border-color:rgba(77,205,138,.2);}
+.sync-pill.syncing{color:var(--blue);background:var(--blue-dim);border-color:rgba(42,171,238,.2);}
+.sync-pill.waiting{color:var(--orange);background:var(--orange-dim);border-color:rgba(232,146,74,.2);}
+.sync-pill.error{color:var(--red);background:var(--red-dim);border-color:rgba(224,92,92,.2);}
+body.compact-mode .card,body.compact-mode .card-p,body.compact-mode .settings-group{margin-bottom:8px;}
+body.compact-mode .sg-item{padding:11px 14px;}
+body.compact-mode .sec-head{margin:8px 0 6px;}
 .challenge-card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:8px;transition:border-color .25s,transform .3s var(--out);}
 .challenge-card:hover{transform:translateY(-3px);}
 .challenge-card.featured{border-color:rgba(245,200,66,0.3);}
@@ -1172,7 +1186,15 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
   const prevActive = activeAcct;
   Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]);
   const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
-  linkedAccounts.forEach((acct, i) => {
+  const deduped=[];
+  const seenIds=new Set();
+  linkedAccounts.forEach(acct=>{
+    const id=acct?.accountId;
+    if(!id||seenIds.has(id)) return;
+    seenIds.add(id);
+    deduped.push(acct);
+  });
+  deduped.forEach((acct, i) => {
     const sizeK = acct.accountSize ? Math.round(acct.accountSize/1000)+'K' : '';
     const typeLabel = (acct.accountType||'').includes('master') ? 'Master' : 'Eval';
     ACCOUNTS[acct.accountId] = {
@@ -1180,18 +1202,27 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
       short: typeLabel,
       color: colors[i % colors.length],
       idx: i + 1,
-      isPrimary: Boolean(acct.is_primary || acct.isPrimary)
+      accountType: acct.accountType || '',
+      accountSize: acct.accountSize || null,
+      isPrimary: Boolean(acct.is_primary || acct.isPrimary),
+      isActive: acct.is_active,
+      status: acct.status || '',
+      deactivated: Boolean(acct.deactivated || acct.is_deactivated)
     };
   });
-  if (linkedAccounts.length > 0) {
+  if (deduped.length > 0) {
     const hasPrev = keepActive && prevActive && ACCOUNTS[prevActive];
-    const primaryId = linkedAccounts.find(a => a.is_primary || a.isPrimary)?.accountId;
-    activeAcct = hasPrev ? prevActive : (primaryId || linkedAccounts[0].accountId);
+    const primaryId = deduped.find(a => a.is_primary || a.isPrimary)?.accountId;
+    const preferred = localStorage.getItem(ACCOUNT_PREF_KEYS.activeAccount) || '';
+    activeAcct = hasPrev ? prevActive : (ACCOUNTS[preferred] ? preferred : (primaryId || deduped[0].accountId));
+    rememberActiveAccountPreference();
     showOnboardingCard(false);
     renderAcctSheet();
+    refreshAccountSettingsSurface();
   } else {
     activeAcct = '';
     renderNoAccountState();
+    refreshAccountSettingsSurface();
   }
 }
 
@@ -1268,22 +1299,20 @@ function applyUserToTopbar(user) {
     btnProfile.title = displayName + ' · tap to sign out';
     btnProfile.onclick = (e) => {
       e.stopPropagation();
-      if (confirm('Sign out of TaliTrade?')) {
-        localStorage.removeItem(TALI_USER_KEY);
-        localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
-        sessionStorage.removeItem(TALI_PW_KEY);
-        sessionStorage.removeItem(TALI_TG_DONE_KEY);
-        sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
-        sessionStorage.removeItem(TALI_AUTH_NONCE_KEY);
-        sessionStorage.removeItem(TALI_AUTH_FLOW_KEY);
-        try {
-          const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
-          if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
-            chrome.runtime.sendMessage(TALI_EXTENSION_ID, { type: 'TALI_CLEAR_UID' }, () => {});
-          }
-        } catch (_) {}
-        location.reload();
-      }
+      localStorage.removeItem(TALI_USER_KEY);
+      localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
+      sessionStorage.removeItem(TALI_PW_KEY);
+      sessionStorage.removeItem(TALI_TG_DONE_KEY);
+      sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
+      sessionStorage.removeItem(TALI_AUTH_NONCE_KEY);
+      sessionStorage.removeItem(TALI_AUTH_FLOW_KEY);
+      try {
+        const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
+        if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+          chrome.runtime.sendMessage(TALI_EXTENSION_ID, { type: 'TALI_CLEAR_UID' }, () => {});
+        }
+      } catch (_) {}
+      location.reload();
     };
   }
 }
@@ -1637,12 +1666,57 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     </div>
   </div>
 
-  <div class="sec-head"><div class="sec-label">Settings</div></div>
+  <div class="sec-head"><div class="sec-label">Account & Settings</div><div class="sec-meta" id="accountSettingsMeta">Live management</div></div>
+  <div id="accountActionStatus" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--s2);font-size:11px;color:var(--t2)"></div>
+
+  <div class="card card-p" style="margin-bottom:10px">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+      <div>
+        <div style="font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--t3);font-weight:600">Session</div>
+        <div style="font-size:13px;color:var(--text);font-weight:600;margin-top:5px" id="acctIdentityUser">Telegram session unavailable</div>
+        <div style="font-size:11px;color:var(--t3);margin-top:4px" id="acctIdentitySession">Sign in to view Telegram identity context.</div>
+      </div>
+      <div class="tag" id="acctIdentityPrimary">Primary unknown</div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Active account</div><div style="font-size:12px;color:var(--text);margin-top:4px" id="acctIdentityActive">No active account</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Account model</div><div style="font-size:12px;color:var(--text);margin-top:4px" id="acctIdentityType">Unavailable</div></div>
+    </div>
+  </div>
+
+  <div class="card card-p" style="margin-bottom:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Linked Accounts</div><div class="h-r" id="linkedAccountsMeta">0 linked</div></div>
+    <div id="linkedAccountsList" style="display:flex;flex-direction:column;gap:8px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-ghost rip" style="flex:1" onclick="openAddAccountFlow()">Add account</button>
+      <button class="btn btn-ghost rip" style="flex:1" onclick="refreshAccountSettingsSurface('manual')">Refresh</button>
+    </div>
+  </div>
+
+  <div class="card card-p" style="margin-bottom:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Connector Health</div><div class="h-r" id="syncHealthMeta">Read-only status</div></div>
+    <div id="accountSyncHealthList" style="display:flex;flex-direction:column;gap:8px"></div>
+  </div>
+
+  <div class="card card-p" style="margin-bottom:10px">
+    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Rules / Payout / Challenge</div><div class="h-r" id="quickAccessMeta">Quick actions</div></div>
+    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openRules()">Trading rules</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('account');fetchPayout();">Payout</button>
+      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('challenges');fetchChallenges();fetchLeaderboard();">Challenge</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Model</div><div id="quickAccessModel" style="font-size:12px;margin-top:4px">Unavailable</div></div>
+      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Progress</div><div id="quickAccessProgress" style="font-size:12px;margin-top:4px">Waiting for account data</div></div>
+    </div>
+  </div>
+
+  <div class="sec-head"><div class="sec-label">Preferences</div></div>
   <div class="settings-group">
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></div><div class="sg-info"><div class="sg-title">Push Notifications</div><div class="sg-sub">Telegram alerts active</div></div><div class="toggle"></div></div>
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="sg-info"><div class="sg-title">Risk Alerts</div><div class="sg-sub">50% / 80% / 90% warnings</div></div><div class="toggle"></div></div>
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--green-dim);color:var(--green)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></div><div class="sg-info"><div class="sg-title">Daily Summary</div><div class="sg-sub">End of day P&L report</div></div><div class="toggle"></div></div>
-    <div class="sg-item rip"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
+    <div class="sg-item rip" id="prefCompactRow"><div class="sg-ico" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="15" x2="14" y2="15"/></svg></div><div class="sg-info"><div class="sg-title">Compact display</div><div class="sg-sub" id="prefCompactSub">Default spacing</div></div><div class="toggle" data-pref-toggle="compact" id="prefCompactToggle"></div></div>
+    <div class="sg-item rip" id="prefChartRow"><div class="sg-ico" style="background:var(--green-dim);color:var(--green)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="sg-info"><div class="sg-title">Chart style</div><div class="sg-sub" id="prefChartSub">Remember current chart renderer</div></div><div class="sg-right" id="prefChartMode" style="color:var(--t2);font-size:11px">Candle</div></div>
+    <div class="sg-item rip" id="prefHistoryRow"><div class="sg-ico" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">History filters</div><div class="sg-sub" id="prefHistorySub">Remember selected filter and date range</div></div><div class="tag" id="prefHistoryTag">Saved</div></div>
+    <div class="sg-item rip" id="openRulesRow"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
   </div>
   <div class="footer-card"><span>TaliTrade v3.2</span><span></span><span>Account</span></div>
 </div>
@@ -1819,6 +1893,178 @@ const historyState={
   reqId:0
 };
 
+const ACCOUNT_PREF_KEYS={
+  compact:'tali_pref_compact',
+  history:'tali_pref_history',
+  chart:'tali_pref_chart_style',
+  activeAccount:'tali_pref_active_acct'
+};
+
+let accountContextSnapshot={
+  accountType:'',
+  accountLabel:'',
+  isMaster:false,
+  syncByAccount:{}
+};
+
+function showAccountActionStatus(message,tone='info'){
+  const el=document.getElementById('accountActionStatus');
+  if(!el)return;
+  const toneMap={
+    info:{color:'var(--t2)',border:'var(--border)',bg:'var(--s2)'},
+    success:{color:'var(--green)',border:'rgba(77,205,138,.3)',bg:'var(--green-dim)'},
+    error:{color:'var(--red)',border:'rgba(224,92,92,.3)',bg:'var(--red-dim)'}
+  };
+  const t=toneMap[tone]||toneMap.info;
+  el.style.display='block';
+  el.style.color=t.color;
+  el.style.borderColor=t.border;
+  el.style.background=t.bg;
+  el.textContent=message;
+  clearTimeout(showAccountActionStatus._timer);
+  showAccountActionStatus._timer=setTimeout(()=>{el.style.display='none';},3000);
+}
+
+function readJsonStorage(key,fallback){
+  try{return JSON.parse(localStorage.getItem(key)||'');}catch(_){return fallback;}
+}
+
+function applyAccountPreferences(){
+  const compact=localStorage.getItem(ACCOUNT_PREF_KEYS.compact)==='1';
+  document.body.classList.toggle('compact-mode',compact);
+  const compactToggle=document.getElementById('prefCompactToggle');
+  if(compactToggle)compactToggle.classList.toggle('off',!compact);
+  const compactSub=document.getElementById('prefCompactSub');
+  if(compactSub)compactSub.textContent=compact?'Compact spacing enabled':'Default spacing';
+
+  const chartStyle=localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'candle';
+  const modeEl=document.getElementById('prefChartMode');
+  if(modeEl)modeEl.textContent=chartStyle==='line'?'Line':'Candle';
+
+  const histPref=readJsonStorage(ACCOUNT_PREF_KEYS.history,{});
+  if(histPref&&typeof histPref==='object'){
+    historyState.filter=histPref.filter||historyState.filter;
+    historyState.datePreset=histPref.datePreset||historyState.datePreset;
+    historyState.customStart=histPref.customStart||'';
+    historyState.customEnd=histPref.customEnd||'';
+  }
+}
+
+function persistHistoryPrefs(){
+  try{
+    localStorage.setItem(ACCOUNT_PREF_KEYS.history,JSON.stringify({
+      filter:historyState.filter,
+      datePreset:historyState.datePreset,
+      customStart:historyState.customStart,
+      customEnd:historyState.customEnd
+    }));
+  }catch(_){ }
+}
+
+function rememberActiveAccountPreference(){
+  if(activeAcct){
+    try{localStorage.setItem(ACCOUNT_PREF_KEYS.activeAccount,activeAcct);}catch(_){ }
+  }
+}
+
+function formatSyncTimestamp(iso){
+  if(!iso) return 'Never synced';
+  const ts=new Date(iso).getTime();
+  if(!Number.isFinite(ts)) return 'Sync timestamp unavailable';
+  const mins=Math.floor((Date.now()-ts)/60000);
+  if(mins<1) return 'Synced just now';
+  if(mins<60) return 'Last sync '+mins+'m ago';
+  const hrs=Math.floor(mins/60);
+  if(hrs<24) return 'Last sync '+hrs+'h ago';
+  return 'Last sync '+new Date(iso).toLocaleDateString('en-US',{month:'short',day:'numeric'});
+}
+
+function deriveSyncState(acctId){
+  const live=liveAccountsCache[acctId]||{};
+  const rawState=String(live.sync_state||live.connector_state||live.lifecycle_state||live.status||'').toLowerCase();
+  const hasError=Boolean(live.error||rawState.includes('error')||rawState.includes('fail'));
+  const syncing=rawState.includes('sync')||rawState.includes('running');
+  const waiting=rawState.includes('wait')||rawState.includes('pending')||rawState.includes('idle');
+  const lastSync=live.last_sync||live.lastSyncedAt||live.last_updated||'';
+  const staleMins=lastSync?Math.floor((Date.now()-new Date(lastSync).getTime())/60000):null;
+  const stale=typeof staleMins==='number'&&staleMins>30;
+  if(hasError) return {label:'error',cls:'error',sub:live.error||'Connector error detected'};
+  if(syncing) return {label:'syncing',cls:'syncing',sub:formatSyncTimestamp(lastSync)};
+  if(rawState||lastSync){
+    if(stale) return {label:'waiting',cls:'waiting',sub:'Stale · '+formatSyncTimestamp(lastSync)};
+    return {label:'connected',cls:'connected',sub:formatSyncTimestamp(lastSync)};
+  }
+  return {label:'waiting',cls:'waiting',sub:'Never synced'};
+}
+
+function refreshAccountSettingsSurface(reason='state'){
+  const user=getTaliUser();
+  const userEl=document.getElementById('acctIdentityUser');
+  const sessionEl=document.getElementById('acctIdentitySession');
+  if(userEl){
+    const name=[user?.firstName,user?.lastName].filter(Boolean).join(' ').trim();
+    userEl.textContent=name||'Telegram user unavailable';
+  }
+  if(sessionEl){
+    sessionEl.textContent=user?.telegramUsername?('@'+user.telegramUsername+' · Telegram authenticated'):'Telegram identity unavailable in this session';
+  }
+
+  const activeInfo=activeAcct?ACCOUNTS[activeAcct]:null;
+  const primaryId=Object.entries(ACCOUNTS).find(([,info])=>info?.isPrimary)?.[0]||'';
+  const activeEl=document.getElementById('acctIdentityActive');
+  if(activeEl) activeEl.textContent=activeInfo?(activeInfo.label+' · '+activeAcct):'No active account';
+  const typeEl=document.getElementById('acctIdentityType');
+  if(typeEl) typeEl.textContent=accountContextSnapshot.accountLabel||accountContextSnapshot.accountType||'Unavailable';
+  const primaryBadge=document.getElementById('acctIdentityPrimary');
+  if(primaryBadge) primaryBadge.textContent=primaryId?('Primary · '+primaryId):'Primary not set';
+
+  const linkedList=document.getElementById('linkedAccountsList');
+  const linkedMeta=document.getElementById('linkedAccountsMeta');
+  const entries=Object.entries(ACCOUNTS);
+  if(linkedMeta) linkedMeta.textContent=entries.length+' linked';
+  if(linkedList){
+    if(!entries.length){
+      linkedList.innerHTML='<div style="background:var(--s2);border:1px dashed var(--border);border-radius:10px;padding:14px;text-align:center"><div style="font-size:12px;color:var(--text);font-weight:600">No account linked yet</div><div style="font-size:11px;color:var(--t3);margin-top:4px">Connect an account to enable switching, payout, and challenge tracking.</div><button class="btn btn-blue rip" style="margin-top:10px" onclick="openAddAccountFlow()">Connect account</button></div>';
+    }else{
+      linkedList.innerHTML=entries.map(([id,info])=>{
+        const isActive=id===activeAcct;
+        const isPrimary=Boolean(info?.isPrimary);
+        const isInactive=info?.isActive===false||info?.deactivated===true||String(info?.status||'').toLowerCase().includes('inactive');
+        const sync=deriveSyncState(id);
+        const pills=[isActive?'<span class="chip chip-blue" style="padding:2px 8px;font-size:9px">Active</span>':'',isPrimary?'<span class="chip chip-warn" style="padding:2px 8px;font-size:9px">Primary</span>':'',isInactive?'<span class="chip chip-red" style="padding:2px 8px;font-size:9px">Inactive</span>':''].join('');
+        return `<div class="account-row ${isInactive?'inactive':''}"><div style="min-width:0;flex:1"><div class="title">${id}</div><div class="meta">${info.label||'No label'} ${pills}</div><div class="meta">${sync.sub}</div></div><div class="actions"><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" ${isActive?'disabled':''} onclick="switchAccount('${id}')">Switch</button><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" ${isPrimary?'disabled':''} onclick="setPrimaryAccount('${id}')">Set primary</button><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" ${isInactive?'disabled':''} onclick="deactivateAccount('${id}')">Deactivate</button></div></div>`;
+      }).join('');
+    }
+  }
+
+  const syncList=document.getElementById('accountSyncHealthList');
+  const syncMeta=document.getElementById('syncHealthMeta');
+  if(syncMeta){
+    const liveCount=entries.filter(([id])=>deriveSyncState(id).cls==='connected').length;
+    syncMeta.textContent=entries.length?(liveCount+' / '+entries.length+' connected'):'Read-only status';
+  }
+  if(syncList){
+    if(!entries.length){
+      syncList.innerHTML='<div class="account-row"><div style="font-size:11px;color:var(--t3)">Sync health appears after you connect an account.</div></div>';
+    }else{
+      syncList.innerHTML=entries.map(([id])=>{
+        const sync=deriveSyncState(id);
+        return `<div class="account-row"><div style="min-width:0;flex:1"><div class="title">${id}</div><div class="meta">${sync.sub}</div></div><span class="sync-pill ${sync.cls}">${sync.label}</span></div>`;
+      }).join('')+'<div style="font-size:10px;color:var(--t3);margin-top:2px">Sync trigger endpoint is not exposed in this shell, so status is read-only.</div>';
+    }
+  }
+
+  const qaModel=document.getElementById('quickAccessModel');
+  if(qaModel) qaModel.textContent=accountContextSnapshot.accountLabel||'Model unavailable';
+  const qaProgress=document.getElementById('quickAccessProgress');
+  if(qaProgress){
+    const p=overviewState.payout||{};
+    qaProgress.textContent=p.progressSub||'Waiting for challenge/payout status';
+  }
+
+  if(reason==='manual') showAccountActionStatus('Account settings refreshed.','info');
+}
+
 function openAcctSheet(){
   renderAcctSheet();
   document.getElementById('acct-overlay').classList.add('open');
@@ -1981,12 +2227,14 @@ function renderAddAccountFlow(){
 
 async function refreshAfterAccountLink(newActiveAccountId=''){
   if(newActiveAccountId)activeAcct=newActiveAccountId;
+  rememberActiveAccountPreference();
   fetchStatus();
   fetchAnalytics();
   fetchJournal();
   fetchPayout();
   fetchChallenges();
   renderAcctSheet();
+  refreshAccountSettingsSurface();
 }
 
 async function submitFundingPipsAccountFlow(){
@@ -2066,25 +2314,28 @@ async function setPrimaryAccount(id){
     if(!res.ok) throw new Error('primary failed');
     const data=await res.json();
     hydrateAccountsMap(data.accounts||[],true);
-  }catch(_){ alert('Could not set primary account.'); }
+    showAccountActionStatus('Primary account updated to '+id+'.','success');
+    await refreshAfterAccountLink(activeAcct);
+  }catch(_){ showAccountActionStatus('Could not set primary account right now.','error'); }
 }
 
 async function deactivateAccount(id){
-  if(!confirm('Deactivate account '+id+'?')) return;
   try{
     const res=await authFetch('/auth/accounts/'+encodeURIComponent(id)+'/deactivate',{method:'POST'});
     if(!res.ok) throw new Error('deactivate failed');
     const data=await res.json();
     hydrateAccountsMap(data.accounts||[],true);
     if(activeAcct===id){activeAcct=Object.keys(ACCOUNTS)[0]||'';}
-    fetchStatus();fetchAnalytics();fetchJournal();fetchPayout();fetchChallenges();
-  }catch(_){ alert('Could not deactivate account.'); }
+    showAccountActionStatus('Account '+id+' deactivated.','success');
+    await refreshAfterAccountLink(activeAcct);
+  }catch(_){ showAccountActionStatus('Could not deactivate account right now.','error'); }
 }
 
 function switchAccount(id){
   if(id===activeAcct){closeAcctSheet();return;}
   closeAcctSheet();
   activeAcct=id;
+  rememberActiveAccountPreference();
 
   // Update profile button number
   const info=ACCOUNTS[id];
@@ -2165,7 +2416,27 @@ function tick(){const t=new Date().toLocaleTimeString('en-US',{hour12:false});['
 tick();setInterval(tick,1000);
 
 // TOGGLES
-document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',()=>t.classList.toggle('off')));
+document.querySelectorAll('.toggle').forEach(t=>t.addEventListener('click',()=>{
+  if(t.dataset.prefToggle!=='compact') t.classList.toggle('off');
+}));
+
+document.getElementById('prefCompactRow')?.addEventListener('click',()=>{
+  const isCompact=!(localStorage.getItem(ACCOUNT_PREF_KEYS.compact)==='1');
+  localStorage.setItem(ACCOUNT_PREF_KEYS.compact,isCompact?'1':'0');
+  applyAccountPreferences();
+});
+document.getElementById('prefChartRow')?.addEventListener('click',()=>{
+  const next=(localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'candle')==='candle'?'line':'candle';
+  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,next);
+  const lineBtn=document.getElementById('toolLine');
+  const candleBtn=document.getElementById('toolCandle');
+  if(lineBtn&&candleBtn){
+    lineBtn.classList.toggle('active',next==='line');
+    candleBtn.classList.toggle('active',next==='candle');
+  }
+  applyAccountPreferences();
+});
+document.getElementById('openRulesRow')?.addEventListener('click',openRules);
 
 // HELPERS
 function usd(v){if(v==null)return'$—';return'$'+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -2216,7 +2487,8 @@ if(bootstrapTaliUser){
   syncLinkedAccountsFromBackend(bootstrapTaliUser.telegramUserId);
   startAccountLinkWatcher(bootstrapTaliUser.telegramUserId);
 }
-
+applyAccountPreferences();
+refreshAccountSettingsSurface();
 
 function showOnboardingCard(show=true){
   const el=document.getElementById('onboardCard');
@@ -2315,6 +2587,7 @@ function renderNoAccountState(kind='default'){
   if(analyticsEmptyHost && kind==='analytics') {
     analyticsEmptyHost.innerHTML='<div id="analyticsNoAcct">'+analyticsEmpty+'</div>';
   }
+  refreshAccountSettingsSurface();
 }
 
 // SKELETON REVEAL
@@ -2376,6 +2649,9 @@ async function fetchStatus(){
         positionsTone:'txt-dim'
       };
       renderOverviewCards();
+      accountContextSnapshot.accountType='';
+      accountContextSnapshot.accountLabel='';
+      refreshAccountSettingsSurface();
       if(!activeAcct||!hasLinkedAccounts()) renderNoAccountState();
       return;
     }
@@ -2401,6 +2677,8 @@ async function fetchStatus(){
     const typeStr=TYPE_LABELS[accountType]||(accountType||'').replace(/_/g,' ').replace(/\b\w/g,c=>c.toUpperCase());
     const sizeLabel='$'+(sz>=1000?(sz/1000)+'K':sz);
     const fullLabel=sizeLabel+' '+typeStr;
+    accountContextSnapshot.accountType=accountType||'';
+    accountContextSnapshot.accountLabel=fullLabel;
 
     // ── Overview cards ─────────────────────────────────────────────────────────
     overviewState.status={
@@ -2477,6 +2755,7 @@ async function fetchStatus(){
       document.getElementById('bellDot').style.display='none';
     }
     if(ri)document.getElementById('tradeRiskLeft').textContent=usd(ri.remaining);
+    refreshAccountSettingsSurface();
   }catch(e){
     document.getElementById('tb-status').textContent='connection error';
     document.getElementById('tb-status').style.color='var(--red)';
@@ -2487,6 +2766,7 @@ async function fetchStatus(){
       syncTone:'txt-red'
     };
     renderOverviewCards();
+    refreshAccountSettingsSurface();
   }
 }
 fetchStatus();setInterval(fetchStatus,5000);
@@ -2978,15 +3258,7 @@ function renderPayoutCountdown(cycleDays, firstTradeDateStr, lastRewardDateStr, 
 
 // Prompt to manually set first trade date (fallback when API doesn't provide it)
 function promptFirstTradeDate(cycleDays){
-  const input=prompt('Enter your first trade date (YYYY-MM-DD):');
-  if(!input||!/^\d{4}-\d{2}-\d{2}$/.test(input))return;
-  const stored=getPayoutTracker();
-  stored.firstTradeDate=input;
-  stored.cycleStartDate=input;
-  savePayoutTracker(stored);
-  // re-render
-  const ev=window._lastPayoutEvent;
-  if(ev)renderPayout(ev);
+  showAccountActionStatus('First-trade date is read-only in this shell unless backend provides it.','info');
 }
 
 // Called after a payout is processed to reset the cycle
@@ -3000,9 +3272,6 @@ function resetPayoutCycle(){
 document.getElementById('rulesBack').addEventListener('click',closeRules);
 function openRules(){document.getElementById('rulesSheet').classList.add('open');document.body.style.overflow='hidden';}
 function closeRules(){document.getElementById('rulesSheet').classList.remove('open');document.body.style.overflow='';}
-document.querySelectorAll('.sg-item').forEach(item=>{
-  if(item.querySelector('#sgRulesSub')){item.style.cursor='pointer';item.addEventListener('click',openRules);}
-});
 
 // Rule data keyed by model
 const RULES={
@@ -3694,8 +3963,9 @@ document.querySelectorAll('.tf-btn').forEach(btn=>{
     if(chart&&candleSeries){const d=instData[currentSym];const nc=genCandles(d?d.price:currentPrice,120,d?d.vol:0.003);candleSeries.setData(nc);lineSeries.setData(nc.map(c=>({time:c.time,value:c.close})));chart.timeScale().fitContent();}
   });
 });
-document.getElementById('toolCandle').addEventListener('click',function(){this.classList.add('active');document.getElementById('toolLine').classList.remove('active');if(candleSeries)candleSeries.applyOptions({visible:true});if(lineSeries)lineSeries.applyOptions({visible:false});});
-document.getElementById('toolLine').addEventListener('click',function(){this.classList.add('active');document.getElementById('toolCandle').classList.remove('active');if(candleSeries)candleSeries.applyOptions({visible:false});if(lineSeries)lineSeries.applyOptions({visible:true});});
+document.getElementById('toolCandle').addEventListener('click',function(){this.classList.add('active');document.getElementById('toolLine').classList.remove('active');if(candleSeries)candleSeries.applyOptions({visible:true});if(lineSeries)lineSeries.applyOptions({visible:false});localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'candle');applyAccountPreferences();});
+document.getElementById('toolLine').addEventListener('click',function(){this.classList.add('active');document.getElementById('toolCandle').classList.remove('active');if(candleSeries)candleSeries.applyOptions({visible:false});if(lineSeries)lineSeries.applyOptions({visible:true});localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');applyAccountPreferences();});
+if((localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'candle')==='line'){document.getElementById('toolLine').click();}
 document.getElementById('tabBuy').addEventListener('click',function(){orderSide='buy';this.classList.add('active');document.getElementById('tabSell').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn buy-btn rip';b.innerHTML=`<span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;${currentSym} &nbsp;@ &nbsp;<span id="execPrice">${fmtP(currentPrice)}</span>`;});
 document.getElementById('tabSell').addEventListener('click',function(){orderSide='sell';this.classList.add('active');document.getElementById('tabBuy').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn sell-btn rip';b.innerHTML=`<span class="btn-shine"></span>▼ &nbsp;SELL &nbsp;${currentSym} &nbsp;@ &nbsp;<span id="execPrice">${fmtP(currentPrice)}</span>`;});
 const step=()=>currentPrice>=1000?5:currentPrice>=10?0.5:0.0001;
