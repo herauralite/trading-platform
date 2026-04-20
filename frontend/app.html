@@ -186,6 +186,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .stat-box-label{font-size:10px;font-weight:500;letter-spacing:1px;text-transform:uppercase;color:var(--t3);margin-bottom:6px;}
 .stat-box-val{font-family:'JetBrains Mono',monospace;font-size:24px;font-weight:600;line-height:1;margin-bottom:3px;}
 .stat-box-sub{font-size:10px;color:var(--t3);}
+.overview-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-bottom:10px;}
+.overview-empty{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:22px 18px;text-align:center;margin-bottom:10px;}
+.overview-empty-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:6px;}
+.overview-empty-sub{font-size:11px;color:var(--t3);line-height:1.6;}
 .chart-card{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);padding:16px;margin-bottom:10px;}
 .chart-label{font-size:11px;font-weight:600;color:var(--t2);margin-bottom:14px;}
 .mini-chart{position:relative;height:80px;}
@@ -1366,38 +1370,20 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     </div>
     <button class="btn btn-blue rip" style="margin-top:14px" onclick="openAddAccountFlow()">Connect account</button>
   </div>
-  <div class="sk-wrap" id="acctWrap" style="margin-bottom:10px">
-    <!-- SKELETON -->
-    <div class="acct-card sk-fade sk-in" id="skelAcct" style="margin-bottom:0">
-      <div class="grid-t"></div>
-      <div class="acct-top">
-        <div><div class="skel skel-r" style="width:80px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:120px;height:22px"></div></div>
-        <div class="skel skel-r" style="width:86px;height:26px"></div>
-      </div>
-      <div class="m4">
-        <div class="mbox"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:90px;height:20px"></div></div>
-        <div class="mbox"><div class="skel skel-r" style="width:50px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:90px;height:20px"></div></div>
-        <div class="mbox" style="grid-column:span 2"><div class="skel skel-r" style="width:60px;height:9px;margin-bottom:9px"></div><div class="skel" style="width:110px;height:20px"></div></div>
-      </div>
+  <div id="acctWrap" style="margin-bottom:10px">
+    <div class="overview-empty" id="overviewEmptyState" style="display:none">
+      <div class="overview-empty-title">Connect an account to unlock your overview</div>
+      <div class="overview-empty-sub">Balance, performance, payout/challenge progress, and sync health appear here as soon as your active account is connected.</div>
     </div>
-    <!-- REAL -->
-    <div class="acct-card rip sk-fade sk-out" id="realAcct" style="margin-bottom:0" onclick="openAcctSheet()">
-      <div class="grid-t"></div>
-      <div class="acct-top">
-        <div><div class="acct-id-eye">Account ID</div><div class="acct-id" id="acctId">—</div></div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-          <div class="acct-badge rip" id="acctBadge">10K Master</div>
-          <div class="switch-hint rip">
-            <svg viewBox="0 0 24 24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>
-            Switch account
-          </div>
-        </div>
-      </div>
-      <div class="m4">
-        <div class="mbox rip"><div class="mbox-label">Balance</div><div class="mbox-val txt-green" id="mBal">$—</div><div class="mbox-sub">Starting $<span id="mBalStart">10,000</span></div></div>
-        <div class="mbox rip"><div class="mbox-label">Equity</div><div class="mbox-val txt-blue" id="mEq">$—</div><div class="mbox-sub">Floating P&L</div></div>
-        <div class="mbox rip" style="grid-column:span 2"><div class="mbox-label">Open P&L</div><div class="mbox-val" id="mPL">$—</div><div class="mbox-sub" id="mPLSub">waiting...</div></div>
-      </div>
+    <div class="overview-grid" id="overviewCards">
+      <div class="stat-box rip"><div class="stat-box-label">Balance</div><div class="stat-box-val txt-green" id="ovBalance">$—</div><div class="stat-box-sub" id="ovBalanceSub">Active account</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Equity</div><div class="stat-box-val txt-blue" id="ovEquity">$—</div><div class="stat-box-sub" id="ovEquitySub">Including floating P&amp;L</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Daily P&amp;L</div><div class="stat-box-val txt-dim" id="ovDailyPnl">$—</div><div class="stat-box-sub" id="ovDailyPnlSub">Today</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Overall P&amp;L</div><div class="stat-box-val txt-dim" id="ovOverallPnl">$—</div><div class="stat-box-sub" id="ovOverallPnlSub">Closed + inferred balance drift</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Win Rate</div><div class="stat-box-val txt-dim" id="ovWinRate">—</div><div class="stat-box-sub" id="ovWinRateSub">Waiting for trade history</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Challenge / Payout</div><div class="stat-box-val txt-dim" id="ovProgress">—</div><div class="stat-box-sub" id="ovProgressSub">Waiting for eligibility data</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Sync Health</div><div class="stat-box-val txt-dim" id="ovSync">—</div><div class="stat-box-sub" id="ovSyncSub">Monitoring connection</div></div>
+      <div class="stat-box rip"><div class="stat-box-label">Open Positions</div><div class="stat-box-val txt-dim" id="ovPositions">—</div><div class="stat-box-sub" id="ovPositionsSub">Live account exposure</div></div>
     </div>
   </div>
   <div class="ticker-wrap">
@@ -2069,19 +2055,16 @@ function switchAccount(id){
   closeAcctSheet();
   activeAcct=id;
 
-  // Update account card ID display
-  const acctIdEl=document.getElementById('acctId');
-  if(acctIdEl)acctIdEl.textContent=id;
-
   // Update profile button number
   const info=ACCOUNTS[id];
   document.querySelector('.tb-profile-inner').textContent=info.idx;
 
-  // Reset dashboard skeletons
+  // Reset overview + dashboard skeletons
+  overviewState.status=null;
+  overviewState.analytics=null;
+  overviewState.payout=null;
+  renderOverviewCards();
   dashRevealed=false;
-  const sa=document.getElementById('skelAcct'),ra=document.getElementById('realAcct');
-  if(sa){sa.classList.remove('sk-out');sa.classList.add('sk-in');}
-  if(ra){ra.classList.remove('sk-in');ra.classList.add('sk-out');}
   const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
   if(sr){sr.classList.remove('sk-out');sr.classList.add('sk-in');}
   if(rr){rr.classList.remove('sk-in');rr.classList.add('sk-out');}
@@ -2103,9 +2086,11 @@ function switchAccount(id){
 
   // Refetch everything for new account
   fetchStatus();
+  fetchAnalytics();
+  fetchPayout();
   const curPage=document.querySelector('.page.active');
-  if(curPage&&curPage.id==='page-account')fetchPayout();
-  if(curPage&&curPage.id==='page-analytics'){fetchAnalytics();fetchJournal();}
+  if(curPage&&curPage.id==='page-analytics')fetchJournal();
+  if(curPage&&curPage.id!=='page-analytics')fetchJournal();
   if(curPage&&curPage.id==='page-challenges')fetchChallenges();
 }
 
@@ -2158,6 +2143,39 @@ function hasLinkedAccounts(){
   return Object.keys(ACCOUNTS).length > 0;
 }
 
+const overviewState={status:null,analytics:null,payout:null};
+
+function setOverviewStat(id,val,sub,tone='txt-dim'){
+  const valEl=document.getElementById(id);
+  const subEl=document.getElementById(id+'Sub');
+  if(valEl){
+    valEl.textContent=val;
+    valEl.className='stat-box-val '+tone;
+  }
+  if(subEl)subEl.textContent=sub;
+}
+
+function renderOverviewCards(){
+  const hasActive=!!(activeAcct&&hasLinkedAccounts());
+  const emptyEl=document.getElementById('overviewEmptyState');
+  const cardsEl=document.getElementById('overviewCards');
+  if(emptyEl)emptyEl.style.display=hasActive?'none':'block';
+  if(cardsEl)cardsEl.style.display=hasActive?'grid':'none';
+  if(!hasActive)return;
+
+  const s=overviewState.status||{};
+  const a=overviewState.analytics||{};
+  const p=overviewState.payout||{};
+  setOverviewStat('ovBalance',s.balance!=null?usd(s.balance):'$—',s.balanceSub||'Active account',s.balanceTone||'txt-dim');
+  setOverviewStat('ovEquity',s.equity!=null?usd(s.equity):'$—',s.equitySub||'Including floating P&L',s.equityTone||'txt-dim');
+  setOverviewStat('ovDailyPnl',a.dailyPnl!=null?pnl(a.dailyPnl):'$—',a.dailySub||'Today',a.dailyTone||'txt-dim');
+  setOverviewStat('ovOverallPnl',a.overallPnl!=null?pnl(a.overallPnl):'$—',a.overallSub||'Closed + inferred balance drift',a.overallTone||'txt-dim');
+  setOverviewStat('ovWinRate',a.winRate!=null?(a.winRate+'%'):'—',a.winRateSub||'Waiting for trade history',a.winRateTone||'txt-dim');
+  setOverviewStat('ovProgress',p.progressVal||'—',p.progressSub||'Waiting for eligibility data',p.progressTone||'txt-dim');
+  setOverviewStat('ovSync',s.syncVal||'—',s.syncSub||'Monitoring connection',s.syncTone||'txt-dim');
+  setOverviewStat('ovPositions',s.positionsVal||'—',s.positionsSub||'Live account exposure',s.positionsTone||'txt-dim');
+}
+
 const bootstrapTaliUser=getTaliUser();
 if(!bootstrapTaliUser){
   pushGateDiagnostic('gate_reason=no_local_authenticated_user');
@@ -2180,6 +2198,10 @@ function renderNoAccountState(kind='default'){
     statusEl.style.color='var(--t3)';
   }
   showOnboardingCard(true);
+  overviewState.status=null;
+  overviewState.analytics=null;
+  overviewState.payout=null;
+  renderOverviewCards();
 
   const analyticsMeta=document.getElementById('analyticsMeta');
   if(analyticsMeta)analyticsMeta.textContent='No account connected';
@@ -2267,15 +2289,9 @@ let dashRevealed=false;
 function revealDash(){
   if(dashRevealed)return;
   dashRevealed=true;
-  // stagger: account card first, risk stack 120ms later
-  const sa=document.getElementById('skelAcct'),ra=document.getElementById('realAcct');
-  if(sa){sa.classList.remove('sk-in');sa.classList.add('sk-out');}
-  if(ra){ra.classList.remove('sk-out');ra.classList.add('sk-in');}
-  setTimeout(()=>{
-    const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
-    if(sr){sr.classList.remove('sk-in');sr.classList.add('sk-out');}
-    if(rr){rr.classList.remove('sk-out');rr.classList.add('sk-in');}
-  },120);
+  const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
+  if(sr){sr.classList.remove('sk-in');sr.classList.add('sk-out');}
+  if(rr){rr.classList.remove('sk-out');rr.classList.add('sk-in');}
 }
 
 
@@ -2317,6 +2333,16 @@ async function fetchStatus(){
       const hadData=activeAcct?liveAccountsCache[activeAcct]:null;
       statusEl.textContent=hadData?'extension offline':'waiting for extension...';
       statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
+      overviewState.status={
+        ...(overviewState.status||{}),
+        syncVal:hadData?'Delayed':'Waiting',
+        syncSub:hadData?'Extension feed is offline':'Waiting for extension handshake',
+        syncTone:hadData?'txt-orange':'txt-dim',
+        positionsVal:'—',
+        positionsSub:'No live feed',
+        positionsTone:'txt-dim'
+      };
+      renderOverviewCards();
       if(!activeAcct||!hasLinkedAccounts()) renderNoAccountState();
       return;
     }
@@ -2343,17 +2369,24 @@ async function fetchStatus(){
     const sizeLabel='$'+(sz>=1000?(sz/1000)+'K':sz);
     const fullLabel=sizeLabel+' '+typeStr;
 
-    // ── Metric boxes ───────────────────────────────────────────────────────────
-    document.getElementById('mBal').textContent=usd(fallbackBalance);
-    document.getElementById('mEq').textContent=usd(resolvedEquity);
-    const plEl=document.getElementById('mPL');
-    plEl.textContent=pnl(profit);
-    plEl.className='mbox-val '+(profit>0?'txt-green':profit<0?'txt-red':'txt-dim');
-    document.getElementById('mPLSub').textContent=acct.hasPositions?(acct.openPositionCount+' position(s) open'):'No open positions';
-    document.getElementById('mBalStart').textContent=(sz/1000)+'K';
+    // ── Overview cards ─────────────────────────────────────────────────────────
+    overviewState.status={
+      balance:fallbackBalance,
+      balanceSub:'Start '+usd(sz),
+      balanceTone:'txt-green',
+      equity:resolvedEquity,
+      equitySub:profit!=null?'Floating '+pnl(profit):'Including floating P&L',
+      equityTone:'txt-blue',
+      syncVal:'Live',
+      syncSub:'Updated '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
+      syncTone:'txt-green',
+      positionsVal:acct.hasPositions?String(acct.openPositionCount||0):'0',
+      positionsSub:acct.hasPositions?'position(s) open':'No open positions',
+      positionsTone:acct.hasPositions?'txt-blue':'txt-dim'
+    };
+    renderOverviewCards();
 
     // ── Labels / badges ────────────────────────────────────────────────────────
-    document.getElementById('acctBadge').textContent=fullLabel;
     document.getElementById('footerAcct').textContent=fullLabel;
     document.getElementById('riskMeta').textContent=fullLabel;
     document.getElementById('sgRulesSub').textContent=fullLabel;
@@ -2361,8 +2394,6 @@ async function fetchStatus(){
 
     // ── Account ID fields ──────────────────────────────────────────────────────
     const resolvedId=liveAcctId||activeAcct;
-    const acctIdEl=document.getElementById('acctId');
-    if(acctIdEl)acctIdEl.textContent=resolvedId;
     const lbIdEl=document.getElementById('lbId');
     if(lbIdEl)lbIdEl.textContent=resolvedId;
     const lbSubEl=document.getElementById('lbSub');
@@ -2379,6 +2410,16 @@ async function fetchStatus(){
     } else {document.getElementById('r1sub').textContent='N/A';document.getElementById('rp1').textContent='—';}
     if(dl)setBar(2,dl.pct,dl.used,dl.limit,dl.remaining,[{cls:'warn',label:'⚠ '+usd(dl.limit*.5)},{cls:'soft',label:'● '+usd(dl.limit*.8)},{cls:'hard',label:'⛔ '+usd(dl.limit)}]);
     if(ol)setBar(3,ol.pct,ol.used,ol.limit,ol.remaining,[{cls:'warn',label:'⚠ '+usd(ol.limit*.5)},{cls:'soft',label:'● '+usd(ol.limit*.8)},{cls:'hard',label:'⛔ '+usd(ol.limit)}]);
+    if(!overviewState.payout){
+      const usage=[ri?.pct,dl?.pct,ol?.pct].filter(v=>typeof v==='number');
+      const maxUsage=usage.length?Math.max(...usage):null;
+      overviewState.payout={
+        progressVal:maxUsage==null?'—':Math.round(maxUsage)+'%',
+        progressSub:maxUsage==null?'Waiting for rule telemetry':'Rule usage against limits',
+        progressTone:maxUsage==null?'txt-dim':maxUsage>=90?'txt-red':maxUsage>=75?'txt-orange':'txt-blue'
+      };
+      renderOverviewCards();
+    }
     const aBar=document.getElementById('alertBar'),aIco=document.getElementById('alertIco');
     const aTitle=document.getElementById('alertTitle'),aSub=document.getElementById('alertSub'),aPill=document.getElementById('alertPill');
     pushAlertsToDrawer(alerts,acct);
@@ -2406,9 +2447,18 @@ async function fetchStatus(){
   }catch(e){
     document.getElementById('tb-status').textContent='connection error';
     document.getElementById('tb-status').style.color='var(--red)';
+    overviewState.status={
+      ...(overviewState.status||{}),
+      syncVal:'Error',
+      syncSub:'Could not refresh status',
+      syncTone:'txt-red'
+    };
+    renderOverviewCards();
   }
 }
 fetchStatus();setInterval(fetchStatus,5000);
+fetchAnalytics();
+fetchPayout();
 fetchChallenges();
 fetchNews(); // populate drawer on load
 // Pre-load trades on boot so balance inferral works from the start
@@ -2419,9 +2469,10 @@ if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
   const inferredBal=inferBalanceFromTrades(trades,sz);
   if(inferredBal!=null){
     cacheBalance(activeAcct,inferredBal);
-    // If the extension isn't live yet, fill balance box from trade history
-    const balEl=document.getElementById('mBal');
-    if(balEl&&balEl.textContent==='$—') balEl.textContent=usd(inferredBal);
+    if(!overviewState.status){
+      overviewState.status={balance:inferredBal,balanceSub:'Inferred from trade history',balanceTone:'txt-green'};
+      renderOverviewCards();
+    }
   }
 }).catch(()=>{});
 
@@ -2481,6 +2532,8 @@ async function fetchPayout(){
     if(!res.ok)throw new Error('status '+res.status);
     renderPayout(await res.json());
   }catch(e){
+    overviewState.payout={progressVal:'Offline',progressSub:'Could not load payout/challenge status',progressTone:'txt-red'};
+    renderOverviewCards();
     // dismiss skeleton, show error in real card
     const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
     if(sp){sp.classList.remove('sk-in');sp.classList.add('sk-out');}
@@ -2589,6 +2642,12 @@ function renderPayout(ev){
     if(eligible){badge.textContent='Eligible';badge.className='ph-badge eligible';}
     else if(breached){badge.textContent='Breached';badge.className='ph-badge breached';}
     else{badge.textContent='Not Yet';badge.className='ph-badge not-yet';}
+    overviewState.payout={
+      progressVal:eligible?'Eligible':breached?'Breached':'In Progress',
+      progressSub:eligible?'Ready to request payout':(p.payout_amount!=null?('Available '+usd(p.payout_amount)):'Tracking master checks'),
+      progressTone:eligible?'txt-green':breached?'txt-red':'txt-blue'
+    };
+    renderOverviewCards();
 
     reqBtn.style.opacity=eligible?'1':'0.4';
     reqBtn.style.pointerEvents=eligible?'auto':'none';
@@ -2638,6 +2697,12 @@ function renderPayout(ev){
     if(allPassed){badge.textContent='Pass!';badge.className='ph-badge eligible';}
     else if(breached){badge.textContent='Breached';badge.className='ph-badge breached';}
     else{badge.textContent='In Progress';badge.className='ph-badge phase';}
+    overviewState.payout={
+      progressVal:(Math.round(progress)||0)+'%',
+      progressSub:'Target '+targetPct+'% · '+tradingDays+'/'+minDays+' trading days',
+      progressTone:allPassed?'txt-green':breached?'txt-red':'txt-blue'
+    };
+    renderOverviewCards();
 
     reqBtn.style.display='none';
     checksEl.innerHTML=buildChecks(checks);
@@ -3223,6 +3288,12 @@ async function fetchAnalytics(){
     });
     document.getElementById('analyticsMeta').textContent=trades.length+' trades';
     if(!trades.length){
+      overviewState.analytics={
+        dailyPnl:null,dailySub:'No closed trades today',dailyTone:'txt-dim',
+        overallPnl:null,overallSub:'Waiting for closed trades',overallTone:'txt-dim',
+        winRate:null,winRateSub:'Waiting for trade history',winRateTone:'txt-dim'
+      };
+      renderOverviewCards();
       document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>No trades recorded yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>';
       return;
     }
@@ -3240,9 +3311,26 @@ async function fetchAnalytics(){
     if(inferredBal!=null) cacheBalance(activeAcct, inferredBal);
     const gp=wins.reduce((s,t)=>s+(t.pnl||0),0),gl=Math.abs(losses.reduce((s,t)=>s+(t.pnl||0),0));
     const netPnl=trades.reduce((s,t)=>s+(t.pnl||0),0),wr=Math.round(wins.length/trades.length*100);
+    const todayKey=(new Date()).toISOString().slice(0,10);
+    const dailyPnl=trades.reduce((sum,t)=>{
+      const d=(t.closedAt||t.loggedAt||'').slice(0,10);
+      return d===todayKey?sum+(t.pnl||0):sum;
+    },0);
     const pf=gl>0?(gp/gl).toFixed(2):'∞';
     const avgW=wins.length?gp/wins.length:0;
     const avgL=losses.length?gl/losses.length:0;
+    overviewState.analytics={
+      dailyPnl,
+      dailySub:'Closed trades today',
+      dailyTone:dailyPnl>0?'txt-green':dailyPnl<0?'txt-red':'txt-dim',
+      overallPnl:netPnl,
+      overallSub:'Across '+trades.length+' closed trade(s)',
+      overallTone:netPnl>0?'txt-green':netPnl<0?'txt-red':'txt-dim',
+      winRate:wr,
+      winRateSub:wins.length+'W · '+losses.length+'L',
+      winRateTone:wr>=50?'txt-green':'txt-red'
+    };
+    renderOverviewCards();
 
     // Best/worst symbol
     const symPnl={};
@@ -3327,6 +3415,8 @@ async function fetchAnalytics(){
     el.innerHTML=`<div style="display:flex;gap:6px;justify-content:space-between;align-items:center;margin-bottom:8px"><div style="display:flex;gap:6px"><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="historyFilter='all';historyPage=1;fetchAnalytics()">All</button><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="historyFilter='wins';historyPage=1;fetchAnalytics()">Wins</button><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="historyFilter='losses';historyPage=1;fetchAnalytics()">Losses</button></div><div style="display:flex;gap:6px"><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="if(historyPage>1){historyPage--;fetchAnalytics();}">Prev</button><button class="btn btn-ghost" style="padding:5px 8px;font-size:10px" onclick="if(historyPage<${totalPages}){historyPage++;fetchAnalytics();}">Next</button></div></div>${rowsHtml}`;
   }catch(e){
     console.error('fetchAnalytics error:',e);
+    overviewState.analytics={dailyPnl:null,overallPnl:null,winRate:null,dailySub:'Unavailable',overallSub:'Could not load analytics',winRateSub:'Could not load analytics'};
+    renderOverviewCards();
     document.getElementById('recentTradesEl').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Error loading analytics — tap to retry</div>';
   }
 }
