@@ -322,18 +322,33 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .drawer-tab.red-active{background:var(--red-dim);border-color:rgba(224,92,92,0.3);color:var(--red);}
 .drawer-body{overflow-y:auto;padding:12px 14px calc(16px + env(safe-area-inset-bottom));flex:1;}
 .drawer-body::-webkit-scrollbar{width:2px;}
-.notif-item{display:flex;align-items:flex-start;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border);transition:opacity .2s;}
+.notif-item{display:flex;align-items:flex-start;gap:12px;padding:11px 4px;border-bottom:1px solid var(--border);transition:opacity .2s,background .2s;border-radius:10px;cursor:pointer;}
 .notif-item:last-child{border-bottom:none;}
+.notif-item.unread{background:rgba(42,171,238,0.07);}
 .notif-icon{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px;}
 .notif-icon svg{width:16px;height:16px;stroke:currentColor;fill:none;}
 .notif-content{flex:1;}
 .notif-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:3px;line-height:1.3;}
+.notif-item.unread .notif-title{color:#fff;}
 .notif-sub{font-size:11px;color:var(--t3);line-height:1.4;}
 .notif-time{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--t3);margin-top:4px;}
 .notif-pill{display:inline-flex;align-items:center;font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;padding:2px 8px;border-radius:100px;margin-top:4px;}
+.notif-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:5px;}
+.notif-dot{width:7px;height:7px;border-radius:50%;background:var(--blue);box-shadow:0 0 0 2px rgba(42,171,238,0.2);}
+.drawer-actions{display:flex;align-items:center;gap:8px;padding:10px 18px 0;}
+.drawer-action-btn{font-size:10px;padding:4px 10px;border-radius:999px;border:1px solid var(--border);color:var(--t3);background:var(--s2);}
+.drawer-action-btn:hover{border-color:var(--border2);color:var(--blue);}
 .notif-empty{text-align:center;padding:36px 16px;color:var(--t3);}
 .notif-empty svg{display:block;margin:0 auto 10px;opacity:.3;}
 .notif-empty p{font-size:12px;}
+@media(max-width:560px){
+  .drawer-body{padding:10px 10px calc(14px + env(safe-area-inset-bottom));}
+  .drawer-tabs{padding:0 12px 10px;overflow-x:auto;scrollbar-width:none;}
+  .drawer-tabs::-webkit-scrollbar{display:none;}
+  .drawer-tab{white-space:nowrap;}
+  .history-row{grid-template-columns:1fr;}
+  .history-pnl{text-align:left;}
+}
 /* ── ACCOUNT / PAYOUT ── */
 .payout-hero{background:linear-gradient(135deg,rgba(42,171,238,0.08),rgba(42,171,238,0.03));border:1px solid rgba(42,171,238,0.15);border-radius:var(--r);padding:20px;margin-bottom:10px;position:relative;overflow:hidden;}
 .payout-hero::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--blue),rgba(42,171,238,0.3),transparent);}
@@ -2514,6 +2529,7 @@ function switchAccount(id){
   dashboardState.payout=null;
   dashboardState.alerts=[];
   dashboardState.news=[];
+  resetDrawerForContext();
   renderOverviewCards();
   renderDashboardCards();
   dashRevealed=false;
@@ -2684,6 +2700,26 @@ function formatStartsIn(minutes){
   const rem=m%60;
   return 'starts in '+hrs+'h'+(rem?' '+rem+'m':'');
 }
+function formatAbsoluteShort(iso){
+  if(!iso) return 'Time unavailable';
+  const d=new Date(iso);
+  if(!Number.isFinite(d.getTime())) return 'Time unavailable';
+  return d.toLocaleString('en-US',{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+}
+function eventMinutesUntil(event){
+  if(!event) return null;
+  const startIso=event.start_at||event.event_time||event.datetime||event.starts_at||null;
+  if(startIso){
+    const ms=new Date(startIso).getTime();
+    if(Number.isFinite(ms)) return Math.round((ms-Date.now())/60000);
+  }
+  if(Number.isFinite(Number(event.minutes_until))){
+    const fetchedAt=Number(event._fetchedAt||Date.now());
+    const baseline=Number(event.minutes_until);
+    return Math.round(baseline-((Date.now()-fetchedAt)/60000));
+  }
+  return null;
+}
 function escapeHtml(v){
   return String(v??'').replace(/[&<>"']/g,s=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[s]));
 }
@@ -2729,7 +2765,7 @@ function renderDashboardAlertsPanel(){
   if(!host||!meta) return;
   const alertItems=(dashboardState.alerts||[]).map(a=>({...a,__kind:'alert'}));
   const newsItems=(dashboardState.news||[]).slice(0,3).map(n=>({...n,__kind:'news'}));
-  const items=[...alertItems,...newsItems].sort((a,b)=>(a.minutes_until??0)-(b.minutes_until??0)).slice(0,5);
+  const items=[...alertItems,...newsItems].sort((a,b)=>(eventMinutesUntil(a)??999999)-(eventMinutesUntil(b)??999999)).slice(0,5);
   if(!items.length){
     meta.textContent='No active feed items';
     host.innerHTML='<div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">No risk alerts or calendar headlines are active right now.</div>';
@@ -2741,19 +2777,20 @@ function renderDashboardAlertsPanel(){
       const lvl=String(item.level||'info').toLowerCase();
       const tag=lvl==='critical'?'Critical':lvl==='warn'?'Warning':'Info';
       const tone=lvl==='critical'?'var(--red)':lvl==='warn'?'var(--orange)':'var(--blue)';
-      const stamp=item.updated_at?prettyRelativeFromIso(item.updated_at):'active';
-      const unread=item.read===false;
+      const stamp=item.updated_at?prettyRelativeFromIso(item.updated_at):(item.created_at?prettyRelativeFromIso(item.created_at):'active');
+      const unread=isDrawerItemUnread({...item,type:'alert'});
       const unreadMark=unread?'<span style="font-size:9px;color:var(--blue);margin-left:6px">UNREAD</span>':'';
       const symbol=item.symbol||item.currency||'';
       const symbolHtml=symbol?`<div style="font-size:10px;color:var(--t3);margin-top:4px">${escapeHtml(symbol)}</div>`:'';
       return `<div style="padding:10px;border:1px solid var(--border);border-left:3px solid ${tone};border-radius:10px;background:${unread?'rgba(42,171,238,0.08)':'var(--s2)'}"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(item.message||item.title||'Risk alert')}${unreadMark}${symbolHtml}</div><div class="tag" style="white-space:nowrap;color:${tone};border-color:${tone};font-size:9px">${tag}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(stamp)}</div></div>`;
     }
-    const m=item.minutes_until;
+    const m=eventMinutesUntil(item);
     const when=m==null?'Scheduled':formatStartsIn(m);
     const impact=item.impact||item.severity||'News';
     const symbol=item.symbol||item.currency||'';
     const symbolHtml=symbol?` · ${escapeHtml(symbol)}`:'';
-    return `<div style="padding:10px;border:1px solid var(--border);border-left:3px solid var(--orange);border-radius:10px;background:var(--s2)"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(item.title||'Event')}${symbolHtml}</div><div class="tag" style="font-size:9px">${escapeHtml(String(impact))}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(item.time_et||'Time unavailable')} · ${escapeHtml(when)}</div></div>`;
+    const baseTime=item.time_et||formatAbsoluteShort(item.start_at||item.event_time||item.datetime||item.starts_at);
+    return `<div style="padding:10px;border:1px solid var(--border);border-left:3px solid var(--orange);border-radius:10px;background:var(--s2)"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(item.title||'Event')}${symbolHtml}</div><div class="tag" style="font-size:9px">${escapeHtml(String(impact))}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(baseTime)} · ${escapeHtml(when)}</div></div>`;
   }).join('');
 }
 function renderDashboardEventsPanel(){
@@ -2768,8 +2805,10 @@ function renderDashboardEventsPanel(){
   }
   meta.textContent=events.length+' event'+(events.length===1?'':'s');
   host.innerHTML=events.map(e=>{
-    const impact=e.impact||e.severity||(e.minutes_until<=15?'High':'Scheduled');
-    return `<div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--s2)"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(e.title||'Event')}</div><div class="tag" style="font-size:9px">${escapeHtml(String(impact))}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(e.time_et||'Time unavailable')}</div><div style="font-size:10px;color:var(--blue);margin-top:4px">${escapeHtml(formatStartsIn(e.minutes_until))}</div></div>`;
+    const mins=eventMinutesUntil(e);
+    const impact=e.impact||e.severity||(mins!=null&&mins<=15?'High':'Scheduled');
+    const baseTime=e.time_et||formatAbsoluteShort(e.start_at||e.event_time||e.datetime||e.starts_at);
+    return `<div style="padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--s2)"><div style="display:flex;justify-content:space-between;gap:8px"><div style="font-size:12px;color:var(--text);font-weight:600">${escapeHtml(e.title||'Event')}</div><div class="tag" style="font-size:9px">${escapeHtml(String(impact))}</div></div><div style="font-size:10px;color:var(--t3);margin-top:6px">${escapeHtml(baseTime)}</div><div style="font-size:10px;color:var(--blue);margin-top:4px">${escapeHtml(formatStartsIn(mins))}</div></div>`;
   }).join('');
 }
 function refreshDashboardQuickActions(){
@@ -2833,6 +2872,7 @@ function renderNoAccountState(kind='default'){
   dashboardState.payout=null;
   dashboardState.alerts=[];
   dashboardState.news=[];
+  resetDrawerForContext();
   renderOverviewCards();
   renderDashboardCards();
 
@@ -3091,7 +3131,7 @@ async function fetchStatus(){
     dashboardState.alerts=(alerts||[]).map(a=>({
       ...a,
       message:a.message||a.title||'Risk alert',
-      updated_at:a.updated_at||a.timestamp||a.created_at||new Date().toISOString()
+      updated_at:a.updated_at||a.timestamp||a.created_at||null
     }));
     renderDashboardCards();
     if(alerts&&alerts.length){
@@ -3144,6 +3184,14 @@ fetchPayout();
 fetchChallenges();
 fetchNews(); // populate drawer on load
 setInterval(fetchNews,60000);
+let notifClockInterval=null;
+if(!notifClockInterval){
+  notifClockInterval=setInterval(()=>{
+    renderDashboardCards();
+    if(document.getElementById('notif-drawer')?.classList.contains('open')) renderDrawer();
+    if(document.getElementById('page-news')?.classList.contains('active')) renderNewsFeedList();
+  },30000);
+}
 // Pre-load trades on boot so balance inferral works from the start
 // and analytics tab shows data instantly when first tapped
 if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
@@ -4234,35 +4282,51 @@ async function fetchAnalytics(){
 }
 
 // NEWS
+function renderNewsFeedList(){
+  const el=document.getElementById('newsList');
+  if(!el) return;
+  const events=dashboardState.news||[];
+  if(!events.length){
+    el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">No high-impact events in the next 8 hours</div>';
+    return;
+  }
+  el.innerHTML=events.map(e=>{
+    const m=eventMinutesUntil(e);
+    let cls='',pillCls='news-pill-now',when=formatStartsIn(m).replace('starts in ','');
+    if(m==null||m>60){cls='news-later';pillCls='news-pill-later';}
+    else if(m>15){cls='news-soon';pillCls='news-pill-soon';}
+    const fc=e.forecast?`<div style="font-size:10px;color:var(--t3);margin-top:4px;font-family:'JetBrains Mono',monospace">F: ${e.forecast} · P: ${e.previous||'—'}</div>`:'';
+    const baseTime=e.time_et||formatAbsoluteShort(e.start_at||e.event_time||e.datetime||e.starts_at);
+    return`<div class="news-item ${cls} rip">
+      <div class="news-title">${e.title}${fc}</div>
+      <div class="news-meta"><div class="news-time-str"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${baseTime}</div><div class="news-pill ${pillCls}">${when}</div></div>
+    </div>`;
+  }).join('');
+}
 async function fetchNews(){
   const requestSeq=++newsFetchSeq;
   const requestedAcct=activeAcct;
+  const el=document.getElementById('newsList');
+  if(el&&(!dashboardState.news||!dashboardState.news.length)){
+    el.innerHTML='<div style="text-align:center;padding:26px;color:var(--t3);font-size:12px">Loading economic calendar…</div>';
+  }
   try{
     const res=await fetch(API+'/extension/news');
+    if(!res.ok) throw new Error('status '+res.status);
     const data=await res.json();
     if(requestSeq!==newsFetchSeq||requestedAcct!==activeAcct) return;
-    const events=data.events||[];
+    const fetchedAt=Date.now();
+    const events=(data.events||[]).map(e=>({...e,_fetchedAt:fetchedAt}));
     dashboardState.news=events;
     pushNewsToDrawer(events);
     renderDashboardCards();
-    const el=document.getElementById('newsList');
-    if(!events.length){el.innerHTML='<div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">No high-impact events in the next 8 hours</div>';return;}
-    el.innerHTML=events.map(e=>{
-      const m=e.minutes_until;
-      let cls='',pillCls='news-pill-now',when=m+'m away';
-      if(m>60){cls='news-later';pillCls='news-pill-later';when=Math.round(m/60*10)/10+'h away';}
-      else if(m>15){cls='news-soon';pillCls='news-pill-soon';}
-      const fc=e.forecast?`<div style="font-size:10px;color:var(--t3);margin-top:4px;font-family:'JetBrains Mono',monospace">F: ${e.forecast} · P: ${e.previous||'—'}</div>`:'';
-      return`<div class="news-item ${cls} rip">
-        <div class="news-title">${e.title}${fc}</div>
-        <div class="news-meta"><div class="news-time-str"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ${e.time_et}</div><div class="news-pill ${pillCls}">${when}</div></div>
-      </div>`;
-    }).join('');
+    renderNewsFeedList();
   }catch(e){
     if(requestSeq!==newsFetchSeq||requestedAcct!==activeAcct) return;
     dashboardState.news=[];
+    pushNewsToDrawer([]);
     renderDashboardCards();
-    document.getElementById('newsList').innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Could not load calendar</div>';
+    if(el)el.innerHTML='<div style="text-align:center;padding:20px;color:var(--red);font-size:12px">Could not load calendar right now. Pull to refresh later.</div>';
   }
 }
 
@@ -4278,6 +4342,7 @@ async function fetchChallenges(){
     return;
   }
   meta.textContent='Account '+activeAcct;
+  host.innerHTML='<div class="card card-p" style="text-align:center;color:var(--t3);font-size:12px">Loading challenge and payout checks…</div>';
   try{
     const res=await fetch(API+'/extension/payout?account_id='+encodeURIComponent(activeAcct));
     if(!res.ok) throw new Error('payout failed');
@@ -4569,11 +4634,85 @@ updateRiskCalc();
 // ── NOTIFICATION DRAWER ──────────────────────────────────────────────────────
 let drawerNotifs={alerts:[],news:[]};
 let drawerTab='all';
+const DRAWER_READ_STORAGE_KEY='tali_legacy_drawer_read_v1';
+let drawerReadState=readJsonStorage(DRAWER_READ_STORAGE_KEY,{});
+
+function drawerScopeKey(){
+  return activeAcct||'no_account';
+}
+function getNotifIdentity(item){
+  return [
+    item.type||'item',
+    item.id||item.event_id||item.alert_id||'',
+    item.title||item.message||'',
+    item.symbol||item.currency||'',
+    item.updated_at||item.timestamp||item.created_at||item.time_et||item.start_at||''
+  ].join('|');
+}
+function hasBackendReadFlag(item){
+  return typeof item.read==='boolean'||typeof item.is_read==='boolean';
+}
+function isDrawerItemUnread(item){
+  if(hasBackendReadFlag(item)) return item.read===false||item.is_read===false;
+  const scope=drawerScopeKey();
+  const key=getNotifIdentity(item);
+  return !(drawerReadState?.[scope]?.[key]);
+}
+function markDrawerItemRead(item){
+  if(!item||hasBackendReadFlag(item)) return;
+  const scope=drawerScopeKey();
+  const key=getNotifIdentity(item);
+  drawerReadState[scope]=drawerReadState[scope]||{};
+  drawerReadState[scope][key]=Date.now();
+  localStorage.setItem(DRAWER_READ_STORAGE_KEY,JSON.stringify(drawerReadState));
+}
+function markDrawerItemReadByKey(key){
+  if(!key) return;
+  const item=[...drawerNotifs.alerts,...drawerNotifs.news].find(it=>getNotifIdentity(it)===key);
+  if(!item) return;
+  markDrawerItemRead(item);
+}
+function markVisibleDrawerItemsRead(){
+  getFilteredItems().forEach(markDrawerItemRead);
+  updateBellDot();
+  renderDrawer();
+  renderDashboardCards();
+}
+function resetDrawerForContext(){
+  drawerNotifs={alerts:[],news:[]};
+  updateBellDot();
+  if(document.getElementById('notif-drawer')?.classList.contains('open')) renderDrawer();
+}
+function dedupeByIdentity(items){
+  const seen=new Set();
+  return (items||[]).filter(it=>{
+    const key=getNotifIdentity(it);
+    if(seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+function priorityForItem(item){
+  if(item.type==='alert'){
+    if(item.level==='critical') return 0;
+    if(item.level==='warn') return 1;
+    return 4;
+  }
+  const mins=eventMinutesUntil(item);
+  if(mins!=null&&mins<=30) return 2;
+  if(mins!=null&&mins<=240) return 3;
+  return 5;
+}
+function itemSortValue(item){
+  const mins=eventMinutesUntil(item);
+  return mins==null?999999:mins;
+}
 
 function openDrawer(){
   document.getElementById('notif-overlay').classList.add('open');
   document.getElementById('notif-drawer').classList.add('open');
   document.body.style.overflow='hidden';
+  markVisibleDrawerItemsRead();
   renderDrawer();
 }
 function closeDrawer(){
@@ -4584,6 +4723,14 @@ function closeDrawer(){
 document.getElementById('btnBell').addEventListener('click',openDrawer);
 document.getElementById('drawerClose').addEventListener('click',closeDrawer);
 document.getElementById('notif-overlay').addEventListener('click',closeDrawer);
+document.getElementById('drawerBody').addEventListener('click',e=>{
+  const row=e.target.closest('.notif-item[data-read-key]');
+  if(!row) return;
+  markDrawerItemReadByKey(row.dataset.readKey||'');
+  updateBellDot();
+  renderDrawer();
+  renderDashboardCards();
+});
 
 let touchStartY=0;
 document.getElementById('notif-drawer').addEventListener('touchstart',e=>{touchStartY=e.touches[0].clientY;},{passive:true});
@@ -4603,6 +4750,20 @@ document.querySelectorAll('.drawer-tab').forEach(tab=>{
 
 function renderDrawer(){
   const body=document.getElementById('drawerBody');
+  const tabWrap=document.querySelector('.drawer-tabs');
+  if(tabWrap){
+    const unreadCount=getFilteredItems().filter(isDrawerItemUnread).length;
+    const existingAction=document.getElementById('drawerMarkReadBtn');
+    if(existingAction) existingAction.remove();
+    if(unreadCount>0){
+      const btn=document.createElement('button');
+      btn.id='drawerMarkReadBtn';
+      btn.className='drawer-action-btn rip';
+      btn.textContent='Mark visible read';
+      btn.onclick=markVisibleDrawerItemsRead;
+      tabWrap.insertAdjacentElement('beforebegin',btn);
+    }
+  }
   const items=getFilteredItems();
   if(!items.length){
     const msg=drawerTab==='alerts'?'No active risk alerts':drawerTab==='news'?'No upcoming news events':'All clear — nothing to report';
@@ -4613,12 +4774,18 @@ function renderDrawer(){
 }
 
 function getFilteredItems(){
-  if(drawerTab==='alerts')return drawerNotifs.alerts;
-  if(drawerTab==='news')return drawerNotifs.news;
-  return[...drawerNotifs.alerts,...drawerNotifs.news].sort((a,b)=>a.urgency-b.urgency);
+  const ordered=(items)=>dedupeByIdentity(items).sort((a,b)=>{
+    const pa=priorityForItem(a),pb=priorityForItem(b);
+    if(pa!==pb) return pa-pb;
+    return itemSortValue(a)-itemSortValue(b);
+  });
+  if(drawerTab==='alerts')return ordered(drawerNotifs.alerts);
+  if(drawerTab==='news')return ordered(drawerNotifs.news);
+  return ordered([...drawerNotifs.alerts,...drawerNotifs.news]);
 }
 
 function renderNotifItem(item){
+  const unread=isDrawerItemUnread(item);
   if(item.type==='alert'){
     const isCrit=item.level==='critical',isWarn=item.level==='warn';
     const bg=isCrit?'var(--red-dim)':isWarn?'var(--orange-dim)':'var(--blue-dim)';
@@ -4627,54 +4794,78 @@ function renderNotifItem(item){
     const icon=isCrit
       ?`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
       :`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`;
-    return`<div class="notif-item"><div class="notif-icon" style="background:${bg};color:${col}">${icon}</div><div class="notif-content"><div class="notif-title">${item.title}</div><div class="notif-sub">${item.sub}</div><div class="notif-pill" style="background:${bg};color:${col};border:1px solid ${border}">${item.tag}</div></div></div>`;
+    const symbol=item.symbol||item.currency||'';
+    const stamp=item.updated_at?prettyRelativeFromIso(item.updated_at):(item.created_at?prettyRelativeFromIso(item.created_at):'active');
+    return`<div class="notif-item ${unread?'unread':''}" data-read-key="${escapeHtml(getNotifIdentity(item))}"><div class="notif-icon" style="background:${bg};color:${col}">${icon}</div><div class="notif-content"><div class="notif-title">${item.title}</div><div class="notif-sub">${item.sub}</div><div class="notif-meta">${unread?'<span class="notif-dot"></span>':''}<span class="notif-time">${stamp}</span>${symbol?`<span class="notif-time">${escapeHtml(symbol)}</span>`:''}</div><div class="notif-pill" style="background:${bg};color:${col};border:1px solid ${border}">${item.tag}</div></div></div>`;
   }
   if(item.type==='news'){
-    const isNow=item.minutes<=15,isSoon=item.minutes<=60;
+    const mins=eventMinutesUntil(item);
+    const isNow=mins!=null&&mins<=15,isSoon=mins!=null&&mins<=60;
     const col=isNow?'var(--red)':isSoon?'var(--orange)':'var(--t3)';
     const bg=isNow?'var(--red-dim)':isSoon?'var(--orange-dim)':'var(--s3)';
     const border=isNow?'rgba(224,92,92,0.3)':isSoon?'rgba(232,146,74,0.3)':'var(--border)';
-    const when=item.minutes<60?item.minutes+'m away':Math.round(item.minutes/60*10)/10+'h away';
-    return`<div class="notif-item"><div class="notif-icon" style="background:${bg};color:${col}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="notif-content"><div class="notif-title">${item.title}</div><div class="notif-sub">${item.time}${item.forecast?' · F: '+item.forecast:''}</div><div class="notif-pill" style="background:${bg};color:${col};border:1px solid ${border}">${when}</div></div></div>`;
+    const when=formatStartsIn(mins);
+    const symbol=item.symbol||item.currency||'';
+    const impact=item.impact||item.severity||'News';
+    return`<div class="notif-item ${unread?'unread':''}" data-read-key="${escapeHtml(getNotifIdentity(item))}"><div class="notif-icon" style="background:${bg};color:${col}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></div><div class="notif-content"><div class="notif-title">${item.title}</div><div class="notif-sub">${item.time}${item.forecast?' · F: '+item.forecast:''}${symbol?' · '+symbol:''}</div><div class="notif-meta">${unread?'<span class="notif-dot"></span>':''}<span class="notif-time">${escapeHtml(impact)}</span></div><div class="notif-pill" style="background:${bg};color:${col};border:1px solid ${border}">${when}</div></div></div>`;
   }
   return'';
 }
 
 function updateBellDot(){
-  const hasAlerts=drawerNotifs.alerts.length>0;
-  const urgentNews=drawerNotifs.news.filter(n=>n.minutes<=60);
+  const unreadAlerts=drawerNotifs.alerts.filter(isDrawerItemUnread);
+  const unreadUrgentNews=drawerNotifs.news.filter(n=>isDrawerItemUnread(n)&&(eventMinutesUntil(n)||999999)<=60);
+  const unreadTotal=[...drawerNotifs.alerts,...drawerNotifs.news].filter(isDrawerItemUnread).length;
   const dot=document.getElementById('bellDot');
-  if(hasAlerts||urgentNews.length){
+  if(unreadTotal>0){
     dot.style.display='block';
-    dot.style.background=hasAlerts?'var(--red)':'var(--orange)';
+    dot.style.background=unreadAlerts.length?'var(--red)':'var(--orange)';
   } else {
     dot.style.display='none';
   }
   const alertTab=document.getElementById('dtabAlerts');
   const newsTab=document.getElementById('dtabNews');
-  alertTab.textContent=drawerNotifs.alerts.length?`Risk Alerts (${drawerNotifs.alerts.length})`:'Risk Alerts';
-  newsTab.textContent=urgentNews.length?`News (${urgentNews.length})`:'News';
+  alertTab.textContent=unreadAlerts.length?`Risk Alerts (${unreadAlerts.length})`:'Risk Alerts';
+  newsTab.textContent=unreadUrgentNews.length?`News (${unreadUrgentNews.length})`:'News';
 }
 
 function pushAlertsToDrawer(alerts,acctData){
-  drawerNotifs.alerts=[];
+  const next=[];
   (alerts||[]).forEach(a=>{
-    drawerNotifs.alerts.push({type:'alert',urgency:a.level==='critical'?0:1,level:a.level,title:a.message||'Risk Alert',sub:a.detail||'Check your risk parameters',tag:a.level==='critical'?'CRITICAL':a.level==='warn'?'WARNING':'INFO'});
+    next.push({
+      ...a,
+      type:'alert',
+      level:a.level,
+      title:a.message||a.title||'Risk Alert',
+      sub:a.detail||'Check your risk parameters',
+      tag:a.level==='critical'?'CRITICAL':a.level==='warn'?'WARNING':'INFO',
+      symbol:a.symbol||a.currency||'',
+      updated_at:a.updated_at||a.timestamp||a.created_at||null
+    });
   });
   [{label:'Risk per Trade',pct:acctData?.riskPerTradeIdea?.pct,applicable:acctData?.riskPerTradeIdea?.applicable},
    {label:'Daily Loss Limit',pct:acctData?.dailyLoss?.pct,applicable:true},
    {label:'Overall Loss Limit',pct:acctData?.overallLoss?.pct,applicable:true}
   ].forEach(c=>{
     if(!c.applicable)return;const p=c.pct||0;
-    if(p>=80&&!drawerNotifs.alerts.find(a=>a.title.startsWith(c.label)))
-      drawerNotifs.alerts.push({type:'alert',urgency:2,level:p>=90?'critical':'warn',title:c.label+' '+(p>=90?'Critical':'Warning'),sub:Math.round(p)+'% of limit reached — take caution',tag:p>=90?'CRITICAL':'80% WARNING'});
+    if(p>=80&&!next.find(a=>a.title.startsWith(c.label)))
+      next.push({type:'alert',level:p>=90?'critical':'warn',title:c.label+' '+(p>=90?'Critical':'Warning'),sub:Math.round(p)+'% of limit reached — take caution',tag:p>=90?'CRITICAL':'80% WARNING',_localOnly:true});
   });
+  drawerNotifs.alerts=dedupeByIdentity(next);
   updateBellDot();
   if(document.getElementById('notif-drawer').classList.contains('open'))renderDrawer();
 }
 
 function pushNewsToDrawer(events){
-  drawerNotifs.news=(events||[]).map(e=>({type:'news',urgency:e.minutes_until,minutes:e.minutes_until,title:e.title,time:e.time_et,forecast:e.forecast})).sort((a,b)=>a.minutes-b.minutes);
+  drawerNotifs.news=dedupeByIdentity((events||[]).map(e=>({
+    ...e,
+    type:'news',
+    title:e.title||'Event',
+    time:e.time_et||formatAbsoluteShort(e.start_at||e.event_time||e.datetime||e.starts_at),
+    forecast:e.forecast||'',
+    symbol:e.symbol||e.currency||'',
+    _fetchedAt:e._fetchedAt||Date.now()
+  })));
   updateBellDot();
   if(document.getElementById('notif-drawer').classList.contains('open'))renderDrawer();
 }
