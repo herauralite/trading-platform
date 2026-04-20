@@ -1220,6 +1220,18 @@ function applyUserToTopbar(user) {
   }
 }
 
+
+window.addEventListener('tali:legacy-add-account-success', async () => {
+  const user = getTaliUser();
+  if (user?.telegramUserId) {
+    await syncLinkedAccountsFromBackend(user.telegramUserId);
+  }
+  fetchStatus();
+  fetchAnalytics();
+  fetchJournal();
+  fetchPayout();
+});
+
 const existingTaliUser = getTaliUser();
 if (existingTaliUser) applyUserToTopbar(existingTaliUser);
 </script>
@@ -1301,7 +1313,11 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
       </div>
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">2</div>
-        <div><div style="font-size:12px;font-weight:600;color:var(--t1)">Open your account on FundingPips</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Navigate to mtr-platform.fundingpips.com — data syncs automatically</div></div>
+        <div>
+          <div style="font-size:12px;font-weight:600;color:var(--t1)">Connect your first account</div>
+          <div style="font-size:11px;color:var(--t3);margin-top:2px">Use the existing add-account flow to link MT5, FundingPips, TradeLocker, Alpaca, TradingView, or beta providers.</div>
+          <button id="onboardAddAccountCta" type="button" class="btn btn-blue" style="margin-top:10px;padding:8px 14px;font-size:12px">Add account</button>
+        </div>
       </div>
     </div>
   </div>
@@ -3339,6 +3355,13 @@ function pushNewsToDrawer(events){
   closeBtn.addEventListener('click', closeLandingOverlay);
   document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeLandingOverlay(); });
 })();
+</script>
+
+
+<div id="legacyAddAccountModalRoot"></div>
+<script type="module">
+  import { initLegacyAccountBridge } from '/src/appLegacyAccountBridge.jsx';
+  initLegacyAccountBridge();
 </script>
 
 </body>
