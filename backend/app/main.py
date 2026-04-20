@@ -458,6 +458,26 @@ async def ensure_users_tables():
                 UNIQUE(telegram_user_id, account_id)
             )
         """))
+        await conn.execute(text("ALTER TABLE prop_accounts ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT FALSE"))
+        await conn.execute(text("""
+            WITH first_account AS (
+                SELECT telegram_user_id, MIN(id) AS id
+                FROM prop_accounts
+                WHERE is_active = TRUE
+                GROUP BY telegram_user_id
+            )
+            UPDATE prop_accounts pa
+            SET is_primary = TRUE
+            FROM first_account fa
+            WHERE pa.id = fa.id
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM prop_accounts p2
+                  WHERE p2.telegram_user_id = pa.telegram_user_id
+                    AND p2.is_active = TRUE
+                    AND p2.is_primary = TRUE
+              )
+        """))
 
     logger.info("users + prop_accounts tables ready")
 
@@ -536,6 +556,7 @@ async def db_get_user_accounts(telegram_user_id: str) -> list:
                         ta.account_size AS account_size,
                         ta.display_label AS label,
                         ta.is_active AS is_active,
+                        FALSE AS is_primary,
                         ta.created_at AS created_at,
                         ta.connector_type AS connector_type,
                         'trading_accounts'::text AS source_model
@@ -552,6 +573,7 @@ async def db_get_user_accounts(telegram_user_id: str) -> list:
                         pa.account_size AS account_size,
                         pa.label AS label,
                         pa.is_active AS is_active,
+                        COALESCE(pa.is_primary, FALSE) AS is_primary,
                         pa.created_at AS created_at,
                         'fundingpips_extension'::text AS connector_type,
                         'prop_accounts_compat'::text AS source_model
@@ -878,6 +900,19 @@ async def db_link_account(telegram_user_id: str, account_id: str, account_type: 
             "acct_size": account_size,
             "label":     label,
         })
+        await conn.execute(text("""
+            UPDATE prop_accounts
+            SET is_primary = TRUE
+            WHERE telegram_user_id = :uid
+              AND account_id = :acct_id
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM prop_accounts p2
+                  WHERE p2.telegram_user_id = :uid
+                    AND p2.is_active = TRUE
+                    AND COALESCE(p2.is_primary, FALSE) = TRUE
+              )
+        """), {"uid": telegram_user_id, "acct_id": account_id})
     await upsert_trading_account({
         "user_id": telegram_user_id,
         "connector_type": "fundingpips_extension",
@@ -1641,6 +1676,71 @@ async def link_account(
     accounts = await db_get_user_accounts(resolved_uid)
     logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
     return {"ok": True, "accounts": accounts}
+
+
+@app.post("/auth/accounts/{account_id}/set-primary")
+async def set_primary_account(
+    account_id: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        exists_row = await conn.execute(text("""
+            SELECT 1
+            FROM prop_accounts
+            WHERE telegram_user_id = :uid
+              AND account_id = :acct_id
+              AND is_active = TRUE
+            LIMIT 1
+        """), {"uid": resolved_uid, "acct_id": account_id})
+        if not exists_row.first():
+            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+        await conn.execute(text("""
+            UPDATE prop_accounts
+            SET is_primary = CASE WHEN account_id = :acct_id THEN TRUE ELSE FALSE END
+            WHERE telegram_user_id = :uid
+        """), {"uid": resolved_uid, "acct_id": account_id})
+    accounts = await db_get_user_accounts(resolved_uid)
+    return {"ok": True, "accounts": accounts, "primary_account_id": account_id}
+
+
+@app.post("/auth/accounts/{account_id}/deactivate")
+async def deactivate_account(
+    account_id: str,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        updated = await conn.execute(text("""
+            UPDATE prop_accounts
+            SET is_active = FALSE, is_primary = FALSE
+            WHERE telegram_user_id = :uid
+              AND account_id = :acct_id
+              AND is_active = TRUE
+        """), {"uid": resolved_uid, "acct_id": account_id})
+        await conn.execute(text("""
+            UPDATE trading_accounts
+            SET is_active = FALSE, updated_at = NOW()
+            WHERE user_id = :uid
+              AND external_account_id = :acct_id
+              AND is_active = TRUE
+        """), {"uid": resolved_uid, "acct_id": account_id})
+        if (updated.rowcount or 0) == 0:
+            return JSONResponse(status_code=404, content={"detail": "Account not found"})
+        await conn.execute(text("""
+            WITH first_account AS (
+                SELECT MIN(id) AS id
+                FROM prop_accounts
+                WHERE telegram_user_id = :uid AND is_active = TRUE
+            )
+            UPDATE prop_accounts
+            SET is_primary = TRUE
+            WHERE id = (SELECT id FROM first_account)
+        """), {"uid": resolved_uid})
+    accounts = await db_get_user_accounts(resolved_uid)
+    return {"ok": True, "accounts": accounts, "deactivated_account_id": account_id}
 
 @app.post("/auth/link-account/compat")
 async def link_account_compat_retired():
