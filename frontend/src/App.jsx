@@ -300,13 +300,14 @@ function App() {
   }, [widgetScriptLoaded, signedIn])
 
   useEffect(() => {
+    if (!signedIn) return
     if (!hasZeroConnectedAccounts) return
     if (location.pathname !== '/app' && location.pathname !== '/app/accounts') return
     if (isAddAccountOpen) return
     if (sessionStorage.getItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY) === '1') return
     sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
-    openAddAccountFlow('mt5_bridge')
-  }, [hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
+    openAddAccountFlow('fundingpips_extension')
+  }, [signedIn, hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
 
@@ -858,7 +859,7 @@ function App() {
                 <button
                   type="button"
                   className="app-nav-link add-account-nav-link"
-                  onClick={() => openAddAccountFlow('mt5_bridge')}
+                  onClick={() => openAddAccountFlow('fundingpips_extension')}
                 >
                   Add Account
                 </button>
@@ -868,7 +869,7 @@ function App() {
               </p>
             </div>
             <div className="row app-shell-actions">
-              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add Account</button>
+              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('fundingpips_extension')}>Add Account</button>
               <AccountSwitcher
                 accounts={unifiedAccountWorkspaces}
                 selectedAccountKey={selectedAccountKey}
@@ -881,7 +882,7 @@ function App() {
             <section className="panel first-run-shell-cta" aria-live="polite">
               <div className="row">
                 <h2>Get started by adding your first account</h2>
-                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('mt5_bridge')}>Add your first account</button>
+                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('fundingpips_extension')}>Add your first account</button>
               </div>
               <p className="hint">
                 Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
@@ -897,7 +898,7 @@ function App() {
                 <AppLandingPage
                   hasZeroConnectedAccounts={hasZeroConnectedAccounts}
                   accountConnectionState={accountConnectionState}
-                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  onAddAccount={() => openAddAccountFlow('fundingpips_extension')}
                 />
               )}
             />
@@ -908,7 +909,7 @@ function App() {
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
-                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  onAddAccount={() => openAddAccountFlow('fundingpips_extension')}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}
                 />
@@ -944,7 +945,7 @@ function App() {
                   createManualAccount={createManualAccount}
                   createManualTrade={createManualTrade}
                   importCsvTrades={importCsvTrades}
-                  onAddAccount={() => openAddAccountFlow('mt5_bridge')}
+                  onAddAccount={() => openAddAccountFlow('fundingpips_extension')}
                   addFlowIntent={addFlowIntent}
                 />
               )}
