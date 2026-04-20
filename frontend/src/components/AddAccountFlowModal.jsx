@@ -324,20 +324,22 @@ function AddAccountFlowModal({
 
             {selectedProvider.connectorType === 'fundingpips_extension' ? (
               <>
-                <p className="hint">Connect a FundingPips account with the existing extension connector behavior.</p>
+                <p className="hint">Enter your FundingPips account ID — the numeric ID shown in your MTR dashboard (e.g. <span className="mono">1917136</span>). The extension will auto-link once you open FundingPips in a new tab.</p>
                 <div className="row">
                   <input
-                    placeholder="Account ID"
+                    placeholder="Account ID (e.g. 1917136)"
                     value={draft.external_account_id}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, external_account_id: event.target.value }))}
+                    onChange={(event) => setDraft((prev) => ({ ...prev, external_account_id: event.target.value.replace(/\D/g, '') }))}
+                    inputMode="numeric"
                     required
                   />
                   <input
-                    placeholder="Display label"
+                    placeholder="Display label (optional)"
                     value={draft.display_label}
                     onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
                   />
                 </div>
+                <p className="hint">After adding, open <span className="mono">mtr-platform.fundingpips.com</span> with the extension active — data syncs automatically.</p>
               </>
             ) : null}
 
