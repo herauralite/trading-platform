@@ -450,6 +450,9 @@ body.compact-mode .sec-head{margin:8px 0 6px;}
 .chart-tool-btn{width:28px;height:28px;border-radius:7px;background:rgba(30,44,58,0.9);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;transition:background .18s,transform .2s var(--spring);backdrop-filter:blur(8px);}
 .chart-tool-btn:hover{background:var(--s3);border-color:var(--border2);}
 .chart-tool-btn.active{background:var(--blue-dim);border-color:var(--blue);}
+.chart-state-overlay{position:absolute;inset:46px 14px 14px;display:flex;align-items:center;justify-content:center;text-align:center;padding:16px;border:1px dashed var(--border);border-radius:10px;background:rgba(23,33,43,0.7);color:var(--t2);font-size:12px;line-height:1.6;z-index:9;backdrop-filter:blur(2px);}
+.chart-state-overlay.hidden{display:none;}
+.chart-state-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;}
 .live-tag{position:absolute;top:8px;left:8px;z-index:10;display:flex;align-items:center;gap:5px;background:rgba(30,44,58,0.9);border:1px solid var(--border);border-radius:7px;padding:4px 9px;backdrop-filter:blur(8px);}
 .live-tag-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:dotBlink 1.4s ease-in-out infinite;}
 .live-tag-txt{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;color:var(--green);letter-spacing:1px;}
@@ -1742,33 +1745,30 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
 <div id="page-chart" class="page">
   <div class="chart-page-inner">
     <div class="inst-scroll"><div class="inst-track" id="instTrack">
-      <div class="inst-btn active rip" data-sym="NQ/USD" data-price="17234.25"><div class="inst-sym">NQ/USD</div><div class="inst-price txt-green">17,234.25</div><div class="inst-chg txt-green">+0.31%</div></div>
-      <div class="inst-btn rip" data-sym="ES/USD" data-price="4892.50"><div class="inst-sym">ES/USD</div><div class="inst-price txt-red">4,892.50</div><div class="inst-chg txt-red">-0.18%</div></div>
-      <div class="inst-btn rip" data-sym="GC/USD" data-price="2341.80"><div class="inst-sym">GC/USD</div><div class="inst-price txt-green">2,341.80</div><div class="inst-chg txt-green">+0.44%</div></div>
-      <div class="inst-btn rip" data-sym="CL/USD" data-price="72.14"><div class="inst-sym">CL/USD</div><div class="inst-price txt-red">72.14</div><div class="inst-chg txt-red">-0.22%</div></div>
-      <div class="inst-btn rip" data-sym="EUR/USD" data-price="1.0832"><div class="inst-sym">EUR/USD</div><div class="inst-price txt-green">1.0832</div><div class="inst-chg txt-green">+0.12%</div></div>
-      <div class="inst-btn rip" data-sym="BTC/USD" data-price="67450"><div class="inst-sym">BTC/USD</div><div class="inst-price txt-green">67,450</div><div class="inst-chg txt-green">+1.24%</div></div>
+      <div class="inst-btn active rip"><div class="inst-sym">Active Account</div><div class="inst-price" id="chartAcctId">No account</div><div class="inst-chg" id="chartAcctType">Connect account</div></div>
+      <div class="inst-btn rip"><div class="inst-sym">Source</div><div class="inst-price txt-blue">Trade timeline</div><div class="inst-chg">balanceAfter / equity</div></div>
+      <div class="inst-btn rip"><div class="inst-sym">Markers</div><div class="inst-price txt-blue">Closed trades</div><div class="inst-chg">Win/Loss overlays</div></div>
     </div></div>
     <div class="price-header">
-      <div><div class="ph-sym" id="ph-sym">NQ/USD · NASDAQ</div><div class="ph-price" id="ph-price">17,234.25</div><div class="ph-change txt-green" id="ph-change">+53.75 (+0.31%)</div></div>
+      <div><div class="ph-sym" id="ph-sym">Account Equity · Legacy</div><div class="ph-price" id="ph-price">$—</div><div class="ph-change" id="ph-change">Waiting for active account data</div></div>
       <div class="ph-ohlc">
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">O</div><div class="ph-ohlc-v" id="ohlc-o">17,180</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">H</div><div class="ph-ohlc-v txt-green" id="ohlc-h">17,268</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">L</div><div class="ph-ohlc-v txt-red" id="ohlc-l">17,142</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">V</div><div class="ph-ohlc-v" id="ohlc-v">48.2K</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Points</div><div class="ph-ohlc-v" id="ohlc-o">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Trades</div><div class="ph-ohlc-v" id="ohlc-h">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Wins</div><div class="ph-ohlc-v txt-green" id="ohlc-l">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Losses</div><div class="ph-ohlc-v txt-red" id="ohlc-v">0</div></div>
       </div>
     </div>
-    <div class="tf-row">
-      <div class="tf-btn rip" data-tf="1m">1m</div><div class="tf-btn rip" data-tf="5m">5m</div>
-      <div class="tf-btn active rip" data-tf="15m">15m</div><div class="tf-btn rip" data-tf="1h">1h</div>
-      <div class="tf-btn rip" data-tf="4h">4h</div><div class="tf-btn rip" data-tf="1d">1D</div>
+    <div class="tf-row" id="chartRangeRow">
+      <div class="tf-btn rip" data-range="7d">7D</div><div class="tf-btn active rip" data-range="30d">30D</div>
+      <div class="tf-btn rip" data-range="all">All</div>
     </div>
     <div class="chart-container">
       <div class="live-tag"><div class="live-tag-dot"></div><div class="live-tag-txt">LIVE</div></div>
       <div class="chart-tools">
-        <div class="chart-tool-btn active rip" id="toolCandle"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="6"/><rect x="6" y="6" width="4" height="9" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="8"/><rect x="14" y="8" width="4" height="6" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg></div>
-        <div class="chart-tool-btn rip" id="toolLine"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <div class="chart-tool-btn rip" id="toolCandle" title="Candle view requires market OHLC feed"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="6"/><rect x="6" y="6" width="4" height="9" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="8"/><rect x="14" y="8" width="4" height="6" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg></div>
+        <div class="chart-tool-btn active rip" id="toolLine"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
       </div>
+      <div id="chartStateOverlay" class="chart-state-overlay hidden"></div>
       <div id="chartEl"></div>
     </div>
     <div class="order-panel">
@@ -2500,6 +2500,7 @@ function switchAccount(id){
   fetchStatus();
   fetchAnalytics();
   fetchPayout();
+  refreshChartForActiveAccount('switch');
   const curPage=document.querySelector('.page.active');
   if(curPage&&curPage.id==='page-analytics')fetchJournal();
   if(curPage&&curPage.id!=='page-analytics')fetchJournal();
@@ -2555,15 +2556,16 @@ document.getElementById('prefCompactRow')?.addEventListener('click',()=>{
   applyAccountPreferences();
 });
 document.getElementById('prefChartRow')?.addEventListener('click',()=>{
-  const next=(localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'candle')==='candle'?'line':'candle';
-  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,next);
+  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
   const lineBtn=document.getElementById('toolLine');
   const candleBtn=document.getElementById('toolCandle');
   if(lineBtn&&candleBtn){
-    lineBtn.classList.toggle('active',next==='line');
-    candleBtn.classList.toggle('active',next==='candle');
+    lineBtn.classList.add('active');
+    candleBtn.classList.remove('active');
   }
+  showAccountActionStatus('Equity chart uses line mode until market candles are wired.','info');
   applyAccountPreferences();
+  refreshChartForActiveAccount('pref');
 });
 document.getElementById('openRulesRow')?.addEventListener('click',openRules);
 
@@ -2716,6 +2718,7 @@ function renderNoAccountState(kind='default'){
   if(analyticsEmptyHost && kind==='analytics') {
     analyticsEmptyHost.innerHTML='<div id="analyticsNoAcct">'+analyticsEmpty+'</div>';
   }
+  refreshChartForActiveAccount('no-account');
   refreshAccountSettingsSurface();
 }
 
@@ -2782,6 +2785,7 @@ async function fetchStatus(){
       accountContextSnapshot.accountLabel='';
       refreshAccountSettingsSurface();
       if(!activeAcct||!hasLinkedAccounts()) renderNoAccountState();
+      refreshChartForActiveAccount('status-empty');
       return;
     }
     revealDash();
@@ -2884,6 +2888,7 @@ async function fetchStatus(){
       document.getElementById('bellDot').style.display='none';
     }
     if(ri)document.getElementById('tradeRiskLeft').textContent=usd(ri.remaining);
+    refreshChartForActiveAccount('status');
     refreshAccountSettingsSurface();
   }catch(e){
     document.getElementById('tb-status').textContent='connection error';
@@ -2915,6 +2920,7 @@ if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
       overviewState.status={balance:inferredBal,balanceSub:'Inferred from trade history',balanceTone:'txt-green'};
       renderOverviewCards();
     }
+    refreshChartForActiveAccount('bootstrap');
   }
 }).catch(()=>{});
 
@@ -3962,6 +3968,7 @@ async function fetchAnalytics(){
     }
     if(!historyState.rows.length) await loadHistoryPage(true);
     else renderHistoryPanel();
+    refreshChartForActiveAccount('analytics');
   }catch(e){
     console.error('fetchAnalytics error:',e);
     overviewState.analytics={dailyPnl:null,overallPnl:null,winRate:null,dailySub:'Unavailable',overallSub:'Could not load analytics',winRateSub:'Could not load analytics'};
@@ -4018,83 +4025,240 @@ async function fetchChallenges(){
 }
 
 // CHART ENGINE
-let chartInited=false,chart=null,candleSeries=null,lineSeries=null;
-let currentPrice=17234.25,currentSym='NQ/USD',lotSize=1.0,slPrice=17130,tpPrice=17350,orderSide='buy';
+let chartInited=false,chart=null,lineSeries=null;
+let currentPrice=0,currentSym='Account Equity',lotSize=1.0,slPrice=0,tpPrice=0,orderSide='buy';
 let orderTypeIdx=0;const orderTypes=['Market','Limit','Stop'];
-function fmtP(p){if(p>=1000)return p.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});if(p>=10)return p.toFixed(2);return p.toFixed(5);}
-function genCandles(base,count=120,vol=0.003){
-  const data=[];const now=Math.floor(Date.now()/1000);let p=base*0.97;
-  for(let i=count;i>=0;i--){
-    const t=now-(i*15*60),o=p,move=(Math.random()-0.48)*p*vol;
-    const c=o+move,h=Math.max(o,c)+Math.random()*p*vol*0.5,l=Math.min(o,c)-Math.random()*p*vol*0.5;
-    data.push({time:t,open:parseFloat(o.toFixed(2)),high:parseFloat(h.toFixed(2)),low:parseFloat(l.toFixed(2)),close:parseFloat(c.toFixed(2))});
-    p=c;
-  }
-  return data;
+let chartRefreshSeq=0;
+let chartRange='30d';
+function fmtP(p){
+  if(p==null||!Number.isFinite(Number(p))) return '$—';
+  const n=Number(p);
+  return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 }
-function buildChartSeriesFromTrades(trades){
-  const sorted=(trades||[]).filter(t=>t.balanceAfter!=null&&(t.closedAt||t.loggedAt)).sort((a,b)=>new Date(a.closedAt||a.loggedAt)-new Date(b.closedAt||b.loggedAt));
-  return sorted.map(t=>({time:Math.floor(new Date(t.closedAt||t.loggedAt).getTime()/1000),value:Number(t.balanceAfter)}));
+function chartUnix(value){
+  const ms=new Date(value||0).getTime();
+  if(!Number.isFinite(ms)||ms<=0) return null;
+  return Math.floor(ms/1000);
+}
+function showChartState(title,subtitle){
+  const el=document.getElementById('chartStateOverlay');
+  if(!el) return;
+  el.innerHTML='<div><div class="chart-state-title">'+title+'</div><div>'+subtitle+'</div></div>';
+  el.classList.remove('hidden');
+}
+function hideChartState(){
+  const el=document.getElementById('chartStateOverlay');
+  if(el) el.classList.add('hidden');
+}
+function resetChartSeries(){
+  if(lineSeries) lineSeries.setData([]);
+  if(lineSeries) lineSeries.setMarkers([]);
+}
+function applyChartRangeButtons(){
+  document.querySelectorAll('#chartRangeRow .tf-btn').forEach(btn=>{
+    btn.classList.toggle('active',btn.dataset.range===chartRange);
+  });
+}
+function filterByRange(points){
+  if(chartRange==='all'||!points.length) return points;
+  const days=chartRange==='7d'?7:30;
+  const cutoff=Math.floor(Date.now()/1000)-(days*86400);
+  return points.filter(p=>p.time>=cutoff);
+}
+function buildChartPayloadFromTrades(trades,statusSnapshot){
+  const sorted=(trades||[]).slice().sort((a,b)=>new Date(a.closedAt||a.loggedAt||0)-new Date(b.closedAt||b.loggedAt||0));
+  const timeline=[];
+  const markers=[];
+  const seenPoint=new Map();
+  const markerKeys=new Set();
+  let runningBalance=(statusSnapshot?.balance ?? acctBalances[activeAcct] ?? null);
+  let wins=0,losses=0;
+
+  sorted.forEach((t,idx)=>{
+    const ts=chartUnix(t.closedAt||t.loggedAt);
+    if(!ts) return;
+    const pnlVal=Number(t.pnl||0);
+    if(Number.isFinite(pnlVal)&&pnlVal!==0){
+      if(pnlVal>0) wins++; else losses++;
+    }
+
+    const rawBalance=t.balanceAfter;
+    let value=Number(rawBalance);
+    if(!Number.isFinite(value)){
+      if(runningBalance==null) runningBalance=Number(statusSnapshot?.balance ?? t.accountSize ?? 0);
+      if(Number.isFinite(pnlVal)){
+        runningBalance=Number(runningBalance||0)+pnlVal;
+        value=runningBalance;
+      }
+    }else{
+      runningBalance=value;
+    }
+    if(!Number.isFinite(value)) return;
+    seenPoint.set(ts,{time:ts,value:Number(value.toFixed(2))});
+
+    if(Number.isFinite(pnlVal) && pnlVal!==0){
+      const markerText=(pnlVal>0?'WIN ':'LOSS ')+pnl(pnlVal);
+      const key=ts+'|'+markerText+'|'+(t.symbol||'');
+      if(!markerKeys.has(key)){
+        markerKeys.add(key);
+        markers.push({
+          time:ts,
+          position:pnlVal>0?'aboveBar':'belowBar',
+          color:pnlVal>0?'#4dcd8a':'#e05c5c',
+          shape:pnlVal>0?'arrowUp':'arrowDown',
+          text:markerText
+        });
+      }
+    }else if(idx===sorted.length-1){
+      const key=ts+'|close';
+      if(!markerKeys.has(key)){
+        markerKeys.add(key);
+        markers.push({time:ts,position:'aboveBar',color:'#2aabee',shape:'circle',text:'Close'});
+      }
+    }
+  });
+
+  const points=Array.from(seenPoint.values()).sort((a,b)=>a.time-b.time);
+  const liveEquity=Number(statusSnapshot?.equity);
+  if(Number.isFinite(liveEquity)){
+    const now=Math.floor(Date.now()/1000);
+    const last=points[points.length-1];
+    if(!last || now-last.time>120){
+      points.push({time:now,value:Number(liveEquity.toFixed(2))});
+    }
+  }
+  return {points,markers,wins,losses,tradeCount:sorted.length};
+}
+function updateChartSummary(payload,filtered){
+  const last=filtered[filtered.length-1]||payload.points[payload.points.length-1]||null;
+  const first=filtered[0]||payload.points[0]||null;
+  const delta=(last&&first)?(last.value-first.value):null;
+  const pct=(delta!=null&&first&&first.value)?((delta/first.value)*100):null;
+
+  const symEl=document.getElementById('ph-sym');
+  if(symEl) symEl.textContent='Account Equity · '+(activeAcct||'No account');
+  const priceEl=document.getElementById('ph-price');
+  if(priceEl) priceEl.textContent=last?fmtP(last.value):'$—';
+  const chgEl=document.getElementById('ph-change');
+  if(chgEl){
+    if(delta==null){
+      chgEl.textContent='No chartable equity data yet';
+      chgEl.className='ph-change';
+    }else{
+      chgEl.textContent=(delta>=0?'+':'')+fmtP(delta).replace('$','')+' ('+(pct>=0?'+':'')+pct.toFixed(2)+'%)';
+      chgEl.className='ph-change '+(delta>=0?'txt-green':'txt-red');
+    }
+  }
+
+  const pCount=document.getElementById('ohlc-o'); if(pCount) pCount.textContent=String(filtered.length||payload.points.length||0);
+  const tCount=document.getElementById('ohlc-h'); if(tCount) tCount.textContent=String(payload.tradeCount||0);
+  const wCount=document.getElementById('ohlc-l'); if(wCount) wCount.textContent=String(payload.wins||0);
+  const lCount=document.getElementById('ohlc-v'); if(lCount) lCount.textContent=String(payload.losses||0);
+
+  if(last){
+    currentPrice=last.value;
+    slPrice=Number((currentPrice*0.99).toFixed(2));
+    tpPrice=Number((currentPrice*1.01).toFixed(2));
+    const slEl=document.getElementById('slVal'); if(slEl) slEl.textContent=fmtP(slPrice);
+    const tpEl=document.getElementById('tpVal'); if(tpEl) tpEl.textContent=fmtP(tpPrice);
+    const execPrice=document.getElementById('execPrice'); if(execPrice) execPrice.textContent=fmtP(currentPrice);
+    const depthMid=document.getElementById('depthMid'); if(depthMid) depthMid.textContent=fmtP(currentPrice);
+    updateRiskCalc();
+  }
 }
 
-async function refreshChartForActiveAccount(){
+async function refreshChartForActiveAccount(reason='poll'){
   if(!chartInited||!lineSeries) return;
-  if(!activeAcct) return;
+  const requestId=++chartRefreshSeq;
+  const accountId=activeAcct;
+  const acctInfo=accountId?ACCOUNTS[accountId]:null;
+  const acctIdEl=document.getElementById('chartAcctId');
+  const acctTypeEl=document.getElementById('chartAcctType');
+  if(acctIdEl) acctIdEl.textContent=accountId||'No account';
+  if(acctTypeEl) acctTypeEl.textContent=acctInfo?.label||'Connect account';
+
+  if(!accountId){
+    resetChartSeries();
+    showChartState('No active account','Select or connect an account to view an equity timeline.');
+    updateChartSummary({points:[],tradeCount:0,wins:0,losses:0},[]);
+    return;
+  }
+
   try{
-    const trades=await fetchAllTrades(activeAcct);
-    const points=buildChartSeriesFromTrades(trades);
-    if(points.length>1){
-      lineSeries.setData(points);
-      if(candleSeries) candleSeries.setData([]);
-      chart.timeScale().fitContent();
-      const last=points[points.length-1].value;
-      currentPrice=last;
-      const pe=document.getElementById('ph-price');
-      if(pe)pe.textContent=fmtP(last);
-      const symEl=document.getElementById('ph-sym');
-      if(symEl)symEl.textContent=(currentSym||'Account Equity')+' · '+activeAcct;
+    if(reason==='switch') showChartState('Loading chart','Pulling timeline for '+accountId+'…');
+    const trades=await fetchAllTrades(accountId);
+    if(requestId!==chartRefreshSeq||accountId!==activeAcct) return;
+    const payload=buildChartPayloadFromTrades(trades,overviewState.status||{});
+    const filtered=filterByRange(payload.points);
+
+    if(!payload.points.length){
+      resetChartSeries();
+      showChartState('No chart data yet','This account has no chartable balance/equity timeline yet.');
+      updateChartSummary(payload,filtered);
+      return;
     }
-  }catch(_){ }
+
+    if(!filtered.length){
+      resetChartSeries();
+      showChartState('No data in selected range','Try 30D or All to include older account activity.');
+      updateChartSummary(payload,filtered);
+      return;
+    }
+
+    hideChartState();
+    lineSeries.setData(filtered);
+    const markerTimes=new Set(filtered.map(p=>p.time));
+    lineSeries.setMarkers(payload.markers.filter(m=>markerTimes.has(m.time)));
+    chart.timeScale().fitContent();
+    updateChartSummary(payload,filtered);
+  }catch(_){
+    if(requestId!==chartRefreshSeq||accountId!==activeAcct) return;
+    resetChartSeries();
+    showChartState('Chart unavailable','Could not load account timeline right now.');
+  }
 }
 
 function initChart(){
   if(chartInited)return;chartInited=true;
   const el=document.getElementById('chartEl');
   chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:300,layout:{background:{type:'Solid',color:'#1e2c3a'},textColor:'#8bafc7'},grid:{vertLines:{color:'rgba(255,255,255,0.04)'},horzLines:{color:'rgba(255,255,255,0.04)'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'rgba(255,255,255,0.06)'},timeScale:{borderColor:'rgba(255,255,255,0.06)',timeVisible:true},handleScroll:true,handleScale:true});
-  candleSeries=chart.addCandlestickSeries({upColor:'#4dcd8a',downColor:'#e05c5c',borderUpColor:'#4dcd8a',borderDownColor:'#e05c5c',wickUpColor:'rgba(77,205,138,0.6)',wickDownColor:'rgba(224,92,92,0.6)'});
-  lineSeries=chart.addLineSeries({color:'#2aabee',lineWidth:2,visible:true});
-  const now=Math.floor(Date.now()/1000);
-  lineSeries.setData([{time:now-3600,value:10000},{time:now,value:10000}]);
-  chart.timeScale().fitContent();
+  lineSeries=chart.addLineSeries({color:'#2aabee',lineWidth:2,visible:true,lastValueVisible:true,priceLineVisible:true});
   new ResizeObserver(()=>{if(chart)chart.applyOptions({width:el.clientWidth});}).observe(el);
-  refreshChartForActiveAccount();
+  applyChartRangeButtons();
+  refreshChartForActiveAccount('init');
 }
 
-const instData={'NQ/USD':{price:17234.25,vol:0.003,name:'NQ/USD · NASDAQ',o:17180,h:17268,l:17142,v:'48.2K',sl:-104,tp:116,spread:2.5},'ES/USD':{price:4892.5,vol:0.002,name:'ES/USD · S&P 500',o:4902,h:4918,l:4878,v:'122K',sl:-18,tp:28,spread:0.5},'GC/USD':{price:2341.8,vol:0.002,name:'GC/USD · Gold',o:2319,h:2360,l:2312,v:'18.4K',sl:-22,tp:38,spread:0.3},'CL/USD':{price:72.14,vol:0.004,name:'CL/USD · Crude Oil',o:72.80,h:73.20,l:71.90,v:'84.1K',sl:-0.84,tp:1.56,spread:0.02},'EUR/USD':{price:1.0832,vol:0.001,name:'EUR/USD · Euro',o:1.0820,h:1.0848,l:1.0812,v:'92K',sl:-0.002,tp:0.004,spread:0.00012},'BTC/USD':{price:67450,vol:0.005,name:'BTC/USD · Bitcoin',o:66800,h:67880,l:66400,v:'2.1B',sl:-800,tp:1800,spread:15}};
-document.querySelectorAll('.inst-btn').forEach(btn=>{
+document.querySelectorAll('#chartRangeRow .tf-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{
-    document.querySelectorAll('.inst-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');
-    const sym=btn.dataset.sym,d=instData[sym];if(!d)return;
-    currentSym=sym;currentPrice=d.price;
-    document.getElementById('ph-sym').textContent=d.name;document.getElementById('ph-price').textContent=fmtP(d.price);
-    document.getElementById('ohlc-o').textContent=fmtP(d.o);document.getElementById('ohlc-h').textContent=fmtP(d.h);
-    document.getElementById('ohlc-l').textContent=fmtP(d.l);document.getElementById('ohlc-v').textContent=d.v;
-    document.getElementById('spreadVal').textContent=d.spread;
-    slPrice=parseFloat((d.price+d.sl).toFixed(5));tpPrice=parseFloat((d.price+d.tp).toFixed(5));
-    document.getElementById('slVal').textContent=fmtP(slPrice);document.getElementById('tpVal').textContent=fmtP(tpPrice);
-    if(chart&&candleSeries){const nc=genCandles(d.price);candleSeries.setData(nc);lineSeries.setData(nc.map(c=>({time:c.time,value:c.close})));chart.timeScale().fitContent();}
-    updateDepth();updateRiskCalc();
+    chartRange=btn.dataset.range||'30d';
+    applyChartRangeButtons();
+    refreshChartForActiveAccount('range');
   });
 });
-document.querySelectorAll('.tf-btn').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');
-    if(chart&&candleSeries){const d=instData[currentSym];const nc=genCandles(d?d.price:currentPrice,120,d?d.vol:0.003);candleSeries.setData(nc);lineSeries.setData(nc.map(c=>({time:c.time,value:c.close})));chart.timeScale().fitContent();}
-  });
+
+document.getElementById('toolCandle').addEventListener('click',function(){
+  this.classList.add('active');
+  document.getElementById('toolLine').classList.remove('active');
+  showChartState('Candle view unavailable','Market OHLC feed is not connected in this shell. Showing equity line instead.');
+  setTimeout(()=>{
+    document.getElementById('toolLine').classList.add('active');
+    document.getElementById('toolCandle').classList.remove('active');
+    if(activeAcct) hideChartState();
+  },1200);
+  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
+  applyAccountPreferences();
 });
-document.getElementById('toolCandle').addEventListener('click',function(){this.classList.add('active');document.getElementById('toolLine').classList.remove('active');if(candleSeries)candleSeries.applyOptions({visible:true});if(lineSeries)lineSeries.applyOptions({visible:false});localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'candle');applyAccountPreferences();});
-document.getElementById('toolLine').addEventListener('click',function(){this.classList.add('active');document.getElementById('toolCandle').classList.remove('active');if(candleSeries)candleSeries.applyOptions({visible:false});if(lineSeries)lineSeries.applyOptions({visible:true});localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');applyAccountPreferences();});
-if((localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'candle')==='line'){document.getElementById('toolLine').click();}
+document.getElementById('toolLine').addEventListener('click',function(){
+  this.classList.add('active');
+  document.getElementById('toolCandle').classList.remove('active');
+  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
+  applyAccountPreferences();
+  refreshChartForActiveAccount('style');
+});
+if((localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line')!=='line'){localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');}
+document.getElementById('toolLine').classList.add('active');
+document.getElementById('toolCandle').classList.remove('active');
+
 document.getElementById('tabBuy').addEventListener('click',function(){orderSide='buy';this.classList.add('active');document.getElementById('tabSell').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn buy-btn rip';b.innerHTML=`<span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;${currentSym} &nbsp;@ &nbsp;<span id="execPrice">${fmtP(currentPrice)}</span>`;});
 document.getElementById('tabSell').addEventListener('click',function(){orderSide='sell';this.classList.add('active');document.getElementById('tabBuy').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn sell-btn rip';b.innerHTML=`<span class="btn-shine"></span>▼ &nbsp;SELL &nbsp;${currentSym} &nbsp;@ &nbsp;<span id="execPrice">${fmtP(currentPrice)}</span>`;});
 const step=()=>currentPrice>=1000?5:currentPrice>=10?0.5:0.0001;
