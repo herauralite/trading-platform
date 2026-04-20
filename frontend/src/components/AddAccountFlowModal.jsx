@@ -47,6 +47,7 @@ function AddAccountFlowModal({
   onLoadMt5RegistrationStatus,
   isSubmitting,
   error,
+  launchContext = 'default',
 }) {
   const [mt5Step, setMt5Step] = useState(1)
   const [mt5Pairing, setMt5Pairing] = useState(null)
@@ -157,7 +158,11 @@ function AddAccountFlowModal({
         <div className="row modal-header-row">
           <div>
             <h2>Add Account</h2>
-            <p className="hint">Choose a broker/platform, complete the matching flow, and continue in Accounts.</p>
+            <p className="hint">
+              {launchContext === 'legacy_app'
+                ? 'Choose a broker/platform and complete the matching flow. You will stay in this app view.'
+                : 'Choose a broker/platform, complete the matching flow, and continue in Accounts.'}
+            </p>
           </div>
           <button type="button" className="secondary-button" onClick={onClose}>Close</button>
         </div>
@@ -318,7 +323,11 @@ function AddAccountFlowModal({
                   </div>
                 ) : null}
 
-                <p className="hint">Step 6 happens after confirm: you are returned to <span className="mono">/app/accounts</span> with success focus.</p>
+                <p className="hint">
+                  {launchContext === 'legacy_app'
+                    ? 'Step 6 happens after confirm: the modal closes and this dashboard refreshes in place.'
+                    : <>Step 6 happens after confirm: you are returned to <span className="mono">/app/accounts</span> with success focus.</>}
+                </p>
               </>
             ) : null}
 

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import AddAccountFlowModal from './components/AddAccountFlowModal'
 import { buildAddAccountProviders, PUBLIC_API_BETA_CONNECTORS, PUBLIC_API_CONNECTORS } from './addAccountFlow'
@@ -47,7 +47,7 @@ function buildApiUrl(path) {
 async function authedFetch(path, init = {}) {
   const token = localStorage.getItem(LEGACY_SESSION_TOKEN_KEY) || ''
   const headers = new Headers(init.headers || {})
-  headers.set('Content-Type', 'application/json')
+  if (!headers.has('Content-Type') && init.body) headers.set('Content-Type', 'application/json')
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const res = await fetch(buildApiUrl(path), { ...init, headers, credentials: 'include' })
   const raw = await res.text()
@@ -59,27 +59,53 @@ async function authedFetch(path, init = {}) {
   return body
 }
 
-function BridgeModal({ isOpen, onClose, onSuccess }) {
+function ensureLegacyBridgeStyles() {
+  if (document.getElementById('legacy-add-account-modal-styles')) return
+  const style = document.createElement('style')
+  style.id = 'legacy-add-account-modal-styles'
+  style.textContent = `
+#legacyAddAccountModalRoot .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:1201;padding:20px;overflow:auto}
+#legacyAddAccountModalRoot .modal-panel{max-width:980px;margin:20px auto;background:#1e2c3a;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;color:#e8f4fd}
+#legacyAddAccountModalRoot .row{display:flex;gap:10px;flex-wrap:wrap}
+#legacyAddAccountModalRoot .row>*{flex:1}
+#legacyAddAccountModalRoot .provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:10px 0}
+#legacyAddAccountModalRoot .provider-card,
+#legacyAddAccountModalRoot .secondary-button,
+#legacyAddAccountModalRoot button,
+#legacyAddAccountModalRoot input,
+#legacyAddAccountModalRoot select{border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#242f3d;color:#e8f4fd;padding:10px}
+#legacyAddAccountModalRoot .provider-card.selected{border-color:#2aabee;background:rgba(42,171,238,.12)}
+#legacyAddAccountModalRoot .add-account-form{margin-top:10px;padding:12px;background:#17212b;border-radius:12px}
+#legacyAddAccountModalRoot .hint{font-size:12px;color:#8bafc7}
+#legacyAddAccountModalRoot .error-text{color:#e05c5c}
+#legacyAddAccountModalRoot .success-text{color:#4dcd8a}
+#legacyAddAccountModalRoot .mono{font-family:monospace}
+#legacyAddAccountModalRoot .meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:10px 0}
+#legacyAddAccountModalRoot .meta-card{background:#242f3d;padding:10px;border-radius:8px}
+`
+  document.head.appendChild(style)
+}
+
+function LegacyBridgeModal({ open, onClose }) {
   const [catalog, setCatalog] = useState([])
   const [selectedProviderType, setSelectedProviderType] = useState('mt5_bridge')
   const [draft, setDraft] = useState(DEFAULT_DRAFT)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
-
   const providers = useMemo(() => buildAddAccountProviders(catalog, sourceLabel), [catalog])
 
-  React.useEffect(() => {
-    if (!isOpen) return
+  useEffect(() => {
+    if (!open) return
     setError('')
     void (async () => {
       try {
-        const payload = await authedFetch('/connectors/catalog', { method: 'GET' })
+        const payload = await authedFetch('/connectors/catalog')
         setCatalog(payload?.connectors || [])
       } catch {
         setCatalog([])
       }
     })()
-  }, [isOpen])
+  }, [open])
 
   async function submitAddAccount(provider) {
     const externalAccountId = String(draft.external_account_id || '').trim()
@@ -90,13 +116,15 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
       return
     }
 
-    setIsSubmitting(true)
     setError('')
+    setIsSubmitting(true)
+
     try {
       if (provider.connectorType === 'csv_import' || provider.connectorType === 'manual') {
         onClose()
         return
       }
+
       if (provider.connectorType === 'tradingview_webhook') {
         if (!draft.tradingview_webhook_url) {
           const tvRes = await authedFetch('/providers/tradingview-webhook/connections', {
@@ -116,7 +144,7 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
           return
         }
         onClose()
-        onSuccess()
+        window.dispatchEvent(new CustomEvent('tali:legacy-add-account-success'))
         return
       }
 
@@ -132,21 +160,29 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
             }),
           })
         } else if (provider.connectorType === 'tradelocker_api') {
+          const baseUrl = String(draft.base_url || '').trim()
+          const accountId = String(draft.account_id || '').trim()
+          const email = String(draft.email || '').trim()
+          const password = draft.password || ''
+          if (!baseUrl || !accountId || !email || !password) {
+            setError('Base URL, Account ID, Email, and Password are required for TradeLocker.')
+            return
+          }
           await authedFetch('/providers/public-api/tradelocker_api/connect', {
             method: 'POST',
             body: JSON.stringify({
               label: displayLabel || provider.title,
-              base_url: String(draft.base_url || '').trim(),
-              account_id: String(draft.account_id || '').trim(),
-              email: String(draft.email || '').trim(),
-              password: draft.password || '',
+              base_url: baseUrl,
+              account_id: accountId,
+              email,
+              password,
               server: String(draft.server || '').trim() || null,
               environment: draft.environment || 'paper',
             }),
           })
         }
         onClose()
-        onSuccess()
+        window.dispatchEvent(new CustomEvent('tali:legacy-add-account-success'))
         return
       }
 
@@ -160,7 +196,7 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
           }),
         })
         onClose()
-        onSuccess()
+        window.dispatchEvent(new CustomEvent('tali:legacy-add-account-success'))
         return
       }
 
@@ -179,9 +215,8 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
             : {},
         }),
       })
-
       onClose()
-      onSuccess()
+      window.dispatchEvent(new CustomEvent('tali:legacy-add-account-success'))
     } catch (submitError) {
       setError(submitError?.message || 'Could not complete this add account flow.')
     } finally {
@@ -192,7 +227,7 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
 
   return (
     <AddAccountFlowModal
-      isOpen={isOpen}
+      isOpen={open}
       providers={providers}
       selectedProviderType={selectedProviderType}
       setSelectedProviderType={setSelectedProviderType}
@@ -205,61 +240,44 @@ function BridgeModal({ isOpen, onClose, onSuccess }) {
       onLoadMt5RegistrationStatus={() => fetchMt5BridgeRegistrationStatus({ fetchImpl: fetch })}
       isSubmitting={isSubmitting}
       error={error}
+      launchContext="legacy_app"
     />
   )
 }
 
-function ensureModalStyles() {
-  if (document.getElementById('legacy-add-account-modal-styles')) return
-  const style = document.createElement('style')
-  style.id = 'legacy-add-account-modal-styles'
-  style.textContent = `
-.modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:1201;padding:20px;overflow:auto}
-.modal-panel{max-width:980px;margin:20px auto;background:#1e2c3a;border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;color:#e8f4fd}
-.row{display:flex;gap:10px;flex-wrap:wrap}.row>*{flex:1}
-.provider-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin:10px 0}
-.provider-card,.secondary-button,button,input,select{border-radius:10px;border:1px solid rgba(255,255,255,.12);background:#242f3d;color:#e8f4fd;padding:10px}
-.provider-card.selected{border-color:#2aabee;background:rgba(42,171,238,.12)}
-.add-account-form{margin-top:10px;padding:12px;background:#17212b;border-radius:12px}
-.hint{font-size:12px;color:#8bafc7}.error-text{color:#e05c5c}.success-text{color:#4dcd8a}.mono{font-family:monospace}
-.meta-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin:10px 0}.meta-card{background:#242f3d;padding:10px;border-radius:8px}
-`
-  document.head.appendChild(style)
-}
+function initLegacyAddAccountBridge() {
+  const rootNode = document.getElementById('legacyAddAccountModalRoot')
+  const ctaNode = document.getElementById('onboardAddAccountCta')
+  if (!rootNode || !ctaNode) return
 
-export function initLegacyAccountBridge() {
-  const cta = document.getElementById('onboardAddAccountCta')
-  const host = document.getElementById('legacyAddAccountModalRoot')
-  if (!cta || !host) return
+  ensureLegacyBridgeStyles()
 
-  ensureModalStyles()
-  const root = createRoot(host)
-  let open = false
+  const root = createRoot(rootNode)
+  let isOpen = false
 
   const render = () => {
     root.render(
-      <BridgeModal
-        isOpen={open}
+      <LegacyBridgeModal
+        open={isOpen}
         onClose={() => {
-          open = false
+          isOpen = false
           render()
         }}
-        onSuccess={() => {
-          window.dispatchEvent(new CustomEvent('tali:legacy-add-account-success'))
-        }}
-      />,
+      />, 
     )
   }
 
-  cta.addEventListener('click', () => {
-    open = true
+  ctaNode.addEventListener('click', () => {
+    isOpen = true
     render()
   })
 
   window.addEventListener('tali:legacy-open-add-account', () => {
-    open = true
+    isOpen = true
     render()
   })
 
   render()
 }
+
+initLegacyAddAccountBridge()
