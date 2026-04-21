@@ -9,12 +9,6 @@ class PairStartRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class PairStartResponse(BaseModel):
-    pair_code: str
-    pair_secret: str
-    expires_at: str
-
-
 class PairCompleteRequest(BaseModel):
     pair_code: str
     pair_secret: str
@@ -27,7 +21,6 @@ class PairCompleteRequest(BaseModel):
 
 
 class HeartbeatRequest(BaseModel):
-    extension_device_id: int
     metadata: dict[str, Any] = Field(default_factory=dict)
     session_metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -45,7 +38,6 @@ class PlatformSessionItem(BaseModel):
 
 
 class PlatformSessionsUpsertRequest(BaseModel):
-    extension_device_id: int
     sessions: list[PlatformSessionItem] = Field(default_factory=list)
 
 
@@ -57,13 +49,15 @@ class StateSyncAccount(BaseModel):
     display_label: str | None = None
     account_type: str | None = None
     account_size: int | None = None
+    platform_session_id: int | None = None
+    tab_id: str | int | None = None
+    session_ref: str | None = None
     snapshot: dict[str, Any] = Field(default_factory=dict)
     positions: list[dict[str, Any]] = Field(default_factory=list)
     orders: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class StateSyncRequest(BaseModel):
-    extension_device_id: int
     accounts: list[StateSyncAccount] = Field(default_factory=list)
 
 
@@ -82,10 +76,6 @@ class ExecutionBatchRequest(BaseModel):
     requested_by: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     commands: list[ExecutionCommandInput] = Field(default_factory=list)
-
-
-class CommandPollResponse(BaseModel):
-    commands: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class CommandAckRequest(BaseModel):

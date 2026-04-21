@@ -462,6 +462,9 @@ async def ensure_connector_tables() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
+        await conn.execute(text("ALTER TABLE extension_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE extension_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE extension_sessions ADD COLUMN IF NOT EXISTS session_secret_hash TEXT"))
 
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS platform_sessions (
@@ -519,6 +522,8 @@ async def ensure_connector_tables() -> None:
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """))
+        await conn.execute(text("ALTER TABLE execution_commands ADD COLUMN IF NOT EXISTS dispatch_lease_owner TEXT"))
+        await conn.execute(text("ALTER TABLE execution_commands ADD COLUMN IF NOT EXISTS dispatch_lease_expires_at TIMESTAMPTZ"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS execution_commands_poll_idx ON execution_commands(user_id, extension_device_id, status, created_at)"))
 
         await conn.execute(text("""

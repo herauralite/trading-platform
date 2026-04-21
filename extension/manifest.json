@@ -1,15 +1,20 @@
 {
   "manifest_version": 3,
   "name": "TaliTrade Bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Extension-first execution bridge for TaliTrade.",
   "permissions": ["storage", "tabs", "alarms"],
-  "host_permissions": ["https://api.talitrade.com/*", "http://localhost:8000/*", "<all_urls>"],
+  "host_permissions": [
+    "https://api.talitrade.com/*",
+    "http://localhost:8000/*",
+    "https://*.fundingpips.com/*",
+    "https://*.match-trader.com/*"
+  ],
   "background": { "service_worker": "src/background/serviceWorker.js", "type": "module" },
   "action": { "default_popup": "src/popup/popup.html" },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
+      "matches": ["https://*.fundingpips.com/*", "https://*.match-trader.com/*"],
       "js": ["src/content/bootstrap.js"],
       "run_at": "document_idle"
     }
