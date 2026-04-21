@@ -1364,6 +1364,8 @@ from app.routers import accounts
 app.include_router(accounts.router)
 from app.routers import ingest
 app.include_router(ingest.router)
+from app.routers import extension_control
+app.include_router(extension_control.router)
 from app.core.database import engine
 
 logger.info(
