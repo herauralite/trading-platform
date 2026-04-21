@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from fastapi import HTTPException
 from app.core.auth_session import decode_session_token, get_bearer_token
+from app.core.extension_auth import get_authenticated_extension_device
 from app.schemas_extension import (
     CommandAckRequest,
     CommandResultRequest,
@@ -50,26 +50,26 @@ async def extension_pair_complete(payload: PairCompleteRequest):
 @router.post("/extension/heartbeat")
 async def extension_heartbeat(
     payload: HeartbeatRequest,
-    user_id: str = Depends(get_required_telegram_user_id),
+    extension_ctx: dict = Depends(get_authenticated_extension_device),
 ):
-    return await heartbeat_extension(user_id, payload.extension_device_id, payload.model_dump())
+    return await heartbeat_extension(extension_ctx, payload.model_dump())
 
 
 @router.post("/extension/platform-sessions/upsert")
 async def extension_upsert_platform_sessions(
     payload: PlatformSessionsUpsertRequest,
-    user_id: str = Depends(get_required_telegram_user_id),
+    extension_ctx: dict = Depends(get_authenticated_extension_device),
 ):
-    rows = await upsert_platform_session(user_id, payload.extension_device_id, [s.model_dump() for s in payload.sessions])
+    rows = await upsert_platform_session(extension_ctx, [s.model_dump() for s in payload.sessions])
     return {"ok": True, "platform_sessions": rows}
 
 
 @router.post("/extension/state-sync")
 async def extension_state_sync(
     payload: StateSyncRequest,
-    user_id: str = Depends(get_required_telegram_user_id),
+    extension_ctx: dict = Depends(get_authenticated_extension_device),
 ):
-    return await ingest_state_sync(user_id, payload.extension_device_id, payload.model_dump())
+    return await ingest_state_sync(extension_ctx, payload.model_dump())
 
 
 @router.post("/execution/batches")
@@ -82,26 +82,25 @@ async def create_batch(
 
 @router.get("/execution/commands/poll")
 async def poll_commands(
-    extension_device_id: int = Query(...),
     adapter_keys: list[str] | None = Query(default=None),
-    user_id: str = Depends(get_required_telegram_user_id),
+    extension_ctx: dict = Depends(get_authenticated_extension_device),
 ):
-    return {"commands": await poll_execution_commands(user_id, extension_device_id, adapter_keys=adapter_keys)}
+    return {"commands": await poll_execution_commands(extension_ctx, adapter_keys=adapter_keys)}
 
 
 @router.post("/execution/commands/{command_id}/ack")
 async def command_ack(
     command_id: int,
     payload: CommandAckRequest,
-    user_id: str = Depends(get_required_telegram_user_id),
+    extension_ctx: dict = Depends(get_authenticated_extension_device),
 ):
-    return await ack_execution_command(user_id, command_id, payload.status, metadata=payload.metadata)
+    return await ack_execution_command(extension_ctx, command_id, payload.status, metadata=payload.metadata)
 
 
 @router.post("/execution/commands/{command_id}/result")
 async def command_result(
     command_id: int,
     payload: CommandResultRequest,
-    user_id: str = Depends(get_required_telegram_user_id),
+    extension_ctx: dict = Depends(get_authenticated_extension_device),
 ):
-    return await ingest_execution_result(user_id, command_id, payload.model_dump())
+    return await ingest_execution_result(extension_ctx, command_id, payload.model_dump())
