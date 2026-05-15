@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { PUBLIC_API_BETA_CONNECTORS, PUBLIC_API_CONNECTORS } from '../addAccountFlow'
+import { PUBLIC_API_BETA_CONNECTORS, PUBLIC_API_CONNECTORS, PROP_FIRM_CONNECTORS } from '../addAccountFlow'
 
 const MT5_TOTAL_STEPS = 6
 
@@ -33,6 +33,92 @@ function mt5ProviderState(pairing) {
   return 'bridge_required'
 }
 
+// ─── FundingPips Prop Firm Flow ───────────────────────────────────────────────
+
+function FundingPipsPropFlow({ draft, setDraft, discoveredAccounts, isDiscovering, discoverError }) {
+  return (
+    <div className="prop-firm-flow">
+      <div className="prop-firm-header">
+        <div className="prop-firm-icon">FP</div>
+        <div>
+          <p className="hint">
+            Enter your FundingPips portal credentials. TaliTrade will authenticate
+            on your behalf, discover all your funded accounts, and extract the
+            MatchTrader connection details automatically.
+          </p>
+          <p className="hint" style={{ marginTop: 4 }}>
+            Your credentials are encrypted server-side and never stored in plain text.
+          </p>
+        </div>
+      </div>
+
+      <div className="row">
+        <input
+          type="email"
+          placeholder="FundingPips email"
+          value={draft.email || ''}
+          onChange={(e) => setDraft((prev) => ({ ...prev, email: e.target.value }))}
+          autoComplete="email"
+          required
+        />
+      </div>
+      <div className="row">
+        <input
+          type="password"
+          placeholder="FundingPips password"
+          value={draft.password || ''}
+          onChange={(e) => setDraft((prev) => ({ ...prev, password: e.target.value }))}
+          autoComplete="current-password"
+          required
+        />
+      </div>
+      <div className="row">
+        <input
+          placeholder="Label (optional — e.g. My $100K Account)"
+          value={draft.display_label || ''}
+          onChange={(e) => setDraft((prev) => ({ ...prev, display_label: e.target.value }))}
+        />
+      </div>
+
+      {isDiscovering ? (
+        <div className="prop-firm-discovering">
+          <span className="discovering-spinner" />
+          <span className="hint">Authenticating and discovering accounts…</span>
+        </div>
+      ) : null}
+
+      {discoverError ? (
+        <p className="error-text">{discoverError}</p>
+      ) : null}
+
+      {discoveredAccounts && discoveredAccounts.length > 0 ? (
+        <div className="discovered-accounts">
+          <p className="hint success-text">
+            ✓ {discoveredAccounts.length} account{discoveredAccounts.length !== 1 ? 's' : ''} discovered
+          </p>
+          <div className="meta-grid">
+            {discoveredAccounts.map((acct) => (
+              <div key={acct.external_account_id} className="meta-card">
+                <span className="hint">{acct.display_label}</span>
+                <strong>{acct.external_account_id}</strong>
+                {acct.account_type ? <span className="hint">{acct.account_type}</span> : null}
+                {acct.account_size ? <span className="hint">${acct.account_size.toLocaleString()}</span> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      <p className="hint" style={{ marginTop: 8 }}>
+        After connecting, your accounts appear in the Accounts tab. MatchTrader
+        sessions are established automatically — no further setup needed.
+      </p>
+    </div>
+  )
+}
+
+// ─── Main Modal ───────────────────────────────────────────────────────────────
+
 function AddAccountFlowModal({
   isOpen,
   providers,
@@ -57,8 +143,14 @@ function AddAccountFlowModal({
   const [mt5IsCreatingToken, setMt5IsCreatingToken] = useState(false)
   const [copiedField, setCopiedField] = useState('')
 
+  // Prop firm state
+  const [discoveredAccounts, setDiscoveredAccounts] = useState(null)
+  const [isDiscovering, setIsDiscovering] = useState(false)
+  const [discoverError, setDiscoverError] = useState('')
+
   const selectedProvider = providers.find((provider) => provider.connectorType === selectedProviderType) || null
   const isMt5 = selectedProvider?.connectorType === 'mt5_bridge'
+  const isFundingPipsProp = selectedProvider?.connectorType === 'fundingpips_prop'
 
   useEffect(() => {
     if (!isOpen) return
@@ -70,12 +162,20 @@ function AddAccountFlowModal({
     setMt5IsChecking(false)
     setMt5IsCreatingToken(false)
     setCopiedField('')
+    setDiscoveredAccounts(null)
+    setIsDiscovering(false)
+    setDiscoverError('')
   }, [isOpen, selectedProviderType])
 
   const canGoToMt5Confirm = useMemo(() => {
     if (!mt5Pairing) return false
     return Boolean(String(draft.external_account_id || '').trim())
   }, [mt5Pairing, draft.external_account_id])
+
+  const canSubmitPropFirm = useMemo(() => {
+    if (!isFundingPipsProp) return true
+    return Boolean((draft.email || '').trim() && (draft.password || '').trim())
+  }, [isFundingPipsProp, draft.email, draft.password])
 
   if (!isOpen) return null
 
@@ -137,6 +237,24 @@ function AddAccountFlowModal({
   }
 
   async function submitCurrentProvider() {
+    // For prop firm flows, trigger account discovery first if not yet done
+    if (isFundingPipsProp && !discoveredAccounts) {
+      setIsDiscovering(true)
+      setDiscoverError('')
+      try {
+        // onSubmit handles the actual API call — for prop firm it returns discovered accounts
+        const result = await onSubmit(selectedProvider, { preview: false })
+        if (result?.accounts) {
+          setDiscoveredAccounts(result.accounts)
+        }
+      } catch (err) {
+        setDiscoverError(err?.message || 'Could not connect to FundingPips. Check your credentials.')
+        setIsDiscovering(false)
+        return
+      }
+      setIsDiscovering(false)
+      return
+    }
     await onSubmit(selectedProvider)
   }
 
@@ -149,6 +267,19 @@ function AddAccountFlowModal({
     } catch {
       setCopiedField('')
     }
+  }
+
+  // Derive the submit button label
+  function submitLabel() {
+    if (isSubmitting || isDiscovering) return 'Working…'
+    if (isFundingPipsProp) {
+      if (discoveredAccounts && discoveredAccounts.length > 0) return 'Confirm and add accounts'
+      return 'Connect FundingPips'
+    }
+    if (selectedProvider?.connectorType === 'tradingview_webhook' && draft.tradingview_webhook_url) {
+      return 'Finish and return to Accounts'
+    }
+    return selectedProvider?.ctaLabel || 'Connect'
   }
 
   return (
@@ -165,16 +296,17 @@ function AddAccountFlowModal({
         <div className="provider-grid">
           {providers.map((provider) => {
             const isSelected = provider.connectorType === selectedProviderType
+            const isPropFirm = PROP_FIRM_CONNECTORS.includes(provider.connectorType)
             return (
               <button
                 key={provider.connectorType}
                 type="button"
-                className={`provider-card${isSelected ? ' selected' : ''}`}
+                className={`provider-card${isSelected ? ' selected' : ''}${isPropFirm ? ' provider-card--prop-firm' : ''}`}
                 onClick={() => setSelectedProviderType(provider.connectorType)}
               >
                 <div className="row">
                   <strong>{provider.title}</strong>
-                  <span className="pill">{provider.badge}</span>
+                  <span className={`pill${isPropFirm ? ' pill--prop' : ''}`}>{provider.badge}</span>
                 </div>
                 <p className="hint">{provider.description}</p>
                 {provider.notes ? <p className="hint">Catalog note: {provider.notes}</p> : null}
@@ -193,6 +325,18 @@ function AddAccountFlowModal({
           >
             <h3>{selectedProvider.title}</h3>
 
+            {/* ── FundingPips Prop Firm Flow ── */}
+            {isFundingPipsProp ? (
+              <FundingPipsPropFlow
+                draft={draft}
+                setDraft={setDraft}
+                discoveredAccounts={discoveredAccounts}
+                isDiscovering={isDiscovering}
+                discoverError={discoverError}
+              />
+            ) : null}
+
+            {/* ── MT5 Bridge Flow (unchanged) ── */}
             {isMt5 ? (
               <>
                 <p className="hint mt5-step-label">{stepLabel(mt5Step)}</p>
@@ -322,6 +466,7 @@ function AddAccountFlowModal({
               </>
             ) : null}
 
+            {/* ── FundingPips Extension (legacy) ── */}
             {selectedProvider.connectorType === 'fundingpips_extension' ? (
               <>
                 <p className="hint">Enter your FundingPips account ID — the numeric ID shown in your MTR dashboard (e.g. <span className="mono">1917136</span>). The extension will auto-link once you open FundingPips in a new tab.</p>
@@ -343,6 +488,7 @@ function AddAccountFlowModal({
               </>
             ) : null}
 
+            {/* ── TradingView Webhook ── */}
             {selectedProvider.connectorType === 'tradingview_webhook' ? (
               <>
                 <p className="hint">Create a TradingView webhook connection. Paste this webhook URL into your TradingView alert. Status stays <strong>Awaiting first alert</strong> until a real event arrives.</p>
@@ -378,6 +524,7 @@ function AddAccountFlowModal({
               </>
             ) : null}
 
+            {/* ── Public API Connectors (Alpaca, TradeLocker) ── */}
             {PUBLIC_API_CONNECTORS.includes(selectedProvider.connectorType) ? (
               <>
                 <p className="hint">
@@ -455,12 +602,12 @@ function AddAccountFlowModal({
                       />
                     </div>
                     <p className="hint">Credentials are validated server-side. Secrets are never echoed back in this UI.</p>
-                    <p className="hint">Submitting this form adds the TradeLocker account to your authenticated workspace.</p>
                   </>
                 )}
               </>
             ) : null}
 
+            {/* ── Beta Connectors ── */}
             {PUBLIC_API_BETA_CONNECTORS.includes(selectedProvider.connectorType) ? (
               <>
                 <p className="hint">Register this provider for beta onboarding. We only save safe metadata in this slice.</p>
@@ -497,10 +644,15 @@ function AddAccountFlowModal({
             ) : null}
 
             {error ? <p className="error-text">{error}</p> : null}
+
+            {/* Submit button — hidden for MT5 (it has its own step buttons) */}
             {!isMt5 ? (
               <div className="row">
-                <button type="submit" disabled={isSubmitting}>
-                  {isSubmitting ? 'Working…' : (selectedProvider.connectorType === 'tradingview_webhook' && draft.tradingview_webhook_url ? 'Finish and return to Accounts' : selectedProvider.ctaLabel)}
+                <button
+                  type="submit"
+                  disabled={isSubmitting || isDiscovering || (isFundingPipsProp && !canSubmitPropFirm)}
+                >
+                  {submitLabel()}
                 </button>
               </div>
             ) : null}
