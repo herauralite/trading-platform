@@ -1,24 +1,38 @@
 const REQUIRED_CONNECTORS = [
+  'fundingpips_prop',      // NEW: prop firm connector (email + password → account discovery)
   'mt5_bridge',
   'tradingview_webhook',
   'alpaca_api',
   'tradelocker_api',
   'oanda_api',
   'binance_api',
-  'fundingpips_extension',
+  'fundingpips_extension', // legacy: extension scraper flow
   'csv_import',
   'manual',
 ]
 
 export const PUBLIC_API_CONNECTORS = ['alpaca_api', 'tradelocker_api']
 export const PUBLIC_API_BETA_CONNECTORS = ['oanda_api', 'binance_api']
-export const GUIDED_ADD_ACCOUNT_CONNECTORS = ['tradingview_webhook', ...PUBLIC_API_CONNECTORS, ...PUBLIC_API_BETA_CONNECTORS]
+export const PROP_FIRM_CONNECTORS = ['fundingpips_prop']
+export const GUIDED_ADD_ACCOUNT_CONNECTORS = ['tradingview_webhook', ...PUBLIC_API_CONNECTORS, ...PUBLIC_API_BETA_CONNECTORS, ...PROP_FIRM_CONNECTORS]
 
 export function isGuidedAddAccountConnector(connectorType) {
   return GUIDED_ADD_ACCOUNT_CONNECTORS.includes(connectorType)
 }
 
+export function isPropFirmConnector(connectorType) {
+  return PROP_FIRM_CONNECTORS.includes(connectorType)
+}
+
 const PROVIDER_DEFAULTS = {
+  fundingpips_prop: {
+    title: 'FundingPips',
+    shortLabel: 'FundingPips',
+    flowType: 'prop_firm_connect',
+    badge: 'Prop Firm',
+    description: 'Connect with your FundingPips login. Accounts are discovered automatically — no API keys needed.',
+    ctaLabel: 'Connect FundingPips',
+  },
   mt5_bridge: {
     title: 'MetaTrader 5 (MT5)',
     shortLabel: 'MT5 Bridge',
@@ -68,12 +82,12 @@ const PROVIDER_DEFAULTS = {
     ctaLabel: 'Join beta access',
   },
   fundingpips_extension: {
-    title: 'FundingPips Extension',
-    shortLabel: 'FundingPips',
+    title: 'FundingPips (Extension)',
+    shortLabel: 'FP Extension',
     flowType: 'connector_connect',
-    badge: 'Browser Extension',
-    description: 'Connect using the existing FundingPips connector flow.',
-    ctaLabel: 'Connect FundingPips',
+    badge: 'Legacy',
+    description: 'Connect using the browser extension scraper. Use FundingPips (Prop Firm) for the new direct connector.',
+    ctaLabel: 'Connect via extension',
   },
   csv_import: {
     title: 'CSV Import',
@@ -119,6 +133,7 @@ export function buildAddAccountProviders(catalog = [], sourceLabel) {
       beta: Boolean(catalogEntry.beta),
       authMode: catalogEntry.auth_mode || null,
       requiresBridge: Boolean(catalogEntry.requires_bridge),
+      isPropFirm: PROP_FIRM_CONNECTORS.includes(connectorType),
     }
   })
 }
