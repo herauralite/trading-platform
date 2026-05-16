@@ -52,6 +52,11 @@ from app.services.account_workspace import (
     list_account_workspaces,
 )
 from app.services.fundingpips_hydration import hydrate_fundingpips_canonical_state
+from app.services.fundingpips_connector import (
+    connect_fundingpips_prop_firm,
+    FundingPipsAuthError,
+    FundingPipsAccountDiscoveryError,
+)
 from app.services.mt5_bridge import (
     check_mt5_pairing_state,
     create_mt5_pairing_token,
@@ -96,8 +101,6 @@ APP_BASE_URL    = os.getenv("APP_BASE_URL", "https://api.talitrade.com").rstrip(
 PRIMARY_ACCOUNT = os.getenv("PRIMARY_ACCOUNT_ID", "1917136")
 FRONTEND_ALLOWED_ORIGINS = settings.FRONTEND_ALLOWED_ORIGINS
 
-# How long live data stays valid — if the extension hasn't polled in this window
-# we treat the account as offline rather than serving stale values.
 ACCOUNT_DATA_TTL_SECONDS = 120
 
 INDEX_CURRENCIES = {"USD", "CNY"}
@@ -257,8 +260,6 @@ def verify_telegram_oidc_id_token(id_token: str, nonce: str | None = None) -> di
     return claims
 
 # ─── Phase / rule tables ──────────────────────────────────────────────────────
-# Single source of truth. Aliases (e.g. "master" → "2_step_master") are handled
-# by get_phase_rules() so we only store each distinct rule set once.
 PHASE_RULES = {
     "2_step_phase1": {
         "label": "2-Step Phase 1 (Student)",
@@ -299,8 +300,6 @@ PHASE_RULES = {
         "min_payout_pct": 1.0, "payout_split": 0.95,
         "reward_splits": {"bi_weekly": 95},
     },
-    # All 2-step and 1-step master variants share the same rules —
-    # only one dict stored, get_phase_rules() maps all aliases here.
     "2_step_master": {
         "label": "Master Funded",
         "is_master": True, "profit_target_pct": None, "min_trading_days": 5,
@@ -322,13 +321,11 @@ PHASE_RULES = {
 
 
 def get_phase_rules(account_type: str) -> dict:
-    """Resolve account_type string → phase rule dict. Aliases collapse to canonical keys."""
     if not account_type:
         return PHASE_RULES["2_step_phase1"]
     key = account_type.lower().replace(" ", "_").replace("-", "_")
     if key in PHASE_RULES:
         return PHASE_RULES[key]
-    # Alias resolution
     if "zero"  in key:                                          return PHASE_RULES["zero"]
     if "pro"   in key and "master" in key:                     return PHASE_RULES["2_step_pro_master"]
     if "pro"   in key and ("phase2" in key or "phase_2" in key): return PHASE_RULES["2_step_pro_phase2"]
@@ -342,18 +339,11 @@ def get_phase_rules(account_type: str) -> dict:
 
 
 # ─── DB helpers ───────────────────────────────────────────────────────────────
-# All queries default to source='scraper' so real-time duplicate rows are
-# never surfaced in analytics, summaries, or payout checks.
 SCRAPER_FILTER = " AND (source = 'scraper' OR source IS NULL)"
 
 
 async def ensure_trades_table():
-    """Create table + run idempotent migrations.
-    Each ALTER TABLE runs in its own connection so a duplicate-column or
-    duplicate-constraint error doesn't abort the transaction for later steps."""
     from app.core.database import engine
-
-    # Step 1: Create table (safe — IF NOT EXISTS never errors)
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS trades (
@@ -378,8 +368,6 @@ async def ensure_trades_table():
                 source             TEXT
             )
         """))
-
-    # Step 2: Dedup constraint — own connection so failure doesn't poison later steps
     try:
         async with engine.begin() as conn:
             await conn.execute(text("""
@@ -389,47 +377,35 @@ async def ensure_trades_table():
             """))
         logger.info("trades_dedup constraint added")
     except Exception:
-        pass  # already exists — safe to ignore
-
-    # Step 3: Source column — same isolation pattern
+        pass
     try:
         async with engine.begin() as conn:
             await conn.execute(text("ALTER TABLE trades ADD COLUMN source TEXT"))
         logger.info("trades source column added")
     except Exception:
-        pass  # already exists
-
-    # Step 4: Backfill source on pre-migration rows
+        pass
     async with engine.begin() as conn:
         await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL AND balance_after IS NULL"))
         await conn.execute(text("UPDATE trades SET source = 'realtime' WHERE source IS NULL AND balance_after IS NOT NULL"))
         await conn.execute(text("UPDATE trades SET source = 'scraper'  WHERE source IS NULL"))
-
-    # Step 5: telegram_user_id column on trades
     try:
         async with engine.begin() as conn:
             await conn.execute(text("ALTER TABLE trades ADD COLUMN telegram_user_id TEXT"))
         logger.info("trades telegram_user_id column added")
     except Exception:
-        pass  # already exists
-
+        pass
     logger.info("trades table ready")
 
 
 async def ensure_users_tables():
-    """Create users and prop_accounts tables — separate connections so the FK resolves."""
     from app.core.database import engine
-
-    # Step 1: users table — drop and recreate if it exists without the right columns
     async with engine.begin() as conn:
-        # Check if telegram_user_id column exists
         result = await conn.execute(text("""
             SELECT column_name FROM information_schema.columns
             WHERE table_name = 'users' AND column_name = 'telegram_user_id'
         """))
         col_exists = result.fetchone()
         if not col_exists:
-            # Table exists but with wrong schema (empty from failed migration) — drop it
             await conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
@@ -442,8 +418,6 @@ async def ensure_users_tables():
                 last_seen_at        TIMESTAMPTZ DEFAULT NOW()
             )
         """))
-
-    # Step 2: prop_accounts — no FK constraint to avoid asyncpg pool ordering issues
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS prop_accounts (
@@ -479,12 +453,10 @@ async def ensure_users_tables():
                     AND p2.is_primary = TRUE
               )
         """))
-
     logger.info("users + prop_accounts tables ready")
 
 
 async def ensure_waitlist_table():
-    """Create waitlist table for landing page signups."""
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -498,7 +470,6 @@ async def ensure_waitlist_table():
 
 
 async def ensure_demo_scores_table():
-    """Create demo_scores table for landing page leaderboard."""
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -514,7 +485,6 @@ async def ensure_demo_scores_table():
 
 
 async def db_upsert_user(tg_data: dict) -> dict:
-    """Insert or update a user from Telegram login data. Returns the user row."""
     from app.core.database import engine
     tg_id = str(tg_data.get("id", ""))
     async with engine.begin() as conn:
@@ -542,7 +512,6 @@ async def db_upsert_user(tg_data: dict) -> dict:
 
 
 async def db_get_user_accounts(telegram_user_id: str) -> list:
-    """Return unified account visibility (canonical trading_accounts + legacy fallback)."""
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(
@@ -601,7 +570,6 @@ async def db_get_user_accounts(telegram_user_id: str) -> list:
 
 
 async def db_get_connectors_overview(telegram_user_id: str) -> list:
-    """Return connector-centric account and activity view for a user."""
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("""
@@ -695,7 +663,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 lc.last_error_at AS lifecycle_last_error_at,
                 tvc.activation_state AS tv_activation_state,
                 tvc.last_event_at AS tv_last_event_at
-            FROM account_rows
+            FROM account_rows ar
             LEFT JOIN lifecycle lc
               ON lc.connector_type = ar.connector_type
             LEFT JOIN tradingview_connections tvc
@@ -882,7 +850,6 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
 
 async def db_link_account(telegram_user_id: str, account_id: str, account_type: str = None,
                            account_size: int = None, label: str = None, broker: str = "fundingpips"):
-    """Link account in legacy table and mirror into canonical connector model."""
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -927,7 +894,6 @@ async def db_link_account(telegram_user_id: str, account_id: str, account_type: 
 
 
 async def backfill_legacy_prop_accounts_to_trading_accounts():
-    """Compatibility bridge: ensure legacy prop_accounts exist in canonical trading_accounts."""
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("""
@@ -951,39 +917,28 @@ async def backfill_legacy_prop_accounts_to_trading_accounts():
 
 
 def verify_telegram_auth(data: dict) -> tuple[bool, str]:
-    """Verify Telegram Login Widget data using HMAC-SHA256."""
     token = os.getenv("TELEGRAM_BOT_TOKEN", "")
     if not token:
         return False, "missing_bot_token"
-
     check_hash = data.get("hash", "")
     if not check_hash:
         return False, "missing_hash"
-
-    data_check = {
-        k: v for k, v in data.items()
-        if k != "hash" and v is not None
-    }
+    data_check = {k: v for k, v in data.items() if k != "hash" and v is not None}
     data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(data_check.items()))
     secret_key = hashlib.sha256(token.encode()).digest()
     computed   = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-
-    # Also check auth_date is not older than 24h
     try:
         auth_age = datetime.now(timezone.utc).timestamp() - int(data.get("auth_date", 0))
         if auth_age > 86400:
             return False, "auth_expired"
     except Exception:
         return False, "invalid_auth_date"
-
     if not hmac.compare_digest(computed, check_hash):
         return False, "hash_mismatch"
-
     return True, "ok"
 
 
 def parse_dt(val):
-    """Parse a datetime string or return as-is if already a datetime."""
     if val is None or isinstance(val, datetime):
         return val
     try:
@@ -993,7 +948,6 @@ def parse_dt(val):
 
 
 async def db_insert_trade(trade_dict: dict):
-    """Insert a closed trade. Rejects price-sized pnl values (close price bug guard)."""
     pnl_val      = trade_dict.get("pnl") or 0
     account_size = trade_dict.get("accountSize") or 10000
     if abs(pnl_val) > account_size:
@@ -1002,7 +956,6 @@ async def db_insert_trade(trade_dict: dict):
             f"— exceeds accountSize={account_size}, likely a close price not a P&L"
         )
         return
-    # Ensure datetime fields are actual datetime objects, not strings
     trade_dict = {**trade_dict, "closedAt": parse_dt(trade_dict.get("closedAt"))}
     from app.core.database import engine
     async with engine.begin() as conn:
@@ -1053,7 +1006,6 @@ async def db_get_trades(
 
 
 async def db_get_trade_stats(account_id: str = None) -> dict:
-    """Total count + oldest date — lightweight, used for payout countdown seeding."""
     from app.core.database import engine
     where  = "account_id=:a" if account_id else "1=1"
     params = {"a": account_id} if account_id else {}
@@ -1092,7 +1044,6 @@ async def db_get_trades_today(account_id: str = None) -> list:
 
 
 async def db_count_trading_days(account_id: str = None) -> int:
-    """Count distinct trading days — scraper rows only so realtime dupes don't inflate count."""
     from app.core.database import engine
     where  = f"account_id=:a{SCRAPER_FILTER}" if account_id else f"1=1{SCRAPER_FILTER}"
     params = {"a": account_id} if account_id else {}
@@ -1403,7 +1354,6 @@ class WaitlistJoin(BaseModel):
 
 @app.post("/waitlist")
 async def join_waitlist(data: WaitlistJoin):
-    """Add a Telegram username to the waitlist. Returns current total count."""
     username = data.telegram_username.strip().lstrip("@")
     if not username or len(username) < 5:
         return JSONResponse(status_code=422, content={"detail": "Invalid username"})
@@ -1421,7 +1371,6 @@ async def join_waitlist(data: WaitlistJoin):
 
 @app.get("/waitlist/count")
 async def waitlist_count():
-    """Return current waitlist size (used by landing page on load)."""
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("SELECT COUNT(*) FROM waitlist"))
@@ -1438,11 +1387,6 @@ class DemoScore(BaseModel):
 
 @app.post("/demo/score")
 async def save_demo_score(data: DemoScore):
-    """
-    Save a demo trade P&L. Only updates the row if the new pnl beats
-    the existing best — so each user appears on the leaderboard once
-    with their personal best score.
-    """
     from app.core.database import engine
     async with engine.begin() as conn:
         await conn.execute(text("""
@@ -1467,7 +1411,6 @@ async def save_demo_score(data: DemoScore):
 
 @app.get("/demo/leaderboard")
 async def demo_leaderboard(limit: int = 10):
-    """Return top demo traders by best P&L, one row per Telegram user."""
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("""
@@ -1482,7 +1425,6 @@ async def demo_leaderboard(limit: int = 10):
 
 @app.get("/auth/telegram/config")
 async def telegram_auth_config(request: Request):
-    """Expose canonical Telegram auth config used by the frontend."""
     request_origin = request.headers.get("origin", "")
     request_host = request.headers.get("host", "")
     frontend_host = normalize_hostname(request_origin or request_host, "")
@@ -1508,39 +1450,13 @@ async def telegram_auth_config(request: Request):
         }
         logger.info(
             "Telegram config request served: origin=%s origin_allowed=%s auth_mode=%s frontend_host=%s oidc_authorize_host=%s has_bot_token=%s login_domain=%s status=200",
-            request_origin or "none",
-            origin_allowed,
-            mode,
-            frontend_host or "unknown",
-            authorize_host or "none",
-            payload["hasBotToken"],
-            TELEGRAM_LOGIN_DOMAIN,
+            request_origin or "none", origin_allowed, mode, frontend_host or "unknown",
+            authorize_host or "none", payload["hasBotToken"], TELEGRAM_LOGIN_DOMAIN,
         )
-        return JSONResponse(
-            status_code=200,
-            content=payload,
-            headers={
-                "X-Tali-Auth-Mode": mode,
-                "X-Tali-Config-Version": "2026-04-17",
-            },
-        )
+        return JSONResponse(status_code=200, content=payload, headers={"X-Tali-Auth-Mode": mode, "X-Tali-Config-Version": "2026-04-17"})
     except Exception as exc:
-        logger.exception(
-            "Telegram config request failed: origin=%s origin_allowed=%s auth_mode=%s frontend_host=%s status=500 error=%s",
-            request_origin or "none",
-            origin_allowed,
-            mode,
-            frontend_host or "unknown",
-            exc.__class__.__name__,
-        )
-        return JSONResponse(
-            status_code=500,
-            content={"detail": "telegram_config_unavailable"},
-            headers={
-                "X-Tali-Auth-Mode": mode,
-                "X-Tali-Config-Version": "2026-04-17",
-            },
-        )
+        logger.exception("Telegram config request failed: %s", exc.__class__.__name__)
+        return JSONResponse(status_code=500, content={"detail": "telegram_config_unavailable"}, headers={"X-Tali-Auth-Mode": mode, "X-Tali-Config-Version": "2026-04-17"})
 
 
 class TelegramAuthData(BaseModel):
@@ -1561,36 +1477,12 @@ class TelegramOidcAuthData(BaseModel):
 
 @app.post("/auth/telegram")
 async def telegram_login(data: TelegramAuthData):
-    """
-    Legacy Telegram Login Widget verification path.
-    Kept for backward compatibility and as a fallback when OIDC is not configured.
-    """
     payload = data.dict(exclude_none=True)
     is_valid, reason = verify_telegram_auth(payload)
     if not is_valid:
-        logger.warning(
-            "Telegram login rejected: reason=%s user_id=%s username=%s host=%s",
-            reason,
-            data.id,
-            data.username,
-            payload.get("origin") or payload.get("host") or "unknown",
-        )
-        return JSONResponse(
-            status_code=401,
-            content={
-                "detail": "Invalid Telegram auth data",
-                "reason": reason,
-                "hint": "Check bot username, bot token, and BotFather login domain for www.talitrade.com",
-            },
-        )
-
-    await db_upsert_user({
-        "id": data.id,
-        "username": data.username,
-        "first_name": data.first_name,
-        "last_name": data.last_name,
-        "photo_url": data.photo_url,
-    })
+        logger.warning("Telegram login rejected: reason=%s user_id=%s username=%s", reason, data.id, data.username)
+        return JSONResponse(status_code=401, content={"detail": "Invalid Telegram auth data", "reason": reason, "hint": "Check bot username, bot token, and BotFather login domain for www.talitrade.com"})
+    await db_upsert_user({"id": data.id, "username": data.username, "first_name": data.first_name, "last_name": data.last_name, "photo_url": data.photo_url})
     await hydrate_fundingpips_canonical_state(str(data.id), trigger="auth_telegram")
     accounts = await db_get_user_accounts(str(data.id))
     logger.info("Telegram legacy login: %s (%s accounts)", data.username or data.id, len(accounts))
@@ -1599,11 +1491,6 @@ async def telegram_login(data: TelegramAuthData):
 
 @app.post("/auth/telegram/oidc")
 async def telegram_login_oidc(data: TelegramOidcAuthData):
-    """
-    Telegram OIDC path.
-    Enable by setting TELEGRAM_LOGIN_MODE=oidc plus the issuer, authorize URL,
-    client id, and JWKS URL environment variables.
-    """
     if not telegram_oidc_enabled():
         return JSONResponse(status_code=400, content={"detail": "Telegram OIDC not enabled", "reason": "oidc_not_enabled"})
     try:
@@ -1611,33 +1498,19 @@ async def telegram_login_oidc(data: TelegramOidcAuthData):
         tg_profile = _coerce_telegram_profile_from_claims(claims)
     except ValueError as exc:
         return JSONResponse(status_code=401, content={"detail": "Invalid Telegram OIDC token", "reason": str(exc)})
-
     await db_upsert_user(tg_profile)
     await hydrate_fundingpips_canonical_state(tg_profile["id"], trigger="auth_telegram_oidc")
     accounts = await db_get_user_accounts(tg_profile["id"])
     logger.info("Telegram OIDC login: %s (%s accounts)", tg_profile.get("username") or tg_profile["id"], len(accounts))
-    return build_auth_success_payload(
-        tg_profile["id"],
-        tg_profile.get("username"),
-        tg_profile.get("first_name"),
-        tg_profile.get("last_name"),
-        tg_profile.get("photo_url"),
-        accounts,
-    )
+    return build_auth_success_payload(tg_profile["id"], tg_profile.get("username"), tg_profile.get("first_name"), tg_profile.get("last_name"), tg_profile.get("photo_url"), accounts)
 
 
 @app.get("/auth/me")
-async def get_me(
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
-    """Canonical route: read current user from authenticated session."""
+async def get_me(session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     from app.core.database import engine
     async with engine.connect() as conn:
-        result = await conn.execute(
-            text("SELECT * FROM users WHERE telegram_user_id = :uid"),
-            {"uid": resolved_uid}
-        )
+        result = await conn.execute(text("SELECT * FROM users WHERE telegram_user_id = :uid"), {"uid": resolved_uid})
         user = dict(result.mappings().first() or {})
     if not user:
         return JSONResponse(status_code=404, content={"detail": "User not found"})
@@ -1646,20 +1519,9 @@ async def get_me(
     return {"user": user, "accounts": accounts}
 
 
-
 @app.post("/auth/session/bridge")
 async def create_bridge_session_retired():
-    """Compatibility bridge route retired after caller migration."""
-    return JSONResponse(
-        status_code=410,
-        content={
-            "detail": "Bridge compatibility route has been retired. Use /auth/telegram or /auth/telegram/oidc.",
-            "retired": True,
-            "replacement": "/auth/telegram",
-        },
-    )
-
-
+    return JSONResponse(status_code=410, content={"detail": "Bridge compatibility route has been retired. Use /auth/telegram or /auth/telegram/oidc.", "retired": True, "replacement": "/auth/telegram"})
 
 
 @app.post("/auth/link-account")
@@ -1671,11 +1533,9 @@ async def link_account(
     label: str = None,
     broker: str = "fundingpips",
 ):
-    """Canonical account-link route for authenticated app sessions."""
     resolved_uid = str(session_user_id).strip()
     if not str(account_id or "").strip():
         return JSONResponse(status_code=400, content={"detail": "account_id is required"})
-
     await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
     accounts = await db_get_user_accounts(resolved_uid)
     logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
@@ -1683,131 +1543,65 @@ async def link_account(
 
 
 @app.post("/auth/accounts/{account_id}/set-primary")
-async def set_primary_account(
-    account_id: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def set_primary_account(account_id: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     from app.core.database import engine
     async with engine.begin() as conn:
-        exists_row = await conn.execute(text("""
-            SELECT 1
-            FROM prop_accounts
-            WHERE telegram_user_id = :uid
-              AND account_id = :acct_id
-              AND is_active = TRUE
-            LIMIT 1
-        """), {"uid": resolved_uid, "acct_id": account_id})
+        exists_row = await conn.execute(text("SELECT 1 FROM prop_accounts WHERE telegram_user_id = :uid AND account_id = :acct_id AND is_active = TRUE LIMIT 1"), {"uid": resolved_uid, "acct_id": account_id})
         if not exists_row.first():
             return JSONResponse(status_code=404, content={"detail": "Account not found"})
-        await conn.execute(text("""
-            UPDATE prop_accounts
-            SET is_primary = CASE WHEN account_id = :acct_id THEN TRUE ELSE FALSE END
-            WHERE telegram_user_id = :uid
-        """), {"uid": resolved_uid, "acct_id": account_id})
+        await conn.execute(text("UPDATE prop_accounts SET is_primary = CASE WHEN account_id = :acct_id THEN TRUE ELSE FALSE END WHERE telegram_user_id = :uid"), {"uid": resolved_uid, "acct_id": account_id})
     accounts = await db_get_user_accounts(resolved_uid)
     return {"ok": True, "accounts": accounts, "primary_account_id": account_id}
 
 
 @app.post("/auth/accounts/{account_id}/deactivate")
-async def deactivate_account(
-    account_id: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def deactivate_account(account_id: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     from app.core.database import engine
     async with engine.begin() as conn:
-        updated = await conn.execute(text("""
-            UPDATE prop_accounts
-            SET is_active = FALSE, is_primary = FALSE
-            WHERE telegram_user_id = :uid
-              AND account_id = :acct_id
-              AND is_active = TRUE
-        """), {"uid": resolved_uid, "acct_id": account_id})
-        await conn.execute(text("""
-            UPDATE trading_accounts
-            SET is_active = FALSE, updated_at = NOW()
-            WHERE user_id = :uid
-              AND external_account_id = :acct_id
-              AND is_active = TRUE
-        """), {"uid": resolved_uid, "acct_id": account_id})
+        updated = await conn.execute(text("UPDATE prop_accounts SET is_active = FALSE, is_primary = FALSE WHERE telegram_user_id = :uid AND account_id = :acct_id AND is_active = TRUE"), {"uid": resolved_uid, "acct_id": account_id})
+        await conn.execute(text("UPDATE trading_accounts SET is_active = FALSE, updated_at = NOW() WHERE user_id = :uid AND external_account_id = :acct_id AND is_active = TRUE"), {"uid": resolved_uid, "acct_id": account_id})
         if (updated.rowcount or 0) == 0:
             return JSONResponse(status_code=404, content={"detail": "Account not found"})
-        await conn.execute(text("""
-            WITH first_account AS (
-                SELECT MIN(id) AS id
-                FROM prop_accounts
-                WHERE telegram_user_id = :uid AND is_active = TRUE
-            )
-            UPDATE prop_accounts
-            SET is_primary = TRUE
-            WHERE id = (SELECT id FROM first_account)
-        """), {"uid": resolved_uid})
+        await conn.execute(text("WITH first_account AS (SELECT MIN(id) AS id FROM prop_accounts WHERE telegram_user_id = :uid AND is_active = TRUE) UPDATE prop_accounts SET is_primary = TRUE WHERE id = (SELECT id FROM first_account)"), {"uid": resolved_uid})
     accounts = await db_get_user_accounts(resolved_uid)
     return {"ok": True, "accounts": accounts, "deactivated_account_id": account_id}
 
 @app.post("/auth/link-account/compat")
 async def link_account_compat_retired():
-    """Compatibility account-link route retired after caller migration."""
-    return JSONResponse(
-        status_code=410,
-        content={
-            "detail": "Compatibility account-link route has been retired. Use /auth/link-account with bearer auth.",
-            "retired": True,
-            "replacement": "/auth/link-account",
-        },
-    )
+    return JSONResponse(status_code=410, content={"detail": "Compatibility account-link route has been retired. Use /auth/link-account with bearer auth.", "retired": True, "replacement": "/auth/link-account"})
 
 
 @app.get("/connectors/catalog")
 async def connectors_catalog():
-    """Expose connectors available in the current product surface."""
     return {"connectors": [{"id": key, "connector_type": key, **value} for key, value in CONNECTOR_CATALOG.items()]}
 
 
 @app.get("/connectors/overview")
-async def connectors_overview(
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connectors_overview(session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
     return {"connectors": connectors, "count": len(connectors)}
 
 
 @app.get("/accounts/workspaces")
-async def accounts_workspaces(
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def accounts_workspaces(session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     workspaces = await list_account_workspaces(resolved_uid)
-    return {
-        "workspaces": workspaces,
-        "count": len(workspaces),
-        "status_semantics": {
-            "connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee",
-            "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee",
-        },
-    }
+    return {"workspaces": workspaces, "count": len(workspaces), "status_semantics": {"connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee", "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee"}}
 
 
 @app.get("/accounts/workspaces/{account_key}")
-async def account_workspace_detail(
-    account_key: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def account_workspace_detail(account_key: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     workspace = await get_account_workspace(resolved_uid, account_key)
     if workspace is None:
         raise HTTPException(status_code=404, detail="Account workspace not found for user")
-    return {
-        "workspace": workspace,
-        "status_semantics": {
-            "connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee",
-            "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee",
-        },
-    }
+    return {"workspace": workspace, "status_semantics": {"connection_status": "connector-derived rollup per user+connector_type, not a per-account guarantee", "sync_state": "connector-derived rollup per user+connector_type, not a per-account guarantee"}}
 
 
+# ─── Pydantic models ──────────────────────────────────────────────────────────
 class ConnectorActionRequest(BaseModel):
     broker_name: str | None = None
     external_account_id: str | None = None
@@ -1816,16 +1610,13 @@ class ConnectorActionRequest(BaseModel):
     account_size: int | None = None
     connection_metadata: dict[str, Any] = Field(default_factory=dict)
 
-
 class ConnectorConfigUpsertRequest(BaseModel):
     non_secret_config: dict[str, Any] = Field(default_factory=dict)
     secret_config: dict[str, Any] = Field(default_factory=dict)
 
-
 class ConnectorConfigPatchRequest(BaseModel):
     non_secret_config: dict[str, Any] = Field(default_factory=dict)
     secret_config: dict[str, Any] = Field(default_factory=dict)
-
 
 class MT5PairingCheckRequest(BaseModel):
     external_account_id: str | None = None
@@ -1834,13 +1625,11 @@ class MT5PairingCheckRequest(BaseModel):
     bridge_id: str | None = None
     pairing_token: str | None = None
 
-
 class MT5PairingTokenCreateRequest(BaseModel):
     external_account_id: str | None = None
     mt5_server: str | None = None
     bridge_url: str | None = None
     display_name: str | None = None
-
 
 class MT5BridgeRegisterRequest(BaseModel):
     pairing_token: str
@@ -1848,31 +1637,26 @@ class MT5BridgeRegisterRequest(BaseModel):
     display_name: str | None = None
     bridge_metadata: dict[str, Any] = Field(default_factory=dict)
 
-
 class MT5BridgeHeartbeatRequest(BaseModel):
     bridge_id: str
     bridge_secret: str
     status: str | None = "online"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
-
 class TradingViewConnectionCreateRequest(BaseModel):
     display_label: str
     account_alias: str | None = None
-
 
 class PublicApiBetaConnectionCreateRequest(BaseModel):
     display_label: str
     environment: str | None = "paper"
     account_alias: str | None = None
 
-
 class AlpacaApiConnectRequest(BaseModel):
     label: str
     environment: str | None = "paper"
     api_key: str
     api_secret: str
-
 
 class TradeLockerApiConnectRequest(BaseModel):
     label: str
@@ -1883,12 +1667,16 @@ class TradeLockerApiConnectRequest(BaseModel):
     server: str | None = None
     environment: str | None = "demo"
 
+# ── NEW: FundingPips prop firm connector ──────────────────────────────────────
+class FundingPipsPropConnectRequest(BaseModel):
+    email: str
+    password: str
+    label: str | None = None
 
+
+# ─── Connector routes ─────────────────────────────────────────────────────────
 @app.get("/connectors/{connector_type}")
-async def connector_status_detail(
-    connector_type: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_status_detail(connector_type: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     connectors = await db_get_connectors_overview(resolved_uid)
     normalized = normalize_connector_type(connector_type)
@@ -1917,68 +1705,32 @@ async def connector_status_detail(
 
 
 @app.get("/connectors/{connector_type}/config")
-async def connector_config_detail(
-    connector_type: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_config_detail(connector_type: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     spec = connector_config_spec(normalized)
     config = await get_connector_config(resolved_uid, normalized)
     if not config:
-        return {
-            "connector_type": normalized,
-            "status": "not_configured",
-            "non_secret_config": {},
-            "has_secret_config": False,
-            "configured_secret_fields": [],
-            "supports_external_sync": bool(spec.get("supports_external_sync")),
-        }
-    return {
-        "connector_type": normalized,
-        "status": config.get("status"),
-        "non_secret_config": config.get("non_secret_config") or {},
-        "has_secret_config": bool(config.get("has_secret_config")),
-        "configured_secret_fields": config.get("configured_secret_fields") or [],
-        "validation_error": config.get("validation_error"),
-        "configured_at": config.get("configured_at"),
-        "rotated_at": config.get("rotated_at"),
-        "supports_external_sync": bool(spec.get("supports_external_sync")),
-    }
+        return {"connector_type": normalized, "status": "not_configured", "non_secret_config": {}, "has_secret_config": False, "configured_secret_fields": [], "supports_external_sync": bool(spec.get("supports_external_sync"))}
+    return {"connector_type": normalized, "status": config.get("status"), "non_secret_config": config.get("non_secret_config") or {}, "has_secret_config": bool(config.get("has_secret_config")), "configured_secret_fields": config.get("configured_secret_fields") or [], "validation_error": config.get("validation_error"), "configured_at": config.get("configured_at"), "rotated_at": config.get("rotated_at"), "supports_external_sync": bool(spec.get("supports_external_sync"))}
 
 
 @app.put("/connectors/{connector_type}/config")
-async def connector_config_set(
-    connector_type: str,
-    payload: ConnectorConfigUpsertRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_config_set(connector_type: str, payload: ConnectorConfigUpsertRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     non_secret, secret = sanitize_connector_config_payload(normalized, payload.model_dump())
-    status = "configured"
-    validation_error = None
+    status = "configured"; validation_error = None
     validator = connector_validation_for(normalized)
     if validator:
         status, validation_error = validator(non_secret, secret)
-    row = await upsert_connector_config(
-        resolved_uid,
-        normalized,
-        non_secret_config=non_secret,
-        secret_config=secret,
-        status=("invalid" if status == "invalid" else status),
-        validation_error=validation_error,
-    )
+    row = await upsert_connector_config(resolved_uid, normalized, non_secret_config=non_secret, secret_config=secret, status=("invalid" if status == "invalid" else status), validation_error=validation_error)
     config = await get_connector_config(resolved_uid, normalized)
     return {"ok": True, "connector_type": normalized, "config": config, "supports_external_sync": bool(connector_config_spec(normalized).get("supports_external_sync")), "stored_at": row.get("updated_at")}
 
 
 @app.patch("/connectors/{connector_type}/config")
-async def connector_config_update(
-    connector_type: str,
-    payload: ConnectorConfigPatchRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_config_update(connector_type: str, payload: ConnectorConfigPatchRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     existing = await get_connector_config(resolved_uid, normalized, include_secret=True) or {}
@@ -1987,28 +1739,17 @@ async def connector_config_update(
     patch_non_secret, patch_secret = sanitize_connector_config_payload(normalized, payload.model_dump())
     merged_non_secret = {**existing_non_secret, **patch_non_secret}
     merged_secret = {**existing_secret, **patch_secret}
-    status = "configured"
-    validation_error = None
+    status = "configured"; validation_error = None
     validator = connector_validation_for(normalized)
     if validator:
         status, validation_error = validator(merged_non_secret, merged_secret)
-    await upsert_connector_config(
-        resolved_uid,
-        normalized,
-        non_secret_config=merged_non_secret,
-        secret_config=merged_secret,
-        status=("invalid" if status == "invalid" else status),
-        validation_error=validation_error,
-    )
+    await upsert_connector_config(resolved_uid, normalized, non_secret_config=merged_non_secret, secret_config=merged_secret, status=("invalid" if status == "invalid" else status), validation_error=validation_error)
     config = await get_connector_config(resolved_uid, normalized)
     return {"ok": True, "connector_type": normalized, "config": config}
 
 
 @app.delete("/connectors/{connector_type}/config")
-async def connector_config_clear(
-    connector_type: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_config_clear(connector_type: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     removed = await clear_connector_config(resolved_uid, normalized)
@@ -2016,89 +1757,44 @@ async def connector_config_clear(
 
 
 @app.post("/connectors/{connector_type}/connect")
-async def connector_connect(
-    connector_type: str,
-    payload: ConnectorActionRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_connect(connector_type: str, payload: ConnectorActionRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
-    provider_state = "connected"
-    lifecycle_is_connected = True
-    trading_account = None
+    provider_state = "connected"; lifecycle_is_connected = True; trading_account = None
     if payload.external_account_id:
         trading_account = await upsert_trading_account({
-            "user_id": resolved_uid,
-            "connector_type": normalized,
+            "user_id": resolved_uid, "connector_type": normalized,
             "broker_name": payload.broker_name or normalized,
             "external_account_id": payload.external_account_id,
-            "display_label": payload.display_label,
-            "account_type": payload.account_type,
-            "account_size": payload.account_size,
-            "is_active": True,
+            "display_label": payload.display_label, "account_type": payload.account_type,
+            "account_size": payload.account_size, "is_active": True,
             "metadata": payload.connection_metadata or {},
         })
         if normalized == "mt5_bridge":
-            await upsert_mt5_bridge_account(
-                user_id=resolved_uid,
-                trading_account_id=trading_account["id"],
-                external_account_id=payload.external_account_id,
-                bridge_url=(payload.connection_metadata or {}).get("bridge_url"),
-                mt5_server=(payload.connection_metadata or {}).get("mt5_server"),
-                metadata={"source": "connect_action"},
-            )
+            await upsert_mt5_bridge_account(user_id=resolved_uid, trading_account_id=trading_account["id"], external_account_id=payload.external_account_id, bridge_url=(payload.connection_metadata or {}).get("bridge_url"), mt5_server=(payload.connection_metadata or {}).get("mt5_server"), metadata={"source": "connect_action"})
             provider_state = str((payload.connection_metadata or {}).get("provider_state") or "bridge_required")
             lifecycle_is_connected = provider_state == "connected"
-    lifecycle = await upsert_connector_lifecycle(
-        user_id=resolved_uid,
-        connector_type=normalized,
-        status=provider_state,
-        is_connected=lifecycle_is_connected,
-        last_activity_at=datetime.now(timezone.utc),
-        metadata={"action": "connect", "provider_state": provider_state},
-    )
+    lifecycle = await upsert_connector_lifecycle(user_id=resolved_uid, connector_type=normalized, status=provider_state, is_connected=lifecycle_is_connected, last_activity_at=datetime.now(timezone.utc), metadata={"action": "connect", "provider_state": provider_state})
     return {"ok": True, "connector": lifecycle, "trading_account": trading_account}
 
 
 @app.post("/connectors/mt5_bridge/pairing/check")
-async def mt5_pairing_check(
-    payload: MT5PairingCheckRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def mt5_pairing_check(payload: MT5PairingCheckRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
-    pairing_state = await check_mt5_pairing_state(
-        user_id=resolved_uid,
-        external_account_id=payload.external_account_id,
-        bridge_url=payload.bridge_url,
-        mt5_server=payload.mt5_server,
-        bridge_id=payload.bridge_id,
-        pairing_token=payload.pairing_token,
-    )
+    pairing_state = await check_mt5_pairing_state(user_id=resolved_uid, external_account_id=payload.external_account_id, bridge_url=payload.bridge_url, mt5_server=payload.mt5_server, bridge_id=payload.bridge_id, pairing_token=payload.pairing_token)
     return {"ok": True, "pairing": pairing_state}
 
 
 @app.post("/connectors/mt5_bridge/pairing/token")
-async def mt5_pairing_token_create(
-    payload: MT5PairingTokenCreateRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def mt5_pairing_token_create(payload: MT5PairingTokenCreateRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
-    token_payload = await create_mt5_pairing_token(
-        user_id=resolved_uid,
-        external_account_id=payload.external_account_id,
-        mt5_server=payload.mt5_server,
-        bridge_url=payload.bridge_url,
-        display_name=payload.display_name,
-        metadata={"source": "user_pairing_request"},
-    )
+    token_payload = await create_mt5_pairing_token(user_id=resolved_uid, external_account_id=payload.external_account_id, mt5_server=payload.mt5_server, bridge_url=payload.bridge_url, display_name=payload.display_name, metadata={"source": "user_pairing_request"})
     registration_state = await get_user_bridge_registration_state(resolved_uid)
     return {"ok": True, "pairing": token_payload, "registration": registration_state}
 
 
 @app.get("/connectors/mt5_bridge/registration/status")
-async def mt5_bridge_registration_status(
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def mt5_bridge_registration_status(session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     registration_state = await get_user_bridge_registration_state(resolved_uid)
     pairing_state = await check_mt5_pairing_state(user_id=resolved_uid)
@@ -2106,69 +1802,36 @@ async def mt5_bridge_registration_status(
 
 
 @app.post("/connectors/mt5_bridge/bridges/register")
-async def mt5_bridge_register(
-    payload: MT5BridgeRegisterRequest,
-    request: Request,
-):
+async def mt5_bridge_register(payload: MT5BridgeRegisterRequest, request: Request):
     try:
-        registered = await register_mt5_trusted_bridge(
-            pairing_token=payload.pairing_token,
-            machine_label=payload.machine_label,
-            display_name=payload.display_name,
-            bridge_metadata=payload.bridge_metadata,
-            remote_ip=request.client.host if request.client else None,
-        )
+        registered = await register_mt5_trusted_bridge(pairing_token=payload.pairing_token, machine_label=payload.machine_label, display_name=payload.display_name, bridge_metadata=payload.bridge_metadata, remote_ip=request.client.host if request.client else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "bridge": registered}
 
 
 @app.post("/connectors/mt5_bridge/bridges/heartbeat")
-async def mt5_bridge_heartbeat(
-    payload: MT5BridgeHeartbeatRequest,
-    request: Request,
-):
+async def mt5_bridge_heartbeat(payload: MT5BridgeHeartbeatRequest, request: Request):
     try:
-        heartbeat = await heartbeat_mt5_trusted_bridge(
-            bridge_id=payload.bridge_id,
-            bridge_secret=payload.bridge_secret,
-            status=payload.status,
-            metadata=payload.metadata,
-            remote_ip=request.client.host if request.client else None,
-        )
+        heartbeat = await heartbeat_mt5_trusted_bridge(bridge_id=payload.bridge_id, bridge_secret=payload.bridge_secret, status=payload.status, metadata=payload.metadata, remote_ip=request.client.host if request.client else None)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, "bridge": heartbeat}
 
 
 @app.post("/connectors/{connector_type}/sync")
-async def connector_sync(
-    connector_type: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_sync(connector_type: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     if not connector_supports_live_sync(normalized):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Connector '{normalized}' does not support remote sync",
-        )
-    run = await enqueue_connector_sync_run(
-        user_id=resolved_uid,
-        connector_type=normalized,
-        trigger="manual",
-        metadata={"action": "manual_sync"},
-    )
+        raise HTTPException(status_code=409, detail=f"Connector '{normalized}' does not support remote sync")
+    run = await enqueue_connector_sync_run(user_id=resolved_uid, connector_type=normalized, trigger="manual", metadata={"action": "manual_sync"})
     lifecycle = await get_connector_lifecycle(resolved_uid, normalized)
     return {"ok": True, "run": run, "connector": lifecycle}
 
 
 @app.get("/connectors/{connector_type}/sync-runs")
-async def connector_sync_runs(
-    connector_type: str,
-    limit: int = 10,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_sync_runs(connector_type: str, limit: int = 10, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     runs = await get_connector_sync_runs(resolved_uid, normalized, limit=limit)
@@ -2176,96 +1839,43 @@ async def connector_sync_runs(
 
 
 @app.post("/connectors/{connector_type}/disconnect")
-async def connector_disconnect(
-    connector_type: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connector_disconnect(connector_type: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized = normalize_connector_type(connector_type)
     from app.core.database import engine
     async with engine.begin() as conn:
-        await conn.execute(text("""
-            UPDATE trading_accounts
-            SET is_active = FALSE, updated_at = NOW()
-            WHERE user_id = :uid AND connector_type = :connector
-        """), {"uid": resolved_uid, "connector": normalized})
-    lifecycle = await upsert_connector_lifecycle(
-        user_id=resolved_uid,
-        connector_type=normalized,
-        status="disconnected",
-        is_connected=False,
-        last_activity_at=datetime.now(timezone.utc),
-        metadata={"action": "disconnect"},
-    )
+        await conn.execute(text("UPDATE trading_accounts SET is_active = FALSE, updated_at = NOW() WHERE user_id = :uid AND connector_type = :connector"), {"uid": resolved_uid, "connector": normalized})
+    lifecycle = await upsert_connector_lifecycle(user_id=resolved_uid, connector_type=normalized, status="disconnected", is_connected=False, last_activity_at=datetime.now(timezone.utc), metadata={"action": "disconnect"})
     return {"ok": True, "connector": lifecycle}
 
 
 @app.get("/connectors/mt5_bridge/accounts/{external_account_id}/state")
-async def mt5_bridge_account_state(
-    external_account_id: str,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def mt5_bridge_account_state(external_account_id: str, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     account_id = str(external_account_id or "").strip()
     if not account_id:
         raise HTTPException(status_code=400, detail="external_account_id is required")
     async with engine.connect() as conn:
-        account = (await conn.execute(text("""
-            SELECT id, external_account_id
-            FROM trading_accounts
-            WHERE user_id = :uid
-              AND connector_type = 'mt5_bridge'
-              AND external_account_id = :external_account_id
-              AND is_active = TRUE
-            ORDER BY updated_at DESC
-            LIMIT 1
-        """), {"uid": resolved_uid, "external_account_id": account_id})).mappings().first()
+        account = (await conn.execute(text("SELECT id, external_account_id FROM trading_accounts WHERE user_id = :uid AND connector_type = 'mt5_bridge' AND external_account_id = :external_account_id AND is_active = TRUE ORDER BY updated_at DESC LIMIT 1"), {"uid": resolved_uid, "external_account_id": account_id})).mappings().first()
     if not account:
         raise HTTPException(status_code=404, detail="MT5 account not found for user")
-    state = await get_mt5_bridge_account_state(
-        user_id=resolved_uid,
-        trading_account_id=account["id"],
-        external_account_id=account_id,
-    )
+    state = await get_mt5_bridge_account_state(user_id=resolved_uid, trading_account_id=account["id"], external_account_id=account_id)
     return {"ok": True, "state": state}
 
 
+# ─── Provider routes ──────────────────────────────────────────────────────────
 @app.post("/providers/tradingview-webhook/connections")
-async def create_tradingview_webhook_connection(
-    payload: TradingViewConnectionCreateRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def create_tradingview_webhook_connection(payload: TradingViewConnectionCreateRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     display_label = str(payload.display_label or "").strip()
     if not display_label:
         raise HTTPException(status_code=400, detail="display_label is required")
-    connection = await create_tradingview_connection(
-        user_id=resolved_uid,
-        display_label=display_label,
-        account_alias=payload.account_alias,
-    )
-    return {
-        "ok": True,
-        "provider": "tradingview_webhook",
-        "connection": {
-            "id": connection["id"],
-            "display_label": connection["display_label"],
-            "activation_state": connection["activation_state"],
-            "created_at": connection["created_at"],
-            "last_event_at": connection.get("last_event_at"),
-            "webhook_token_hint": connection["webhook_token_hint"],
-            "webhook_url": f"{APP_BASE_URL}/webhooks/tradingview/{connection['webhook_token']}",
-            "webhook_secret_hint": connection["webhook_token_hint"],
-        },
-    }
+    connection = await create_tradingview_connection(user_id=resolved_uid, display_label=display_label, account_alias=payload.account_alias)
+    return {"ok": True, "provider": "tradingview_webhook", "connection": {"id": connection["id"], "display_label": connection["display_label"], "activation_state": connection["activation_state"], "created_at": connection["created_at"], "last_event_at": connection.get("last_event_at"), "webhook_token_hint": connection["webhook_token_hint"], "webhook_url": f"{APP_BASE_URL}/webhooks/tradingview/{connection['webhook_token']}", "webhook_secret_hint": connection["webhook_token_hint"]}}
 
 
 @app.post("/providers/public-api/{provider_type}/beta")
-async def create_public_api_beta_provider_connection(
-    provider_type: str,
-    payload: PublicApiBetaConnectionCreateRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def create_public_api_beta_provider_connection(provider_type: str, payload: PublicApiBetaConnectionCreateRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     normalized_provider = normalize_connector_type(provider_type)
     if normalized_provider not in PUBLIC_API_BETA_CONNECTORS:
@@ -2273,108 +1883,76 @@ async def create_public_api_beta_provider_connection(
     display_label = str(payload.display_label or "").strip()
     if not display_label:
         raise HTTPException(status_code=400, detail="display_label is required")
-    connection = await create_public_api_beta_connection(
-        user_id=resolved_uid,
-        connector_type=normalized_provider,
-        display_label=display_label,
-        environment=payload.environment,
-        account_alias=payload.account_alias,
-    )
-    return {
-        "ok": True,
-        "provider": normalized_provider,
-        "connection": connection,
-        "status": "awaiting_secure_auth",
-    }
+    connection = await create_public_api_beta_connection(user_id=resolved_uid, connector_type=normalized_provider, display_label=display_label, environment=payload.environment, account_alias=payload.account_alias)
+    return {"ok": True, "provider": normalized_provider, "connection": connection, "status": "awaiting_secure_auth"}
 
 
 @app.post("/providers/public-api/alpaca_api/connect")
-async def connect_alpaca_public_api_provider(
-    payload: AlpacaApiConnectRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connect_alpaca_public_api_provider(payload: AlpacaApiConnectRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     label = str(payload.label or "").strip()
     if not label:
         raise HTTPException(status_code=400, detail="label is required")
     try:
-        result = await connect_alpaca_api_account(
-            user_id=resolved_uid,
-            label=label,
-            environment=payload.environment,
-            api_key=payload.api_key,
-            api_secret=payload.api_secret,
-        )
+        result = await connect_alpaca_api_account(user_id=resolved_uid, label=label, environment=payload.environment, api_key=payload.api_key, api_secret=payload.api_secret)
     except AlpacaCredentialValidationError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return {
-        "ok": True,
-        "provider": "alpaca_api",
-        "status": result["provider_state"],
-        "environment": result["environment"],
-        "validation_state": "account_verified",
-        "validation_error": result.get("validation_error"),
-        "account": {
-            "id": result["account"]["id"],
-            "display_label": result["account"]["display_label"],
-            "environment": result["account"]["environment"],
-            "provider_state": result["provider_state"],
-            "validation_state": "account_verified",
-            "last_validated_at": result["account"]["last_validated_at"],
-            "summary": result["account"].get("account_summary") or {},
-        },
-    }
+    return {"ok": True, "provider": "alpaca_api", "status": result["provider_state"], "environment": result["environment"], "validation_state": "account_verified", "validation_error": result.get("validation_error"), "account": {"id": result["account"]["id"], "display_label": result["account"]["display_label"], "environment": result["account"]["environment"], "provider_state": result["provider_state"], "validation_state": "account_verified", "last_validated_at": result["account"]["last_validated_at"], "summary": result["account"].get("account_summary") or {}}}
 
 
 @app.post("/providers/public-api/tradelocker_api/connect")
-async def connect_tradelocker_public_api_provider(
-    payload: TradeLockerApiConnectRequest,
-    session_user_id: str = Depends(get_required_telegram_user_id),
-):
+async def connect_tradelocker_public_api_provider(payload: TradeLockerApiConnectRequest, session_user_id: str = Depends(get_required_telegram_user_id)):
     resolved_uid = str(session_user_id).strip()
     label = str(payload.label or "").strip()
     if not label:
         raise HTTPException(status_code=400, detail="label is required")
     try:
-        result = await connect_tradelocker_api_account(
-            user_id=resolved_uid,
-            label=label,
-            base_url=payload.base_url,
-            account_id=payload.account_id,
-            email=payload.email,
-            password=payload.password,
-            server=payload.server,
-            environment=payload.environment,
-        )
+        result = await connect_tradelocker_api_account(user_id=resolved_uid, label=label, base_url=payload.base_url, account_id=payload.account_id, email=payload.email, password=payload.password, server=payload.server, environment=payload.environment)
     except TradeLockerAuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, "provider": "tradelocker_api", "status": result["provider_state"], "environment": result["environment"], "validation_state": "account_verified", "validation_error": result.get("validation_error"), "account": {"id": result["account"]["id"], "display_label": result["account"]["display_label"], "external_account_id": result["account"]["external_account_id"], "provider_state": result["provider_state"], "validation_state": "account_verified", "last_validated_at": result["account"]["last_validated_at"]}}
+
+
+# ── NEW: FundingPips prop firm connector route ─────────────────────────────────
+@app.post("/providers/prop-firm/fundingpips/connect")
+async def connect_fundingpips_prop_firm_provider(
+    payload: FundingPipsPropConnectRequest,
+    session_user_id: str = Depends(get_required_telegram_user_id),
+):
+    resolved_uid = str(session_user_id).strip()
+    email = str(payload.email or "").strip()
+    password = str(payload.password or "").strip()
+    label = str(payload.label or "").strip() or None
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="email and password are required")
+
+    try:
+        result = await connect_fundingpips_prop_firm(
+            user_id=resolved_uid,
+            email=email,
+            password=password,
+            label=label,
+        )
+    except FundingPipsAuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except FundingPipsAccountDiscoveryError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {
         "ok": True,
-        "provider": "tradelocker_api",
-        "status": result["provider_state"],
-        "environment": result["environment"],
-        "validation_state": "account_verified",
-        "validation_error": result.get("validation_error"),
-        "account": {
-            "id": result["account"]["id"],
-            "display_label": result["account"]["display_label"],
-            "external_account_id": result["account"]["external_account_id"],
-            "provider_state": result["provider_state"],
-            "validation_state": "account_verified",
-            "last_validated_at": result["account"]["last_validated_at"],
-        },
+        "provider": "fundingpips",
+        "connector_type": "fundingpips_prop",
+        "status": "connected",
+        "account_count": result["account_count"],
+        "accounts": result["accounts"],
     }
 
 
 @app.post("/webhooks/tradingview/{webhook_token}")
-async def ingest_tradingview_webhook_event(
-    webhook_token: str,
-    request: Request,
-):
+async def ingest_tradingview_webhook_event(webhook_token: str, request: Request):
     raw_body = await request.body()
     if not raw_body:
         raise HTTPException(status_code=400, detail="invalid_payload")
@@ -2410,16 +1988,12 @@ async def send_telegram(message: str, chat_id: str = None):
         return
     try:
         async with httpx.AsyncClient() as client:
-            await client.post(
-                f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": cid, "text": message, "parse_mode": "HTML"},
-            )
+            await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": message, "parse_mode": "HTML"})
     except Exception as e:
         logger.error(f"Telegram error: {e}")
 
 
 def resolve_telegram_chat_target(telegram_user_id: str | None = None) -> str | None:
-    """Prefer per-user Telegram routing when we know the linked user id."""
     uid = str(telegram_user_id or "").strip()
     if uid:
         return uid
@@ -2427,16 +2001,13 @@ def resolve_telegram_chat_target(telegram_user_id: str | None = None) -> str | N
 
 
 def telegram_command_matches(raw_cmd: str, base_cmd: str) -> bool:
-    """Match '/status' and '/status@<bot>' using configured or canonical bot username."""
     cmd = (raw_cmd or "").strip().lower()
     base = (base_cmd or "").strip().lower()
     if not cmd or not base:
         return False
     if cmd == base:
         return True
-
-    configured = TELEGRAM_BOT_USERNAME
-    bot_username = configured.strip().lstrip("@").lower()
+    bot_username = TELEGRAM_BOT_USERNAME.strip().lstrip("@").lower()
     return cmd == f"{base}@{bot_username}"
 
 
@@ -2446,10 +2017,7 @@ async def setup_telegram_webhook():
         return
     try:
         async with httpx.AsyncClient() as client:
-            res = await client.post(
-                f"https://api.telegram.org/bot{token}/setWebhook",
-                json={"url": f"{APP_BASE_URL}/telegram/webhook"},
-            )
+            res = await client.post(f"https://api.telegram.org/bot{token}/setWebhook", json={"url": f"{APP_BASE_URL}/telegram/webhook"})
             logger.info(f"Telegram webhook: {res.json()}")
     except Exception as e:
         logger.error(f"Webhook setup failed: {e}")
@@ -2470,19 +2038,10 @@ async def daily_summary_scheduler():
                 target    = now_et.replace(hour=17, minute=5, second=0, microsecond=0)
                 if abs((now_et - target).total_seconds()) <= 60 and today_key not in daily_summary_sent:
                     daily_summary_sent.add(today_key)
-                    # Broadcast to every registered user who has linked accounts
                     from app.core.database import engine
                     try:
                         async with engine.connect() as conn:
-                            result = await conn.execute(text(
-                                """
-                                SELECT DISTINCT uid FROM (
-                                    SELECT telegram_user_id AS uid FROM prop_accounts WHERE is_active = TRUE
-                                    UNION
-                                    SELECT user_id AS uid FROM trading_accounts WHERE is_active = TRUE AND user_id IS NOT NULL
-                                ) uids
-                                """
-                            ))
+                            result = await conn.execute(text("SELECT DISTINCT uid FROM (SELECT telegram_user_id AS uid FROM prop_accounts WHERE is_active = TRUE UNION SELECT user_id AS uid FROM trading_accounts WHERE is_active = TRUE AND user_id IS NOT NULL) uids"))
                             user_ids = [r[0] for r in result.fetchall()]
                     except Exception:
                         user_ids = []
@@ -2500,7 +2059,6 @@ async def daily_summary_scheduler():
 
 
 async def send_daily_summary(summary_date: str, chat_id: str = None, tg_uid: str = None):
-    # Use the requesting user's primary account if tg_uid is provided, else fall back to global primary
     if tg_uid:
         acct_id = await get_user_primary_account(tg_uid)
     else:
@@ -2556,30 +2114,19 @@ async def send_daily_summary(summary_date: str, chat_id: str = None, tg_uid: str
         is_fri   = datetime.strptime(summary_date, "%Y-%m-%d").weekday() == 4
         wknd_note = "Rest up. Markets open Monday 6 PM ET 🌙" if is_fri \
                     else f"{ri(d_pct)} Daily resets midnight GMT+1 🔄\n{ri(o_pct)} Overall: {o_pct}%  (${o_rem:,.0f} remaining)"
-        await send_telegram(
-            f"😴 <b>Market Close — {summary_date}</b>\n{'─'*28}\n\nNo trades today.\n\n"
-            f"{bal_line}{'─'*28}\n{wknd_note}\n\n{'─'*28}\n{format_payout_status(ev, short=True)}",
-            chat_id=chat_id,
-        )
+        await send_telegram(f"😴 <b>Market Close — {summary_date}</b>\n{'─'*28}\n\nNo trades today.\n\n{bal_line}{'─'*28}\n{wknd_note}\n\n{'─'*28}\n{format_payout_status(ev, short=True)}", chat_id=chat_id)
         return
 
-    trade_lines = "\n".join([
-        f"  {'✅' if (t.get('pnl') or 0) > 0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} "
-        f"{'+'if(t.get('pnl') or 0)>=0 else ''}{(t.get('pnl') or 0):.2f}"
-        for t in trades
-    ])
+    trade_lines = "\n".join([f"  {'✅' if (t.get('pnl') or 0) > 0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} {'+'if(t.get('pnl') or 0)>=0 else ''}{(t.get('pnl') or 0):.2f}" for t in trades])
     await send_telegram(
-        f"{day_icon} <b>Market Close — {summary_date}</b>\n"
-        f"<i>{acct_typ} · ${acct_sz//1000}K · {acct_id}</i>\n{'─'*28}\n\n"
+        f"{day_icon} <b>Market Close — {summary_date}</b>\n<i>{acct_typ} · ${acct_sz//1000}K · {acct_id}</i>\n{'─'*28}\n\n"
         f"{streak_line}📊 <b>Today</b>\n  Net P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b>\n"
         f"  Trades: {len(trades)}  (W:{len(wins)} L:{len(losses)})\n  Win Rate: {win_rate}%  |  PF: {pf}\n"
         f"  Best: {best_t.get('symbol','?')} +{best:.2f}  |  Worst: {worst_t.get('symbol','?')} {worst:.2f}\n"
         f"  Avg W: +{avg_win:.2f}  |  Avg L: {avg_loss:.2f}\n\n<b>Trades</b>\n{trade_lines}\n\n"
         f"{'─'*28}\n<b>Risk Tomorrow</b>\n{ri(d_pct)} Daily: {d_pct}%  {rb(d_pct)}  (${d_rem:,.0f} left)\n"
         f"{ri(o_pct)} Overall: {o_pct}%  {rb(o_pct)}  (${o_rem:,.0f} left)\n\n"
-        f"{bal_line}{'─'*28}\n{format_payout_status(ev, short=True)}\n\nSee you tomorrow 🎯",
-        chat_id=chat_id,
-    )
+        f"{bal_line}{'─'*28}\n{format_payout_status(ev, short=True)}\n\nSee you tomorrow 🎯", chat_id=chat_id)
     logger.info(f"Daily summary sent: {summary_date} | P&L: {total_pnl:.2f}")
 
 
@@ -2594,9 +2141,7 @@ async def weekend_scheduler():
             now_et    = now_utc + timedelta(hours=et_offset)
             if now_et.weekday() == 4:
                 today_key = now_et.strftime("%Y-%m-%d")
-                for warn_hour, warn_min, label, icon in [
-                    (16, 0, "1 HOUR", "⚠️"), (16, 30, "30 MINUTES", "🔴"), (16, 45, "15 MINUTES", "🚨")
-                ]:
+                for warn_hour, warn_min, label, icon in [(16, 0, "1 HOUR", "⚠️"), (16, 30, "30 MINUTES", "🔴"), (16, 45, "15 MINUTES", "🚨")]:
                     key = f"{today_key}_{warn_hour}_{warn_min}"
                     if key in weekend_alerted:
                         continue
@@ -2604,17 +2149,8 @@ async def weekend_scheduler():
                     if abs((now_et - target).total_seconds()) <= 60:
                         weekend_alerted.add(key)
                         open_accts = [aid for aid, a in account_data_store.items() if a.get("hasPositions")]
-                        pos_warn   = (
-                            f"\n🔴 <b>OPEN POSITIONS!</b>\nAccounts: {', '.join(open_accts)}\n"
-                            f"Profits will NOT count.\n"
-                        ) if open_accts else ""
-                        await send_telegram(
-                            f"{icon} <b>MARKET CLOSES IN {label}</b>\n{'─'*28}\n"
-                            f"🗓 Friday close: <b>5:00 PM ET</b>\n"
-                            f"📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n{pos_warn}{'─'*28}\n"
-                            f"⚠️ Holding over weekend <b>not permitted</b>.\n"
-                            f"Profits <b>won't count</b> — close before 5 PM ET."
-                        )
+                        pos_warn   = (f"\n🔴 <b>OPEN POSITIONS!</b>\nAccounts: {', '.join(open_accts)}\nProfits will NOT count.\n") if open_accts else ""
+                        await send_telegram(f"{icon} <b>MARKET CLOSES IN {label}</b>\n{'─'*28}\n🗓 Friday close: <b>5:00 PM ET</b>\n📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n{pos_warn}{'─'*28}\n⚠️ Holding over weekend <b>not permitted</b>.\nProfits <b>won't count</b> — close before 5 PM ET.")
         except Exception as e:
             logger.error(f"Weekend scheduler: {e}")
         await asyncio.sleep(60)
@@ -2637,10 +2173,7 @@ async def fetch_news_calendar() -> list:
         return news_cache
     try:
         async with httpx.AsyncClient(timeout=10) as client:
-            res = await client.get(
-                "https://nfs.faireconomy.media/ff_calendar_thisweek.json",
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
+            res = await client.get("https://nfs.faireconomy.media/ff_calendar_thisweek.json", headers={"User-Agent": "Mozilla/5.0"})
             if res.status_code == 200:
                 news_cache     = res.json()
                 news_last_fetch = now
@@ -2657,8 +2190,7 @@ def parse_event_time(event: dict):
             return None
         dt_date  = datetime.strptime(date_str, "%m-%d-%Y").date()
         time_str = time_str.strip().lower()
-        dt_time  = (datetime.strptime(time_str, "%I:%M%p") if ":" in time_str
-                    else datetime.strptime(time_str, "%I%p")).time()
+        dt_time  = (datetime.strptime(time_str, "%I:%M%p") if ":" in time_str else datetime.strptime(time_str, "%I%p")).time()
         naive    = datetime.combine(dt_date, dt_time)
         offset   = -4 if 3 <= dt_date.month <= 11 else -5
         return naive.replace(tzinfo=timezone(timedelta(hours=offset))).astimezone(timezone.utc)
@@ -2682,8 +2214,7 @@ async def news_scheduler():
                     await send_news_alert(event, et, round(mins))
                 key30 = f"30min_{key}"
                 tl    = (event.get("title") or "").lower()
-                if any(w in tl for w in ["speech", "fomc", "powell", "fed chair", "testimony"]) \
-                        and 29 <= mins <= 31 and key30 not in news_alerted:
+                if any(w in tl for w in ["speech", "fomc", "powell", "fed chair", "testimony"]) and 29 <= mins <= 31 and key30 not in news_alerted:
                     news_alerted.add(key30)
                     await send_news_alert(event, et, round(mins))
         except Exception as e:
@@ -2705,24 +2236,14 @@ async def send_news_alert(event: dict, event_time: datetime, minutes: int):
     elif any(w in tl for w in ["cpi", "inflation", "pce"]):
         guidance = "⚡ <b>Inflation data — rate expectations impact.</b>\n"
     forecast_line = f"Forecast: <b>{forecast}</b> | Previous: {previous}\n" if forecast else ""
-    await send_telegram(
-        f"🗞 <b>HIGH-IMPACT NEWS IN {minutes} MIN</b>\n{'─'*28}\n"
-        f"📌 <b>{title}</b>\n🌍 Currency: <b>{currency}</b>\n"
-        f"🕐 Time: <b>{et_time.strftime('%I:%M %p ET')}</b>\n"
-        f"📊 Affects: <b>DJI30, NAS100, SP500</b>\n"
-        f"{forecast_line}{'─'*28}\n{guidance}"
-        f"⚠️ No trades within <b>5 min before or after</b> this event."
-    )
+    await send_telegram(f"🗞 <b>HIGH-IMPACT NEWS IN {minutes} MIN</b>\n{'─'*28}\n📌 <b>{title}</b>\n🌍 Currency: <b>{currency}</b>\n🕐 Time: <b>{et_time.strftime('%I:%M %p ET')}</b>\n📊 Affects: <b>DJI30, NAS100, SP500</b>\n{forecast_line}{'─'*28}\n{guidance}⚠️ No trades within <b>5 min before or after</b> this event.")
 
 
 # ─── In-memory live state ─────────────────────────────────────────────────────
-# Keyed by accountId. Each entry is the last ExtensionData payload + last_updated timestamp.
 account_data_store: dict = {}
 
 
 def get_live_account(account_id: str) -> dict:
-    """Return account data only if it was updated within ACCOUNT_DATA_TTL_SECONDS.
-    Returns an empty dict if stale — callers should treat this as 'extension offline'."""
     acct = account_data_store.get(account_id, {})
     if not acct:
         return {}
@@ -2739,19 +2260,16 @@ def get_live_account(account_id: str) -> dict:
 
 
 def get_primary_account_id() -> str:
-    """Return the primary account ID from live store, falling back to env var."""
     if PRIMARY_ACCOUNT in account_data_store:
         return PRIMARY_ACCOUNT
     return list(account_data_store.keys())[0] if account_data_store else PRIMARY_ACCOUNT
 
 
 async def get_user_primary_account(telegram_user_id: str) -> str:
-    """Get the first active prop account for a Telegram user, fall back to global primary."""
     if not telegram_user_id:
         return get_primary_account_id()
     accounts = await db_get_user_accounts(telegram_user_id)
     if accounts:
-        # Prefer an account that's currently live in the store
         for a in accounts:
             if get_live_account(a["account_id"]):
                 return a["account_id"]
@@ -2769,44 +2287,18 @@ async def telegram_webhook(request: Request):
     tg_from  = message.get("from", {})
     tg_uid   = str(tg_from.get("id", "")) if tg_from else chat_id
 
-    # ── /start — register or welcome back ────────────────────────────────────
     if telegram_command_matches(cmd, "/start"):
-        user = await db_upsert_user({
-            "id":         tg_from.get("id"),
-            "username":   tg_from.get("username"),
-            "first_name": tg_from.get("first_name"),
-            "last_name":  tg_from.get("last_name"),
-        })
+        user = await db_upsert_user({"id": tg_from.get("id"), "username": tg_from.get("username"), "first_name": tg_from.get("first_name"), "last_name": tg_from.get("last_name")})
         accounts = await db_get_user_accounts(tg_uid)
         name     = tg_from.get("first_name") or tg_from.get("username") or "Trader"
         if accounts:
-            acct_lines = "\n".join(
-                f"  • {a['account_id']} ({a['account_type'] or a['broker']}, ${(a['account_size'] or 0):,})"
-                for a in accounts
-            )
-            await send_telegram(
-                f"👋 Welcome back, <b>{name}</b>!\n\n"
-                f"Your linked accounts:\n{acct_lines}\n\n"
-                f"Use /status to check your live risk.", chat_id=chat_id
-            )
+            acct_lines = "\n".join(f"  • {a['account_id']} ({a['account_type'] or a['broker']}, ${(a['account_size'] or 0):,})" for a in accounts)
+            await send_telegram(f"👋 Welcome back, <b>{name}</b>!\n\nYour linked accounts:\n{acct_lines}\n\nUse /status to check your live risk.", chat_id=chat_id)
         else:
-            await send_telegram(
-                f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\n"
-                f"Your Telegram account is registered. To get started:\n\n"
-                f"1️⃣ Open the platform at www.talitrade.com/app\n"
-                f"2️⃣ Log in with Telegram\n"
-                f"3️⃣ Install the Chrome extension on FundingPips\n\n"
-                f"Your trading data will automatically link to this account.\n\n"
-                f"/help — see all commands", chat_id=chat_id
-            )
+            await send_telegram(f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\nYour Telegram account is registered. To get started:\n\n1️⃣ Open the platform at www.talitrade.com/app\n2️⃣ Log in with Telegram\n3️⃣ Install the Chrome extension on FundingPips\n\nYour trading data will automatically link to this account.\n\n/help — see all commands", chat_id=chat_id)
         return {"ok": True}
 
-    dispatch = {
-        "/status":  handle_status,
-        "/today":   handle_today,
-        "/journal": handle_journal,
-        "/news":    handle_news,
-    }
+    dispatch = {"/status": handle_status, "/today": handle_today, "/journal": handle_journal, "/news": handle_news}
     for c, fn in dispatch.items():
         if telegram_command_matches(cmd, c):
             await fn(chat_id, tg_uid=tg_uid); return {"ok": True}
@@ -2815,14 +2307,7 @@ async def telegram_webhook(request: Request):
     elif telegram_command_matches(cmd, "/summary"):  await send_daily_summary(date.today().isoformat(), chat_id=chat_id, tg_uid=tg_uid)
     elif telegram_command_matches(cmd, "/week"):     await send_weekly_summary(chat_id=chat_id, tg_uid=tg_uid)
     elif telegram_command_matches(cmd, "/help"):
-        await send_telegram(
-            "🤖 <b>TaliTrade Commands</b>\n\n"
-            "/status  — Live risk snapshot\n/today   — Today's trades & P&L\n"
-            "/journal — Last 10 trades\n/news    — Upcoming high-impact news\n"
-            "/payout  — Payout eligibility check\n/summary — Today's market-close recap\n"
-            "/week    — Weekly performance report\n"
-            "/help    — This message", chat_id=chat_id,
-        )
+        await send_telegram("🤖 <b>TaliTrade Commands</b>\n\n/status  — Live risk snapshot\n/today   — Today's trades & P&L\n/journal — Last 10 trades\n/news    — Upcoming high-impact news\n/payout  — Payout eligibility check\n/summary — Today's market-close recap\n/week    — Weekly performance report\n/help    — This message", chat_id=chat_id)
     return {"ok": True}
 
 
@@ -2833,10 +2318,7 @@ async def handle_payout(chat_id: str, tg_uid: str = None):
         await send_telegram("📡 No live data — open FundingPips in your browser first.", chat_id=chat_id)
         return
     ev = await evaluate_payout_eligibility(acct_id, acct)
-    await send_telegram(
-        f"💸 <b>Payout Check — {acct_id}</b>\n{'─'*28}\n\n{format_payout_status(ev, short=False)}",
-        chat_id=chat_id,
-    )
+    await send_telegram(f"💸 <b>Payout Check — {acct_id}</b>\n{'─'*28}\n\n{format_payout_status(ev, short=False)}", chat_id=chat_id)
 
 
 async def handle_news(chat_id: str):
@@ -2860,11 +2342,7 @@ async def handle_news(chat_id: str):
         et_time   = et + timedelta(hours=et_offset)
         when      = f"in {round(mins)}m" if mins < 60 else f"in {round(mins/60,1)}h"
         lines.append(f"🔴 <b>{event.get('title','?')}</b> — {et_time.strftime('%I:%M %p')} ET ({when})")
-    await send_telegram(
-        f"📅 <b>Upcoming High-Impact News</b>\n<i>DJI30, NAS100, SP500</i>\n{'─'*28}\n\n"
-        + "\n".join(lines)
-        + f"\n\n{'─'*28}\n⚠️ No trades within 5 min before/after each event.", chat_id=chat_id,
-    )
+    await send_telegram(f"📅 <b>Upcoming High-Impact News</b>\n<i>DJI30, NAS100, SP500</i>\n{'─'*28}\n\n" + "\n".join(lines) + f"\n\n{'─'*28}\n⚠️ No trades within 5 min before/after each event.", chat_id=chat_id)
 
 
 async def handle_status(chat_id: str, tg_uid: str = None):
@@ -2873,47 +2351,22 @@ async def handle_status(chat_id: str, tg_uid: str = None):
     if not acct:
         await send_telegram("📡 No live data — open FundingPips in your browser first.", chat_id=chat_id)
         return
-    balance  = acct.get("balance") or 0
-    equity   = acct.get("equity")  or 0
-    profit   = acct.get("profit")  or 0
-    risk     = acct.get("riskPerTradeIdea") or {}
-    daily    = acct.get("dailyLoss")   or {}
-    overall  = acct.get("overallLoss") or {}
-    acct_typ = acct.get("accountType", "unknown")
-    acct_sz  = acct.get("accountSize", 10000)
-    last     = (acct.get("last_updated") or "")[:19].replace("T", " ")
-
+    balance  = acct.get("balance") or 0; equity   = acct.get("equity")  or 0; profit   = acct.get("profit")  or 0
+    risk     = acct.get("riskPerTradeIdea") or {}; daily    = acct.get("dailyLoss")   or {}; overall  = acct.get("overallLoss") or {}
+    acct_typ = acct.get("accountType", "unknown"); acct_sz  = acct.get("accountSize", 10000); last = (acct.get("last_updated") or "")[:19].replace("T", " ")
     def bar(pct):
-        f = round((pct or 0) / 10)
-        return "█" * f + "░" * (10 - f)
+        f = round((pct or 0) / 10); return "█" * f + "░" * (10 - f)
     def icon(pct):
         if pct is None: return "⚪"
         if pct >= 90:   return "🚨"
         if pct >= 75:   return "🔴"
         if pct >= 50:   return "⚠️"
         return "✅"
-
     risk_line = ""
     if risk.get("applicable"):
-        risk_line = (
-            f"{icon(risk.get('pct'))} <b>Trade Idea Risk</b>  {risk.get('pct',0)}%\n"
-            f"  {bar(risk.get('pct',0))}  ${risk.get('combined',0):.0f} / ${risk.get('limit',300):.0f}\n"
-            f"  Remaining: <b>${risk.get('remaining',300):.0f}</b>\n\n"
-        )
+        risk_line = (f"{icon(risk.get('pct'))} <b>Trade Idea Risk</b>  {risk.get('pct',0)}%\n  {bar(risk.get('pct',0))}  ${risk.get('combined',0):.0f} / ${risk.get('limit',300):.0f}\n  Remaining: <b>${risk.get('remaining',300):.0f}</b>\n\n")
     ev = await evaluate_payout_eligibility(acct_id, acct)
-    await send_telegram(
-        f"📊 <b>TaliTrade — {acct_id}</b>\n<i>{acct_typ} | ${acct_sz/1000:.0f}K</i>\n{'─'*28}\n\n"
-        f"💰 Balance: <b>${balance:.2f}</b>\n📈 Equity: <b>${equity:.2f}</b>\n"
-        f"📉 P&L: <b>{'+'if profit>=0 else ''}{profit:.2f}</b>\n\n{'─'*28}\n{risk_line}"
-        f"{icon(daily.get('pct'))} <b>Daily Loss</b>  {daily.get('pct',0)}%\n"
-        f"  {bar(daily.get('pct',0))}  ${daily.get('used',0):.0f} / ${daily.get('limit',500):.0f}\n"
-        f"  Remaining: <b>${daily.get('remaining',500):.0f}</b>\n\n"
-        f"{icon(overall.get('pct'))} <b>Overall Loss</b>  {overall.get('pct',0)}%\n"
-        f"  {bar(overall.get('pct',0))}  ${overall.get('used',0):.0f} / ${overall.get('limit',1000):.0f}\n"
-        f"  Remaining: <b>${overall.get('remaining',1000):.0f}</b>\n\n"
-        f"{'─'*28}\n{format_payout_status(ev, short=True)}\n\n🕐 {last} UTC",
-        chat_id=chat_id,
-    )
+    await send_telegram(f"📊 <b>TaliTrade — {acct_id}</b>\n<i>{acct_typ} | ${acct_sz/1000:.0f}K</i>\n{'─'*28}\n\n💰 Balance: <b>${balance:.2f}</b>\n📈 Equity: <b>${equity:.2f}</b>\n📉 P&L: <b>{'+'if profit>=0 else ''}{profit:.2f}</b>\n\n{'─'*28}\n{risk_line}{icon(daily.get('pct'))} <b>Daily Loss</b>  {daily.get('pct',0)}%\n  {bar(daily.get('pct',0))}  ${daily.get('used',0):.0f} / ${daily.get('limit',500):.0f}\n  Remaining: <b>${daily.get('remaining',500):.0f}</b>\n\n{icon(overall.get('pct'))} <b>Overall Loss</b>  {overall.get('pct',0)}%\n  {bar(overall.get('pct',0))}  ${overall.get('used',0):.0f} / ${overall.get('limit',1000):.0f}\n  Remaining: <b>${overall.get('remaining',1000):.0f}</b>\n\n{'─'*28}\n{format_payout_status(ev, short=True)}\n\n🕐 {last} UTC", chat_id=chat_id)
 
 
 async def handle_today(chat_id: str, tg_uid: str = None):
@@ -2927,17 +2380,8 @@ async def handle_today(chat_id: str, tg_uid: str = None):
     total_pnl = sum(t.get("pnl") or 0 for t in today_trades)
     wins      = [t for t in today_trades if (t.get("pnl") or 0) > 0]
     win_rate  = round(len(wins) / len(today_trades) * 100)
-    lines = [
-        f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} "
-        f"<b>{'+'if(t.get('pnl') or 0)>=0 else ''}{(t.get('pnl') or 0):.2f}</b> @ {(t.get('closedAt') or '')[11:16]}"
-        for t in today_trades
-    ]
-    await send_telegram(
-        f"📅 <b>Today — {today}</b>\n{'─'*28}\n\n" + "\n".join(lines)
-        + f"\n\n{'─'*28}\nP&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> "
-        f"| {len(today_trades)} trades | WR: {win_rate}%",
-        chat_id=chat_id,
-    )
+    lines = [f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} {t.get('symbol','?')} {t.get('direction','?')} <b>{'+'if(t.get('pnl') or 0)>=0 else ''}{(t.get('pnl') or 0):.2f}</b> @ {(t.get('closedAt') or '')[11:16]}" for t in today_trades]
+    await send_telegram(f"📅 <b>Today — {today}</b>\n{'─'*28}\n\n" + "\n".join(lines) + f"\n\n{'─'*28}\nP&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | {len(today_trades)} trades | WR: {win_rate}%", chat_id=chat_id)
 
 
 async def handle_journal(chat_id: str, tg_uid: str = None):
@@ -2949,84 +2393,34 @@ async def handle_journal(chat_id: str, tg_uid: str = None):
         return
     total_pnl = sum(t.get("pnl") or 0 for t in recent)
     wins      = len([t for t in recent if (t.get("pnl") or 0) > 0])
-    lines = [
-        f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} <b>{t.get('symbol','?')}</b> {t.get('direction','?')} "
-        f"{'+'if(t.get('pnl') or 0)>=0 else ''}{(t.get('pnl') or 0):.2f} | {(t.get('closedAt') or '')[:10]}"
-        for t in recent
-    ]
-    await send_telegram(
-        f"📒 <b>Last {len(recent)} Trades</b>\n{'─'*28}\n\n" + "\n".join(lines)
-        + f"\n\n{'─'*28}\nP&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | WR: {round(wins/len(recent)*100)}%",
-        chat_id=chat_id,
-    )
+    lines = [f"{'✅' if (t.get('pnl') or 0) > 0 else '❌'} <b>{t.get('symbol','?')}</b> {t.get('direction','?')} {'+'if(t.get('pnl') or 0)>=0 else ''}{(t.get('pnl') or 0):.2f} | {(t.get('closedAt') or '')[:10]}" for t in recent]
+    await send_telegram(f"📒 <b>Last {len(recent)} Trades</b>\n{'─'*28}\n\n" + "\n".join(lines) + f"\n\n{'─'*28}\nP&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b> | WR: {round(wins/len(recent)*100)}%", chat_id=chat_id)
 
 
 # ─── Weekly summary ────────────────────────────────────────────────────────────
 async def send_weekly_summary(chat_id: str = None, tg_uid: str = None):
-    """Send a weekly P&L and performance digest to the requesting user."""
     acct_id = await get_user_primary_account(tg_uid) if tg_uid else get_primary_account_id()
     from app.core.database import engine
-    # Last 7 calendar days
     week_start = (date.today() - timedelta(days=6)).isoformat()
     async with engine.connect() as conn:
-        result = await conn.execute(
-            text(f"""
-                SELECT * FROM trades
-                WHERE account_id=:a AND COALESCE(closed_at, logged_at) >= :ws
-                AND (source='scraper' OR source IS NULL)
-                ORDER BY COALESCE(closed_at, logged_at) ASC
-            """),
-            {"a": acct_id, "ws": week_start},
-        )
+        result = await conn.execute(text("SELECT * FROM trades WHERE account_id=:a AND COALESCE(closed_at, logged_at) >= :ws AND (source='scraper' OR source IS NULL) ORDER BY COALESCE(closed_at, logged_at) ASC"), {"a": acct_id, "ws": week_start})
         rows = [dict(r) for r in result.mappings().all()]
     trades = [row_to_trade(r) for r in rows]
-
     if not trades:
-        await send_telegram(
-            f"📅 <b>Weekly Report</b>\n{'─'*28}\n\nNo trades this week.",
-            chat_id=chat_id,
-        )
+        await send_telegram(f"📅 <b>Weekly Report</b>\n{'─'*28}\n\nNo trades this week.", chat_id=chat_id)
         return
-
-    pnls      = [t.get("pnl") or 0 for t in trades]
-    total_pnl = sum(pnls)
-    wins      = [p for p in pnls if p > 0]
-    losses    = [p for p in pnls if p < 0]
-    win_rate  = round(len(wins) / len(pnls) * 100)
-    gp, gl    = sum(wins), abs(sum(losses))
+    pnls      = [t.get("pnl") or 0 for t in trades]; total_pnl = sum(pnls)
+    wins      = [p for p in pnls if p > 0]; losses = [p for p in pnls if p < 0]
+    win_rate  = round(len(wins) / len(pnls) * 100); gp, gl = sum(wins), abs(sum(losses))
     pf        = round(gp / gl, 2) if gl > 0 else "∞"
-
-    # Best and worst symbols
     sym_pnl: dict = {}
     for t in trades:
-        s = t.get("symbol") or "?"
-        sym_pnl[s] = sym_pnl.get(s, 0) + (t.get("pnl") or 0)
-    best_sym  = max(sym_pnl, key=sym_pnl.get)
-    worst_sym = min(sym_pnl, key=sym_pnl.get)
-
-    # Distinct trading days this week
+        s = t.get("symbol") or "?"; sym_pnl[s] = sym_pnl.get(s, 0) + (t.get("pnl") or 0)
+    best_sym  = max(sym_pnl, key=sym_pnl.get); worst_sym = min(sym_pnl, key=sym_pnl.get)
     trading_days = len({(t.get("closedAt") or t.get("loggedAt") or "")[:10] for t in trades if (t.get("closedAt") or t.get("loggedAt"))})
-
-    acct     = account_data_store.get(acct_id, {})
-    acct_sz  = acct.get("accountSize") or 10000
-    acct_typ = (acct.get("accountType") or "").replace("_", " ").title()
-    ev       = await evaluate_payout_eligibility(acct_id, acct)
-    icon     = "🟢" if total_pnl > 0 else ("🔴" if total_pnl < 0 else "⚪")
-
-    await send_telegram(
-        f"{icon} <b>Weekly Report</b>\n"
-        f"<i>{acct_typ} · ${acct_sz//1000}K · {acct_id}</i>\n"
-        f"<i>{week_start} → {date.today().isoformat()}</i>\n{'─'*28}\n\n"
-        f"📊 <b>Performance</b>\n"
-        f"  Net P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b>\n"
-        f"  Trades: {len(trades)}  (W:{len(wins)} L:{len(losses)})\n"
-        f"  Win Rate: {win_rate}%  |  PF: {pf}\n"
-        f"  Trading Days: {trading_days}\n\n"
-        f"🏆 Best Symbol:  {best_sym}  ({'+' if sym_pnl[best_sym]>=0 else ''}{sym_pnl[best_sym]:.2f})\n"
-        f"📉 Worst Symbol: {worst_sym}  ({'+' if sym_pnl[worst_sym]>=0 else ''}{sym_pnl[worst_sym]:.2f})\n\n"
-        f"{'─'*28}\n{format_payout_status(ev, short=True)}",
-        chat_id=chat_id,
-    )
+    acct     = account_data_store.get(acct_id, {}); acct_sz  = acct.get("accountSize") or 10000; acct_typ = (acct.get("accountType") or "").replace("_", " ").title()
+    ev       = await evaluate_payout_eligibility(acct_id, acct); icon = "🟢" if total_pnl > 0 else ("🔴" if total_pnl < 0 else "⚪")
+    await send_telegram(f"{icon} <b>Weekly Report</b>\n<i>{acct_typ} · ${acct_sz//1000}K · {acct_id}</i>\n<i>{week_start} → {date.today().isoformat()}</i>\n{'─'*28}\n\n📊 <b>Performance</b>\n  Net P&L: <b>{'+'if total_pnl>=0 else ''}{total_pnl:.2f}</b>\n  Trades: {len(trades)}  (W:{len(wins)} L:{len(losses)})\n  Win Rate: {win_rate}%  |  PF: {pf}\n  Trading Days: {trading_days}\n\n🏆 Best Symbol:  {best_sym}  ({'+' if sym_pnl[best_sym]>=0 else ''}{sym_pnl[best_sym]:.2f})\n📉 Worst Symbol: {worst_sym}  ({'+' if sym_pnl[worst_sym]>=0 else ''}{sym_pnl[worst_sym]:.2f})\n\n{'─'*28}\n{format_payout_status(ev, short=True)}", chat_id=chat_id)
     logger.info(f"Weekly summary sent: {acct_id} | P&L: {total_pnl:.2f}")
 
 
@@ -3047,10 +2441,10 @@ class ExtensionData(BaseModel):
     dailyLoss: dict | None = None
     overallLoss: dict | None = None
     alerts: list = []
-    closedTrades: list = []  # real-time detected closes — Telegram only, NOT written to DB
+    closedTrades: list = []
     timestamp: str | None = None
     url: str | None = None
-    telegramUserId: str | None = None  # set by extension after user logs in
+    telegramUserId: str | None = None
 
 
 class TradeData(BaseModel):
@@ -3075,183 +2469,70 @@ class TradeData(BaseModel):
 
 @app.post("/extension/data")
 async def receive_extension_data(data: ExtensionData):
-    """
-    Main extension heartbeat — receives live account state every 5s.
-    Responsibilities:
-      1. Store latest account data (with TTL timestamp)
-      2. Fire Telegram alerts for new rule violations
-      3. Fire Telegram trade-close notifications (real-time, within 5s)
-      4. Detect profit drops / breakeven crossovers for live position alerts
-    """
     account_id  = data.accountId or "unknown"
     tg_uid      = str(data.telegramUserId or "").strip() or None
     notify_chat = resolve_telegram_chat_target(tg_uid)
     prev        = account_data_store.get(account_id, {})
     prev_alerts = {a.get("type"): a.get("level") for a in (prev.get("alerts") or [])}
-
-    account_data_store[account_id] = {
-        **data.dict(),
-        "last_updated": datetime.utcnow().isoformat(),
-    }
+    account_data_store[account_id] = {**data.dict(), "last_updated": datetime.utcnow().isoformat()}
 
     if account_id != "unknown":
-        connector_account_payload = {
-            "user_id": tg_uid,
-            "connector_type": "fundingpips_extension",
-            "broker_name": "fundingpips",
-            "external_account_id": account_id,
-            "display_label": data.accountLabel,
-            "account_type": data.accountType,
-            "account_size": data.accountSize,
-            "metadata": {"source": "legacy_extension"},
-        }
+        connector_account_payload = {"user_id": tg_uid, "connector_type": "fundingpips_extension", "broker_name": "fundingpips", "external_account_id": account_id, "display_label": data.accountLabel, "account_type": data.accountType, "account_size": data.accountSize, "metadata": {"source": "legacy_extension"}}
         normalized_account = await upsert_trading_account(connector_account_payload)
-        await ingest_account_snapshot({
-            **connector_account_payload,
-            "timestamp": data.timestamp or datetime.utcnow().isoformat(),
-            "balance": data.balance,
-            "equity": data.equity,
-            "drawdown": (data.overallLoss or {}).get("used"),
-            "risk_used": (data.dailyLoss or {}).get("used"),
-            "source_metadata": {
-                "legacy_route": "/extension/data",
-                "has_positions": data.hasPositions,
-                "open_position_count": data.openPositionCount,
-            },
-        })
+        await ingest_account_snapshot({**connector_account_payload, "timestamp": data.timestamp or datetime.utcnow().isoformat(), "balance": data.balance, "equity": data.equity, "drawdown": (data.overallLoss or {}).get("used"), "risk_used": (data.dailyLoss or {}).get("used"), "source_metadata": {"legacy_route": "/extension/data", "has_positions": data.hasPositions, "open_position_count": data.openPositionCount}})
         seen_position_keys: list[str] = []
         for pos in data.positions or []:
-            position_key = await ingest_position({
-                **connector_account_payload,
-                "symbol": pos.get("symbol") or pos.get("instrument") or "unknown",
-                "side": pos.get("direction") or pos.get("side"),
-                "size": pos.get("volume") or pos.get("size"),
-                "average_entry": pos.get("entryPrice") or pos.get("openPrice"),
-                "unrealized_pnl": pos.get("pnl") or pos.get("profit"),
-                "stop_loss": pos.get("stopLoss"),
-                "take_profit": pos.get("takeProfit"),
-                "opened_at": pos.get("openedAt"),
-                "source_metadata": {"legacy_route": "/extension/data"},
-            })
+            position_key = await ingest_position({**connector_account_payload, "symbol": pos.get("symbol") or pos.get("instrument") or "unknown", "side": pos.get("direction") or pos.get("side"), "size": pos.get("volume") or pos.get("size"), "average_entry": pos.get("entryPrice") or pos.get("openPrice"), "unrealized_pnl": pos.get("pnl") or pos.get("profit"), "stop_loss": pos.get("stopLoss"), "take_profit": pos.get("takeProfit"), "opened_at": pos.get("openedAt"), "source_metadata": {"legacy_route": "/extension/data"}})
             seen_position_keys.append(position_key)
-        # Only close out missing positions if the connector explicitly reports no open positions.
-        await deactivate_missing_positions(
-            trading_account_id=normalized_account["id"],
-            seen_position_keys=seen_position_keys,
-            allow_empty_snapshot=not data.hasPositions,
-        )
+        await deactivate_missing_positions(trading_account_id=normalized_account["id"], seen_position_keys=seen_position_keys, allow_empty_snapshot=not data.hasPositions)
 
-    # Auto-link account to telegram user if telegramUserId is provided
     if tg_uid and account_id != "unknown":
         try:
-            await db_link_account(
-                telegram_user_id=tg_uid,
-                account_id=account_id,
-                account_type=data.accountType,
-                account_size=data.accountSize,
-                label=data.accountLabel,
-            )
+            await db_link_account(telegram_user_id=tg_uid, account_id=account_id, account_type=data.accountType, account_size=data.accountSize, label=data.accountLabel)
         except Exception as e:
             logger.warning(f"Auto-link account failed: {e}")
 
     if not tg_uid:
         logger.info("Extension heartbeat without telegramUserId account=%s", account_id)
 
-    # Rule violation alerts — only fire when level changes (prevents spam on restart)
     for alert in data.alerts:
         if prev_alerts.get(alert.get("type")) != alert.get("level"):
-            await send_telegram(
-                alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>",
-                chat_id=notify_chat,
-            )
+            await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>", chat_id=notify_chat)
 
-    # Real-time trade close alerts — arrive within 5s of detection
     for ct in data.closedTrades:
-        pnl         = ct.get("pnl") or 0
-        icon        = "✅" if pnl > 0 else "❌"
+        pnl = ct.get("pnl") or 0; icon = "✅" if pnl > 0 else "❌"
         daily_pct   = round((ct.get("dailyLossUsed")  or 0) / (ct.get("dailyLossLimit")  or 500)  * 100)
         overall_pct = round((ct.get("overallLossUsed") or 0) / (ct.get("overallLossLimit") or 1000) * 100)
-        bal         = ct.get("balanceAfter")
-        bal_line    = f"Balance: ${bal:,.2f}\n" if bal else ""
-        await send_telegram(
-            f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n"
-            f"{ct.get('symbol','?')} {ct.get('direction','?')} | "
-            f"<b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n"
-            f"{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%",
-            chat_id=notify_chat,
-        )
+        bal = ct.get("balanceAfter"); bal_line = f"Balance: ${bal:,.2f}\n" if bal else ""
+        await send_telegram(f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n{ct.get('symbol','?')} {ct.get('direction','?')} | <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%", chat_id=notify_chat)
 
-    # Live position monitoring
     prev_profit = prev.get("profit"); curr_profit = data.profit
     if curr_profit is not None and prev_profit is not None:
         if prev_profit - curr_profit >= 10:
-            await send_telegram(
-                f"📉 <b>Profit Drop</b>\nAccount: {account_id}\n"
-                f"${prev_profit:.2f} → ${curr_profit:.2f}  (-${prev_profit-curr_profit:.2f})",
-                chat_id=notify_chat,
-            )
+            await send_telegram(f"📉 <b>Profit Drop</b>\nAccount: {account_id}\n${prev_profit:.2f} → ${curr_profit:.2f}  (-${prev_profit-curr_profit:.2f})", chat_id=notify_chat)
         if prev_profit < 0 and curr_profit >= 0:
-            await send_telegram(
-                f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}",
-                chat_id=notify_chat,
-            )
+            await send_telegram(f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}", chat_id=notify_chat)
 
     risk = data.riskPerTradeIdea or {}; daily = data.dailyLoss or {}; overall = data.overallLoss or {}
-    return {
-        "status": "ok", "account": account_id,
-        "balance": data.balance, "equity": data.equity,
-        "tradeRisk":   {"used": risk.get("combined"),   "remaining": risk.get("remaining"),   "pct": risk.get("pct")},
-        "dailyLoss":   {"used": daily.get("used"),       "remaining": daily.get("remaining"),   "pct": daily.get("pct")},
-        "overallLoss": {"used": overall.get("used"),     "remaining": overall.get("remaining"), "pct": overall.get("pct")},
-        "alerts_fired": len(data.alerts),
-        "telegramLinked": bool(tg_uid),
-    }
+    return {"status": "ok", "account": account_id, "balance": data.balance, "equity": data.equity, "tradeRisk": {"used": risk.get("combined"), "remaining": risk.get("remaining"), "pct": risk.get("pct")}, "dailyLoss": {"used": daily.get("used"), "remaining": daily.get("remaining"), "pct": daily.get("pct")}, "overallLoss": {"used": overall.get("used"), "remaining": overall.get("remaining"), "pct": overall.get("pct")}, "alerts_fired": len(data.alerts), "telegramLinked": bool(tg_uid)}
 
 
 @app.post("/extension/trade")
 async def log_trade(trade: TradeData):
-    """Scraper-only endpoint. Persists closed trades to DB. No Telegram — that comes via /extension/data."""
     payload = trade.dict()
-    persisted = await ingest_trade({
-        "user_id": payload.get("telegramUserId"),
-        "connector_type": "fundingpips_extension",
-        "external_account_id": payload.get("accountId"),
-        "account_type": payload.get("accountType"),
-        "account_size": payload.get("accountSize"),
-        "symbol": payload.get("symbol"),
-        "side": payload.get("direction"),
-        "size": payload.get("volume"),
-        "entry_price": payload.get("openPrice"),
-        "exit_price": payload.get("closePrice"),
-        "close_time": payload.get("closedAt"),
-        "pnl": payload.get("pnl"),
-        "balance_after": payload.get("balanceAfter"),
-        "equity_after": payload.get("equityAfter"),
-        "daily_loss_used": payload.get("dailyLossUsed"),
-        "daily_loss_limit": payload.get("dailyLossLimit"),
-        "overall_loss_used": payload.get("overallLossUsed"),
-        "overall_loss_limit": payload.get("overallLossLimit"),
-        "source": payload.get("source") or "scraper",
-        "source_metadata": {"legacy_route": "/extension/trade"},
-    })
+    persisted = await ingest_trade({"user_id": payload.get("telegramUserId"), "connector_type": "fundingpips_extension", "external_account_id": payload.get("accountId"), "account_type": payload.get("accountType"), "account_size": payload.get("accountSize"), "symbol": payload.get("symbol"), "side": payload.get("direction"), "size": payload.get("volume"), "entry_price": payload.get("openPrice"), "exit_price": payload.get("closePrice"), "close_time": payload.get("closedAt"), "pnl": payload.get("pnl"), "balance_after": payload.get("balanceAfter"), "equity_after": payload.get("equityAfter"), "daily_loss_used": payload.get("dailyLossUsed"), "daily_loss_limit": payload.get("dailyLossLimit"), "overall_loss_used": payload.get("overallLossUsed"), "overall_loss_limit": payload.get("overallLossLimit"), "source": payload.get("source") or "scraper", "source_metadata": {"legacy_route": "/extension/trade"}})
     return {"status": "ok", "persisted": persisted}
 
 
-# Backward-compat alias — older extension versions posted here
 @app.post("/journal/trade")
 async def log_trade_alias(trade: TradeData):
     return await log_trade(trade)
 
 
 @app.get("/extension/journal")
-async def get_journal(
-    account_id: str = None, limit: int = 50, offset: int = 0,
-    order: str = "desc", source: str = "scraper"
-):
-    rows = await db_get_trades(account_id=account_id, limit=limit, offset=offset,
-                               order=order, source=source)
-    return {"trades": [row_to_trade(r) for r in rows], "total": len(rows),
-            "offset": offset, "limit": limit}
+async def get_journal(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc", source: str = "scraper"):
+    rows = await db_get_trades(account_id=account_id, limit=limit, offset=offset, order=order, source=source)
+    return {"trades": [row_to_trade(r) for r in rows], "total": len(rows), "offset": offset, "limit": limit}
 
 
 @app.get("/extension/journal/stats")
@@ -3261,7 +2542,6 @@ async def get_journal_stats(account_id: str = None):
 
 @app.get("/extension/status")
 async def extension_status():
-    """Returns live account state. Stale accounts (>2 min since last poll) are excluded."""
     live = {aid: acct for aid, acct in account_data_store.items() if get_live_account(aid)}
     return {"accounts": live, "count": len(live)}
 
@@ -3279,15 +2559,7 @@ async def get_news():
         if -60 < mins < 480:
             et_offset = -4 if 3 <= et.month <= 11 else -5
             et_time   = et + timedelta(hours=et_offset)
-            upcoming.append({
-                "title":          event.get("title"),
-                "currency":       event.get("country"),
-                "time_et":        et_time.strftime("%I:%M %p ET"),
-                "time_utc":       et.isoformat(),
-                "minutes_until":  round(mins),
-                "forecast":       event.get("forecast"),
-                "previous":       event.get("previous"),
-            })
+            upcoming.append({"title": event.get("title"), "currency": event.get("country"), "time_et": et_time.strftime("%I:%M %p ET"), "time_utc": et.isoformat(), "minutes_until": round(mins), "forecast": event.get("forecast"), "previous": event.get("previous")})
     upcoming.sort(key=lambda x: x["minutes_until"])
     return {"events": upcoming[:10]}
 
@@ -3302,31 +2574,20 @@ async def get_payout(account_id: str = None):
 # ─── Admin ────────────────────────────────────────────────────────────────────
 @app.get("/admin/dedup-trades/preview")
 async def dedup_trades_preview():
-    """Preview realtime rows that would be deleted by DELETE /admin/dedup-trades."""
     from app.core.database import engine
     async with engine.connect() as conn:
-        count_res = await conn.execute(
-            text("SELECT COUNT(*) FROM trades WHERE source = 'realtime'")
-        )
+        count_res = await conn.execute(text("SELECT COUNT(*) FROM trades WHERE source = 'realtime'"))
         total = count_res.scalar()
-        sample_res = await conn.execute(text("""
-            SELECT id, account_id, symbol, direction, pnl, closed_at, source, balance_after
-            FROM trades WHERE source = 'realtime'
-            ORDER BY closed_at DESC LIMIT 50
-        """))
+        sample_res = await conn.execute(text("SELECT id, account_id, symbol, direction, pnl, closed_at, source, balance_after FROM trades WHERE source = 'realtime' ORDER BY closed_at DESC LIMIT 50"))
         rows = [dict(r) for r in sample_res.mappings().all()]
     return {"total_realtime_rows": total, "sample": rows}
 
 
 @app.delete("/admin/dedup-trades")
 async def dedup_trades():
-    """Remove realtime-tagged duplicate rows. Safe to run multiple times."""
     from app.core.database import engine
     async with engine.begin() as conn:
-        result = await conn.execute(text("""
-            DELETE FROM trades WHERE source = 'realtime'
-            RETURNING id, account_id, symbol, direction, pnl, closed_at
-        """))
+        result = await conn.execute(text("DELETE FROM trades WHERE source = 'realtime' RETURNING id, account_id, symbol, direction, pnl, closed_at"))
         deleted = [dict(r) for r in result.mappings().all()]
     logger.info(f"dedup-trades: removed {len(deleted)} realtime rows")
     return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
@@ -3334,13 +2595,9 @@ async def dedup_trades():
 
 @app.delete("/admin/purge-corrupt-trades")
 async def purge_corrupt_trades():
-    """Remove rows where |pnl| > account_size — these are close prices stored as P&L."""
     from app.core.database import engine
     async with engine.begin() as conn:
-        result = await conn.execute(text("""
-            DELETE FROM trades WHERE ABS(pnl) > account_size
-            RETURNING id, account_id, symbol, pnl, account_size
-        """))
+        result = await conn.execute(text("DELETE FROM trades WHERE ABS(pnl) > account_size RETURNING id, account_id, symbol, pnl, account_size"))
         deleted = [dict(r) for r in result.mappings().all()]
     logger.info(f"purge-corrupt-trades: removed {len(deleted)} rows")
     return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
@@ -3356,80 +2613,34 @@ async def test_db():
 # ─── Leaderboard ──────────────────────────────────────────────────────────────
 @app.get("/leaderboard")
 async def get_leaderboard(limit: int = 10):
-    """
-    Return top traders ranked by total realised P&L (scraper source).
-    Names are taken from the users table; anonymised to first-name only.
-    """
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("""
             WITH canonical_accounts AS (
-                SELECT
-                    ta.user_id AS telegram_user_id,
-                    ta.external_account_id AS account_id,
-                    ta.account_type AS account_type,
-                    ta.account_size AS account_size
-                FROM trading_accounts ta
-                WHERE ta.user_id IS NOT NULL AND ta.is_active = TRUE
+                SELECT ta.user_id AS telegram_user_id, ta.external_account_id AS account_id, ta.account_type, ta.account_size
+                FROM trading_accounts ta WHERE ta.user_id IS NOT NULL AND ta.is_active = TRUE
             ),
             legacy_fallback AS (
-                SELECT
-                    pa.telegram_user_id,
-                    pa.account_id,
-                    pa.account_type,
-                    pa.account_size
-                FROM prop_accounts pa
-                WHERE pa.is_active = TRUE
-                  AND NOT EXISTS (
-                      SELECT 1
-                      FROM canonical_accounts ca
-                      WHERE ca.telegram_user_id = pa.telegram_user_id
-                        AND ca.account_id = pa.account_id
-                  )
+                SELECT pa.telegram_user_id, pa.account_id, pa.account_type, pa.account_size
+                FROM prop_accounts pa WHERE pa.is_active = TRUE
+                  AND NOT EXISTS (SELECT 1 FROM canonical_accounts ca WHERE ca.telegram_user_id = pa.telegram_user_id AND ca.account_id = pa.account_id)
             ),
-            all_accounts AS (
-                SELECT * FROM canonical_accounts
-                UNION ALL
-                SELECT * FROM legacy_fallback
-            )
-            SELECT
-                aa.telegram_user_id,
-                COALESCE(u.first_name, 'Trader') AS display_name,
-                aa.account_id,
-                aa.account_type,
-                aa.account_size,
-                COUNT(t.id)                            AS trade_count,
-                COALESCE(SUM(t.pnl), 0)               AS total_pnl,
+            all_accounts AS (SELECT * FROM canonical_accounts UNION ALL SELECT * FROM legacy_fallback)
+            SELECT aa.telegram_user_id, COALESCE(u.first_name, 'Trader') AS display_name, aa.account_id, aa.account_type, aa.account_size,
+                COUNT(t.id) AS trade_count, COALESCE(SUM(t.pnl), 0) AS total_pnl,
                 COALESCE(SUM(CASE WHEN t.pnl > 0 THEN 1 ELSE 0 END), 0) AS wins,
                 COALESCE(SUM(CASE WHEN t.pnl <= 0 THEN 1 ELSE 0 END), 0) AS losses
             FROM all_accounts aa
-            LEFT JOIN trades t
-                   ON t.account_id = aa.account_id
-                  AND (t.source = 'scraper' OR t.source IS NULL)
-            LEFT JOIN users u
-                   ON u.telegram_user_id = aa.telegram_user_id
+            LEFT JOIN trades t ON t.account_id = aa.account_id AND (t.source = 'scraper' OR t.source IS NULL)
+            LEFT JOIN users u ON u.telegram_user_id = aa.telegram_user_id
             GROUP BY aa.telegram_user_id, u.first_name, aa.account_id, aa.account_type, aa.account_size
-            ORDER BY total_pnl DESC
-            LIMIT :lim
+            ORDER BY total_pnl DESC LIMIT :lim
         """), {"lim": limit})
         rows = [dict(r) for r in result.mappings().all()]
-
     leaderboard = []
     for i, row in enumerate(rows):
-        sz        = row.get("account_size") or 10000
-        total_pnl = float(row.get("total_pnl") or 0)
-        trades    = int(row.get("trade_count") or 0)
-        wins      = int(row.get("wins") or 0)
-        win_rate  = round(wins / trades * 100) if trades else 0
-        leaderboard.append({
-            "rank":         i + 1,
-            "displayName":  row.get("display_name") or "Trader",
-            "accountId":    row.get("account_id"),
-            "accountType":  row.get("account_type"),
-            "accountSize":  sz,
-            "totalPnl":     round(total_pnl, 2),
-            "pnlPct":       round(total_pnl / sz * 100, 2) if sz else 0,
-            "tradeCount":   trades,
-            "winRate":      win_rate,
-        })
+        sz = row.get("account_size") or 10000; total_pnl = float(row.get("total_pnl") or 0)
+        trades = int(row.get("trade_count") or 0); wins = int(row.get("wins") or 0)
+        win_rate = round(wins / trades * 100) if trades else 0
+        leaderboard.append({"rank": i + 1, "displayName": row.get("display_name") or "Trader", "accountId": row.get("account_id"), "accountType": row.get("account_type"), "accountSize": sz, "totalPnl": round(total_pnl, 2), "pnlPct": round(total_pnl / sz * 100, 2) if sz else 0, "tradeCount": trades, "winRate": win_rate})
     return {"leaderboard": leaderboard, "total": len(leaderboard)}
