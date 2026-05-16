@@ -86,7 +86,7 @@ function App() {
   const [workspaceApiAccounts, setWorkspaceApiAccounts] = useState([])
   const [workspaceApiHydrated, setWorkspaceApiHydrated] = useState(false)
   const [isAddAccountOpen, setIsAddAccountOpen] = useState(false)
-  const [selectedProviderType, setSelectedProviderType] = useState('mt5_bridge')
+  const [selectedProviderType, setSelectedProviderType] = useState('fundingpips_prop')
   const [addAccountDraft, setAddAccountDraft] = useState({
     external_account_id: '',
     display_label: '',
@@ -121,6 +121,7 @@ function App() {
   const isCanonicalHost = Boolean(currentHost && canonicalHost && currentHost === canonicalHost)
 
   function sourceLabel(connectorType) {
+    if (connectorType === 'fundingpips_prop') return 'FundingPips (Direct)'
     if (connectorType === 'fundingpips_extension') return 'FundingPips Connector'
     if (connectorType === 'mt5_bridge') return 'MetaTrader 5 (MT5)'
     if (connectorType === 'tradingview_webhook') return 'TradingView Webhook'
@@ -306,7 +307,7 @@ function App() {
     if (isAddAccountOpen) return
     if (sessionStorage.getItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY) === '1') return
     sessionStorage.setItem(FIRST_RUN_ADD_ACCOUNT_PROMPT_KEY, '1')
-    openAddAccountFlow('fundingpips_extension')
+    openAddAccountFlow('fundingpips_prop')
   }, [signedIn, hasZeroConnectedAccounts, location.pathname, isAddAccountOpen])
 
   const formatDate = (dateText) => (dateText ? new Date(dateText).toLocaleString() : '—')
@@ -592,9 +593,7 @@ function App() {
     }
   }
 
-
-
-  function openAddAccountFlow(defaultProviderType = 'mt5_bridge') {
+  function openAddAccountFlow(defaultProviderType = 'fundingpips_prop') {
     setSelectedProviderType(defaultProviderType)
     setAddAccountError('')
     setIsAddAccountOpen(true)
@@ -605,11 +604,15 @@ function App() {
     setAddAccountError('')
   }
 
-  async function submitAddAccount(provider) {
+  async function submitAddAccount(provider, options = {}) {
     const externalAccountId = (addAccountDraft.external_account_id || '').trim()
     const displayLabel = (addAccountDraft.display_label || '').trim()
 
-    if ((provider.connectorType === 'mt5_bridge' || provider.connectorType === 'fundingpips_extension') && !externalAccountId) {
+    if (provider.connectorType === 'mt5_bridge' && !externalAccountId) {
+      setAddAccountError('Account ID is required for this connector flow.')
+      return
+    }
+    if (provider.connectorType === 'fundingpips_extension' && !externalAccountId) {
       setAddAccountError('Account ID is required for this connector flow.')
       return
     }
@@ -618,6 +621,49 @@ function App() {
     setAddAccountError('')
 
     try {
+      // ── FundingPips Prop Firm connector ──────────────────────────────────
+      if (provider.connectorType === 'fundingpips_prop') {
+        const email = (addAccountDraft.email || '').trim()
+        const password = addAccountDraft.password || ''
+
+        if (!email || !password) {
+          setAddAccountError('Email and password are required to connect FundingPips.')
+          setIsAddAccountSubmitting(false)
+          return
+        }
+
+        const connectRes = await axios.post(
+          buildApiUrl('/providers/prop-firm/fundingpips/connect'),
+          {
+            email,
+            password,
+            label: displayLabel || null,
+          },
+          { headers: authHeaders },
+        )
+
+        const accounts = connectRes?.data?.accounts || []
+
+        // First click: show discovered accounts in modal for confirmation
+        if (options?.preview !== false && accounts.length > 0) {
+          setIsAddAccountSubmitting(false)
+          return { accounts }
+        }
+
+        // Second click (confirm) or zero accounts: close and navigate
+        if (accounts.length > 0) {
+          setPendingAccountFocus({
+            connectorType: 'fundingpips_prop',
+            externalAccountId: String(accounts[0].external_account_id || ''),
+          })
+        }
+
+        closeAddAccountFlow()
+        await loadConnectorData({ silent: true })
+        navigate('/app/accounts')
+        return
+      }
+
       if (provider.connectorType === 'csv_import') {
         closeAddAccountFlow()
         navigate('/app/connections?addFlow=csv')
@@ -629,6 +675,7 @@ function App() {
         navigate('/app/connections?addFlow=manual')
         return
       }
+
       if (provider.connectorType === 'tradingview_webhook') {
         if (!addAccountDraft.tradingview_webhook_url) {
           const tvRes = await axios.post(
@@ -654,6 +701,7 @@ function App() {
         navigate('/app/accounts')
         return
       }
+
       if (PUBLIC_API_CONNECTORS.includes(provider.connectorType)) {
         if (provider.connectorType === 'alpaca_api') {
           await axios.post(
@@ -859,7 +907,7 @@ function App() {
                 <button
                   type="button"
                   className="app-nav-link add-account-nav-link"
-                  onClick={() => openAddAccountFlow('fundingpips_extension')}
+                  onClick={() => openAddAccountFlow('fundingpips_prop')}
                 >
                   Add Account
                 </button>
@@ -869,7 +917,7 @@ function App() {
               </p>
             </div>
             <div className="row app-shell-actions">
-              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('fundingpips_extension')}>Add Account</button>
+              <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('fundingpips_prop')}>Add Account</button>
               <AccountSwitcher
                 accounts={unifiedAccountWorkspaces}
                 selectedAccountKey={selectedAccountKey}
@@ -882,10 +930,10 @@ function App() {
             <section className="panel first-run-shell-cta" aria-live="polite">
               <div className="row">
                 <h2>Get started by adding your first account</h2>
-                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('fundingpips_extension')}>Add your first account</button>
+                <button type="button" className="primary-cta" onClick={() => openAddAccountFlow('fundingpips_prop')}>Add your first account</button>
               </div>
               <p className="hint">
-                Choose MT5, FundingPips Extension, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
+                Connect your FundingPips account directly, or choose MT5, TradingView Webhook, CSV Import, or Manual Journal. You can return to <strong>Connections</strong> later for operational setup details.
               </p>
             </section>
           ) : null}
@@ -898,7 +946,7 @@ function App() {
                 <AppLandingPage
                   hasZeroConnectedAccounts={hasZeroConnectedAccounts}
                   accountConnectionState={accountConnectionState}
-                  onAddAccount={() => openAddAccountFlow('fundingpips_extension')}
+                  onAddAccount={() => openAddAccountFlow('fundingpips_prop')}
                 />
               )}
             />
@@ -909,7 +957,7 @@ function App() {
                   accountWorkspaces={unifiedAccountWorkspaces}
                   selectedAccount={selectedAccount}
                   onSelectAccount={setSelectedAccountKey}
-                  onAddAccount={() => openAddAccountFlow('fundingpips_extension')}
+                  onAddAccount={() => openAddAccountFlow('fundingpips_prop')}
                   recentlyAddedAccountLabel={recentlyAddedAccountLabel}
                   formatDate={formatDate}
                 />
@@ -945,7 +993,7 @@ function App() {
                   createManualAccount={createManualAccount}
                   createManualTrade={createManualTrade}
                   importCsvTrades={importCsvTrades}
-                  onAddAccount={() => openAddAccountFlow('fundingpips_extension')}
+                  onAddAccount={() => openAddAccountFlow('fundingpips_prop')}
                   addFlowIntent={addFlowIntent}
                 />
               )}
