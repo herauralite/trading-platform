@@ -344,37 +344,67 @@ SCRAPER_FILTER = " AND (source = 'scraper' OR source IS NULL)"
 
 async def ensure_trades_table():
     from app.core.database import engine
+    is_sqlite = engine.dialect.name == "sqlite"
+    create_trades_sql = """
+        CREATE TABLE IF NOT EXISTS trades (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            account_id         TEXT,
+            account_type       TEXT,
+            account_size       INTEGER,
+            symbol             TEXT,
+            direction          TEXT,
+            volume             FLOAT,
+            open_price         FLOAT,
+            close_price        FLOAT,
+            pnl                FLOAT,
+            balance_after      FLOAT,
+            equity_after       FLOAT,
+            daily_loss_used    FLOAT,
+            daily_loss_limit   FLOAT,
+            overall_loss_used  FLOAT,
+            overall_loss_limit FLOAT,
+            closed_at          DATETIME,
+            logged_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+            source             TEXT
+        )
+    """ if is_sqlite else """
+        CREATE TABLE IF NOT EXISTS trades (
+            id                 SERIAL PRIMARY KEY,
+            account_id         TEXT,
+            account_type       TEXT,
+            account_size       INTEGER,
+            symbol             TEXT,
+            direction          TEXT,
+            volume             FLOAT,
+            open_price         FLOAT,
+            close_price        FLOAT,
+            pnl                FLOAT,
+            balance_after      FLOAT,
+            equity_after       FLOAT,
+            daily_loss_used    FLOAT,
+            daily_loss_limit   FLOAT,
+            overall_loss_used  FLOAT,
+            overall_loss_limit FLOAT,
+            closed_at          TIMESTAMPTZ,
+            logged_at          TIMESTAMPTZ DEFAULT NOW(),
+            source             TEXT
+        )
+    """
     async with engine.begin() as conn:
-        await conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS trades (
-                id                 SERIAL PRIMARY KEY,
-                account_id         TEXT,
-                account_type       TEXT,
-                account_size       INTEGER,
-                symbol             TEXT,
-                direction          TEXT,
-                volume             FLOAT,
-                open_price         FLOAT,
-                close_price        FLOAT,
-                pnl                FLOAT,
-                balance_after      FLOAT,
-                equity_after       FLOAT,
-                daily_loss_used    FLOAT,
-                daily_loss_limit   FLOAT,
-                overall_loss_used  FLOAT,
-                overall_loss_limit FLOAT,
-                closed_at          TIMESTAMPTZ,
-                logged_at          TIMESTAMPTZ DEFAULT NOW(),
-                source             TEXT
-            )
-        """))
+        await conn.execute(text(create_trades_sql))
     try:
         async with engine.begin() as conn:
-            await conn.execute(text("""
-                ALTER TABLE trades
-                ADD CONSTRAINT trades_dedup
-                UNIQUE (account_id, symbol, direction, closed_at, pnl)
-            """))
+            if is_sqlite:
+                await conn.execute(text("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS trades_dedup
+                    ON trades (account_id, symbol, direction, closed_at, pnl)
+                """))
+            else:
+                await conn.execute(text("""
+                    ALTER TABLE trades
+                    ADD CONSTRAINT trades_dedup
+                    UNIQUE (account_id, symbol, direction, closed_at, pnl)
+                """))
         logger.info("trades_dedup constraint added")
     except Exception:
         pass
