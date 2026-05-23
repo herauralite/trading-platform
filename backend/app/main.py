@@ -429,14 +429,16 @@ async def ensure_trades_table():
 
 async def ensure_users_tables():
     from app.core.database import engine
+    is_sqlite = engine.dialect.name == "sqlite"
     async with engine.begin() as conn:
-        result = await conn.execute(text("""
-            SELECT column_name FROM information_schema.columns
-            WHERE table_name = 'users' AND column_name = 'telegram_user_id'
-        """))
-        col_exists = result.fetchone()
-        if not col_exists:
-            await conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
+        if not is_sqlite:
+            result = await conn.execute(text("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'users' AND column_name = 'telegram_user_id'
+            """))
+            col_exists = result.fetchone()
+            if not col_exists:
+                await conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 telegram_user_id    TEXT PRIMARY KEY,
@@ -444,14 +446,14 @@ async def ensure_users_tables():
                 first_name          TEXT,
                 last_name           TEXT,
                 photo_url           TEXT,
-                created_at          TIMESTAMPTZ DEFAULT NOW(),
-                last_seen_at        TIMESTAMPTZ DEFAULT NOW()
+                created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_seen_at        DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """))
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS prop_accounts (
-                id               SERIAL PRIMARY KEY,
+                id               INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_user_id TEXT NOT NULL,
                 account_id       TEXT NOT NULL,
                 broker           TEXT NOT NULL DEFAULT 'fundingpips',
@@ -459,11 +461,17 @@ async def ensure_users_tables():
                 account_size     INTEGER,
                 label            TEXT,
                 is_active        BOOLEAN DEFAULT TRUE,
-                created_at       TIMESTAMPTZ DEFAULT NOW(),
+                created_at       DATETIME DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(telegram_user_id, account_id)
             )
         """))
-        await conn.execute(text("ALTER TABLE prop_accounts ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT FALSE"))
+        if is_sqlite:
+            cols = await conn.execute(text("PRAGMA table_info(prop_accounts)"))
+            col_names = {row[1] for row in cols.fetchall()}
+            if "is_primary" not in col_names:
+                await conn.execute(text("ALTER TABLE prop_accounts ADD COLUMN is_primary BOOLEAN DEFAULT FALSE"))
+        else:
+            await conn.execute(text("ALTER TABLE prop_accounts ADD COLUMN IF NOT EXISTS is_primary BOOLEAN DEFAULT FALSE"))
         await conn.execute(text("""
             WITH first_account AS (
                 SELECT telegram_user_id, MIN(id) AS id
@@ -471,16 +479,19 @@ async def ensure_users_tables():
                 WHERE is_active = TRUE
                 GROUP BY telegram_user_id
             )
-            UPDATE prop_accounts pa
+            UPDATE prop_accounts
             SET is_primary = TRUE
-            FROM first_account fa
-            WHERE pa.id = fa.id
-              AND NOT EXISTS (
-                  SELECT 1
-                  FROM prop_accounts p2
-                  WHERE p2.telegram_user_id = pa.telegram_user_id
-                    AND p2.is_active = TRUE
-                    AND p2.is_primary = TRUE
+            WHERE id IN (SELECT id FROM first_account)
+              AND telegram_user_id IN (
+                  SELECT pa.telegram_user_id
+                  FROM prop_accounts pa
+                  WHERE NOT EXISTS (
+                      SELECT 1
+                      FROM prop_accounts p2
+                      WHERE p2.telegram_user_id = pa.telegram_user_id
+                        AND p2.is_active = TRUE
+                        AND p2.is_primary = TRUE
+                  )
               )
         """))
     logger.info("users + prop_accounts tables ready")
@@ -491,9 +502,9 @@ async def ensure_waitlist_table():
     async with engine.begin() as conn:
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS waitlist (
-                id                SERIAL PRIMARY KEY,
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
                 telegram_username TEXT UNIQUE NOT NULL,
-                joined_at         TIMESTAMPTZ DEFAULT NOW()
+                joined_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """))
     logger.info("waitlist table ready")
@@ -508,7 +519,7 @@ async def ensure_demo_scores_table():
                 telegram_username  TEXT NOT NULL,
                 photo_url          TEXT,
                 best_pnl           FLOAT NOT NULL DEFAULT 0,
-                updated_at         TIMESTAMPTZ DEFAULT NOW()
+                updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         """))
     logger.info("demo_scores table ready")
@@ -1312,8 +1323,12 @@ async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
     await ensure_trades_table()
     await ensure_users_tables()
-    await ensure_connector_tables()
-    await backfill_legacy_prop_accounts_to_trading_accounts()
+    from app.core.database import engine
+    if engine.dialect.name == "sqlite":
+        logger.info("Skipping PostgreSQL-only connector table bootstrap for SQLite local development")
+    else:
+        await ensure_connector_tables()
+        await backfill_legacy_prop_accounts_to_trading_accounts()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
     await setup_telegram_webhook()
