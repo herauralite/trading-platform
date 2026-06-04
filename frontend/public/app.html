@@ -2318,6 +2318,7 @@ const ADD_ACCOUNT_PATHS={
 let addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
 
 function openAddAccountFlow(){
+  addAcctFlowState.discoveredAccounts=[];
   closeAcctSheet();
   addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
   renderAddAccountFlow();
@@ -2378,11 +2379,19 @@ function renderAddAccountFlow(){
   stepEl.textContent='Step 2 · Complete details';
   let content='';
   if(addAcctFlowState.path==='fundingpips'){
-    content=`<div class="aaf-flow-note">Open FundingPips in your browser with the TaliTrade extension active, then run a sync scan below. We only link accounts already detected by <code>/extension/status</code>.</div>
-      <div class="aaf-option" style="margin-bottom:0"><div class="aaf-option-top"><div class="aaf-option-title">Extension-based linking</div><span class="aaf-functional">linked in-shell</span></div>
-      <div class="aaf-option-desc">This keeps onboarding native to the legacy shell and reuses your authenticated account-link endpoint.</div></div>`;
-    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button>
-      <button class="btn btn-blue rip" onclick="submitFundingPipsAccountFlow()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Linking…':'Scan & link accounts'}</button>`;
+    if(addAcctFlowState.discoveredAccounts&&addAcctFlowState.discoveredAccounts.length){
+      const accts=addAcctFlowState.discoveredAccounts;
+      let acctHtml='<div class="aaf-flow-note">Select the accounts you want to add to TaliTrade.</div><div class="aaf-form">';
+      accts.forEach((a,i)=>{
+        acctHtml+=`<label style="display:flex;align-items:center;gap:10px;padding:10px;background:var(--s2);border-radius:8px;margin-bottom:6px;cursor:pointer"><input type="checkbox" id="fp-acct-${i}" value="${a.external_account_id}" checked style="width:16px;height:16px;accent-color:var(--blue)"><div><div style="font-size:13px;font-weight:500">${a.display_label}</div><div style="font-size:11px;color:var(--t3)">${a.account_type||''} ${a.account_size?'$'+a.account_size.toLocaleString():''}</div></div></label>`;
+      });
+      acctHtml+='</div>';
+      content=acctHtml;
+      footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button><button class="btn btn-blue rip" onclick="confirmFundingPipsAccounts()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Saving...':'Add selected accounts'}</button>`;
+    } else {
+      content=`<div class="aaf-flow-note">Enter your FundingPips login credentials. TaliTrade will securely connect and import your trading accounts.</div><div class="aaf-form"><label><div class="aaf-field-label">Email</div><input class="aaf-input" id="fpEmailInput" type="email" placeholder="your@email.com" autocomplete="email"></label><label><div class="aaf-field-label">Password</div><input class="aaf-input" id="fpPasswordInput" type="password" placeholder="Your FundingPips password" autocomplete="current-password"></label></div>`;
+      footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button><button class="btn btn-blue rip" onclick="submitFundingPipsCredentials()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Connecting...':'Connect FundingPips'}</button>`;
+    }
   } else if(addAcctFlowState.path==='brokerApi'){
     content=`<div class="aaf-flow-note">Enter your account metadata to connect through <code>/auth/link-account</code>.</div>
       <div class="aaf-form">
@@ -2416,42 +2425,64 @@ async function refreshAfterAccountLink(newActiveAccountId=''){
   refreshAccountSettingsSurface();
 }
 
-async function submitFundingPipsAccountFlow(){
+async function submitFundingPipsCredentials(){
+  const email=(document.getElementById('fpEmailInput')?.value||'').trim();
+  const password=(document.getElementById('fpPasswordInput')?.value||'').trim();
+  if(!email||!password){
+    addAcctFlowState.error='Please enter your FundingPips email and password.';
+    renderAddAccountFlow();return;
+  }
   addAcctFlowState.loading=true;addAcctFlowState.error='';addAcctFlowState.success='';renderAddAccountFlow();
   try{
-    const statusRes=await authFetch('/extension/status');
-    if(!statusRes.ok) throw new Error('extension_status_'+statusRes.status);
-    const statusData=await statusRes.json();
-    const liveAccounts=statusData.accounts||{};
-    const entries=Object.entries(liveAccounts);
-    if(!entries.length) throw new Error('No synced FundingPips accounts detected yet. Open FundingPips with the extension first, then retry.');
-
-    let lastAccountId='';
-    for(const [acctId,acct] of entries){
-      const params=new URLSearchParams({
-        account_id:acctId,
-        account_type:String(acct.accountType||''),
-        account_size:String(acct.accountSize||0),
-        label:String(acct.accountLabel||acctId),
-        broker:'fundingpips',
-      });
-      const res=await authFetch('/auth/link-account?'+params.toString(),{method:'POST'});
-      if(!res.ok) throw new Error('Could not link FundingPips account '+acctId+'.');
-      const data=await res.json();
-      hydrateAccountsMap(data.accounts||[],false);
-      lastAccountId=acctId;
-    }
-
+    const res=await authFetch('/providers/prop-firm/fundingpips/connect',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email,password})
+    });
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.detail||data.error||'Connection failed.');
+    addAcctFlowState.discoveredAccounts=data.accounts||[];
     addAcctFlowState.loading=false;
-    addAcctFlowState.success='FundingPips account sync complete.';
+    if(!addAcctFlowState.discoveredAccounts.length){
+      addAcctFlowState.error='Connected but no accounts found on this FundingPips profile.';
+    }
     renderAddAccountFlow();
-    await refreshAfterAccountLink(lastAccountId);
-    setTimeout(closeAddAccountFlow,350);
   }catch(err){
     addAcctFlowState.loading=false;
-    addAcctFlowState.error=String(err?.message||'Could not link FundingPips accounts right now.');
+    addAcctFlowState.error=String(err?.message||'Could not connect to FundingPips right now.');
     renderAddAccountFlow();
   }
+}
+
+async function confirmFundingPipsAccounts(){
+  const accts=addAcctFlowState.discoveredAccounts||[];
+  const selected=accts.filter((_,i)=>document.getElementById('fp-acct-'+i)?.checked);
+  if(!selected.length){
+    addAcctFlowState.error='Please select at least one account.';
+    renderAddAccountFlow();return;
+  }
+  addAcctFlowState.loading=true;addAcctFlowState.error='';renderAddAccountFlow();
+  try{
+    let lastId='';
+    for(const a of selected){
+      hydrateAccountsMap([a],false);
+      lastId=a.external_account_id||a.id||'';
+    }
+    addAcctFlowState.loading=false;
+    addAcctFlowState.success='Accounts added successfully!';
+    addAcctFlowState.discoveredAccounts=[];
+    renderAddAccountFlow();
+    await refreshAfterAccountLink(lastId);
+    setTimeout(closeAddAccountFlow,600);
+  }catch(err){
+    addAcctFlowState.loading=false;
+    addAcctFlowState.error=String(err?.message||'Could not save accounts.');
+    renderAddAccountFlow();
+  }
+}
+
+async function submitFundingPipsAccountFlow(){
+  await submitFundingPipsCredentials();
 }
 
 async function submitBrokerApiAccountFlow(){
