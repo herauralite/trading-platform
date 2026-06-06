@@ -67,14 +67,6 @@ nav{
 .container{max-width:1200px;margin:auto;padding:0 28px;}
 .hero-grid{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center;}
 
-.hero-eyebrow{
-  display:inline-flex;align-items:center;gap:7px;
-  background:rgba(45,174,255,0.07);border:1px solid rgba(45,174,255,0.18);
-  border-radius:999px;padding:5px 13px 5px 8px;margin-bottom:24px;
-}
-.hero-eyebrow-dot{width:7px;height:7px;border-radius:50%;background:#2daeff;box-shadow:0 0 8px #2daeff88;animation:livePulse 1.6s ease-in-out infinite;}
-.hero-eyebrow span{font-size:11px;font-weight:700;color:#7dd3fc;letter-spacing:.8px;text-transform:uppercase;}
-
 .hero h1{font-size:58px;line-height:1.04;letter-spacing:-2.2px;font-weight:900;margin-bottom:22px;}
 .hero h1 .accent{
   background:linear-gradient(135deg,#78d3ff,#2daeff);
@@ -109,7 +101,7 @@ nav{
 }
 .chart-card{width:322px;height:232px;top:0;left:40px;animation:float1 6s ease-in-out infinite;}
 .metric-card{width:192px;height:128px;bottom:60px;left:0;animation:float2 7s ease-in-out infinite;}
-.feed-card{width:240px;height:168px;top:120px;right:0;animation:float3 8s ease-in-out infinite;}
+.feed-card{width:240px;top:100px;right:0;animation:float3 8s ease-in-out infinite;}
 @keyframes float1{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
 @keyframes float2{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}
 @keyframes float3{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
@@ -167,50 +159,6 @@ nav{
 .step h3{font-size:17px;font-weight:700;letter-spacing:-.03em;margin-bottom:10px;color:#f6faff;}
 .step p{font-size:14px;color:rgba(214,229,255,0.72);line-height:1.65;}
 
-/* ── PLATFORM PREVIEW ────────────────────────────────── */
-.platform-preview{
-  background:var(--card);border:1px solid var(--border);
-  border-radius:var(--radius);position:relative;overflow:hidden;
-}
-
-/* ── PRICING ─────────────────────────────────────────── */
-.pricing-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;align-items:start;}
-.pricing-card{
-  background:var(--card);border:1px solid var(--border);
-  border-radius:var(--radius);padding:32px;position:relative;
-  transition:transform .25s,border-color .25s;
-}
-.pricing-card:hover{transform:translateY(-4px);}
-.pricing-card.featured{
-  border-color:rgba(45,174,255,0.3);
-  background:linear-gradient(160deg,rgba(45,174,255,0.06),rgba(15,22,36,1));
-  box-shadow:0 0 60px rgba(45,174,255,0.07);
-}
-.pricing-badge{
-  display:inline-flex;align-items:center;gap:6px;
-  background:rgba(45,174,255,0.1);border:1px solid rgba(45,174,255,0.22);
-  border-radius:999px;padding:4px 10px;margin-bottom:20px;
-  font-size:10px;font-weight:800;color:#7dd3fc;letter-spacing:.8px;text-transform:uppercase;
-}
-.pricing-name{font-size:18px;font-weight:800;letter-spacing:-.03em;margin-bottom:8px;}
-.pricing-desc{font-size:13px;color:var(--muted);margin-bottom:24px;line-height:1.55;}
-.pricing-price{margin-bottom:28px;}
-.pricing-price .amount{font-size:42px;font-weight:900;letter-spacing:-.04em;font-family:'JetBrains Mono',monospace;}
-.pricing-price .period{font-size:14px;color:var(--muted);margin-left:4px;}
-.pricing-price .free-label{font-size:36px;font-weight:900;color:var(--green);letter-spacing:-.04em;}
-.pricing-features{list-style:none;display:flex;flex-direction:column;gap:11px;margin-bottom:32px;}
-.pricing-features li{display:flex;align-items:flex-start;gap:10px;font-size:14px;color:rgba(214,229,255,0.8);line-height:1.45;}
-.pricing-features li svg{flex-shrink:0;margin-top:1px;}
-.pricing-cta{
-  display:block;width:100%;padding:13px;border-radius:12px;text-align:center;
-  font-size:14px;font-weight:700;text-decoration:none;transition:opacity .2s,transform .15s;
-  cursor:pointer;border:none;font-family:'Inter',sans-serif;
-}
-.pricing-cta.primary{background:linear-gradient(135deg,#60c8ff,#2daeff);color:#021019;}
-.pricing-cta.primary:hover{opacity:.9;transform:translateY(-1px);}
-.pricing-cta.ghost{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.09);color:rgba(232,240,255,0.72);}
-.pricing-cta.ghost:hover{background:rgba(255,255,255,0.09);color:var(--text);}
-
 /* ── CTA SECTION ─────────────────────────────────────── */
 .cta-section{
   text-align:center;
@@ -256,7 +204,7 @@ footer{
 
 /* ── RESPONSIVE ──────────────────────────────────────── */
 @media(max-width:960px){
-  .hero-grid,.steps-grid,.pricing-grid{grid-template-columns:1fr;}
+  .hero-grid,.steps-grid{grid-template-columns:1fr;}
   .feature-grid{grid-template-columns:repeat(2,1fr);}
   .hero h1{font-size:46px;}
   .steps-grid::before{display:none;}
@@ -281,11 +229,6 @@ footer{
   .section-title,.cta-section h2{font-size:clamp(34px,10vw,46px);letter-spacing:-1.4px;}
   .feature-grid{grid-template-columns:1fr;gap:16px;}
   .feature{padding:24px;}
-  .platform-preview{padding:20px 16px 88px !important;height:auto !important;min-height:560px;}
-  #paperPositionBox{left:16px !important;bottom:18px !important;min-width:0 !important;width:calc(100% - 190px) !important;max-width:360px;}
-  #paperPosition{font-size:18px !important;}
-  #paperEntry,#paperNow,#paperPnl{font-size:13px !important;}
-  #simControls{right:16px !important;bottom:18px !important;}
   #accessModal #modalCard{max-width:calc(100vw - 32px);}
   #modalStep1,#modalStep2{padding:28px 24px !important;}
   .proof-bar{flex-direction:column;gap:20px;}
@@ -300,15 +243,6 @@ footer{
   .chart-card{height:208px;padding:14px 15px !important;}
   .feed-card{width:170px;height:124px;top:118px;}
   .metric-card{width:152px;height:96px;}
-  .platform-preview{min-height:520px;}
-  #paperPositionBox{width:calc(100% - 166px) !important;padding:12px 12px !important;}
-  #paperPosition{font-size:16px !important;}
-  #paperEntry,#paperNow,#paperPnl{font-size:12px !important;}
-  #buyBtn,#sellBtn,#closeTradeBtn{font-size:16px !important;padding:12px 16px !important;}
-  #paperPositionBox{left:16px !important;right:16px !important;bottom:16px !important;min-width:0 !important;width:auto !important;padding:12px 14px !important;}
-  #paperPositionBox > div{gap:12px !important;}
-  #simControls{right:16px !important;bottom:96px !important;gap:8px !important;}
-  #simControls button{padding:12px 18px !important;font-size:16px !important;}
 }
 </style>
 </head>
@@ -322,7 +256,6 @@ footer{
   <div class="nav-links">
     <a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Platform</a>
     <a href="#how-it-works">How It Works</a>
-    <a href="#preview">Demo</a>
     <a href="#pricing">Pricing</a>
   </div>
   <a class="nav-cta" href="#" onclick="requireHomepageAuth(event, 'cta')">Get Early Access</a>
@@ -334,18 +267,13 @@ footer{
 <div class="container hero-grid">
 
 <div>
-  <div class="hero-eyebrow">
-    <div class="hero-eyebrow-dot"></div>
-    <span>Beta Now Open</span>
-  </div>
   <h1>The platform built for <span class="accent">prop firm</span> traders.</h1>
   <p>Your trades tracked. Your risk monitored. Your payout calculated. TaliTrade is the operating system the prop trading world has been missing.</p>
   <div class="hero-buttons">
-    <a class="btn-primary" href="#" onclick="requireHomepageAuth(event, 'cta')">
-      Join the Beta
+    <a class="btn-primary" href="#" onclick="openModal(event)">
+      Join Waitlist
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
     </a>
-    <a class="btn-secondary" href="#preview" onclick="smoothScroll(event,'preview')">See Live Demo</a>
   </div>
   <div class="hero-trust">
     <div style="display:flex;">
@@ -367,8 +295,8 @@ footer{
         <span style="font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;">1m</span>
       </div>
       <div style="text-align:right;">
-        <div id="chartPrice" style="font-size:15px;font-weight:700;font-family:'JetBrains Mono',monospace;transition:color .2s;">19,482.50</div>
-        <div id="chartPct" style="font-size:11px;color:#22c55e;">▲ +0.38%</div>
+        <div id="chartPrice" style="font-size:15px;font-weight:700;font-family:'JetBrains Mono',monospace;transition:color .2s;">0.00</div>
+        <div id="chartPct" style="font-size:11px;color:#94a3b8;">— 0.00%</div>
       </div>
     </div>
     <svg id="liveSvg" viewBox="0 0 284 160" width="100%" height="160" style="display:block;overflow:visible;">
@@ -395,335 +323,61 @@ footer{
   <!-- METRIC CARD -->
   <div class="card metric-card" style="padding:18px 20px;width:192px;height:128px;">
     <div style="font-size:10px;color:#94a3b8;letter-spacing:.6px;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Daily P&amp;L</div>
-    <div id="pnlValue" style="font-size:26px;font-weight:800;font-family:'JetBrains Mono',monospace;color:#22c55e;letter-spacing:-1px;line-height:1;transition:color .3s;">+$1,284</div>
+    <div id="pnlValue" style="font-size:26px;font-weight:800;font-family:'JetBrains Mono',monospace;color:#94a3b8;letter-spacing:-1px;line-height:1;transition:color .3s;">$0</div>
     <div style="margin-top:10px;display:flex;gap:12px;">
-      <div><div style="font-size:10px;color:#94a3b8;">Win Rate</div><div id="winRate" style="font-size:13px;font-weight:700;color:#2daeff;">74%</div></div>
-      <div><div style="font-size:10px;color:#94a3b8;">Trades</div><div id="tradeCount" style="font-size:13px;font-weight:700;">7</div></div>
+      <div><div style="font-size:10px;color:#94a3b8;">Win Rate</div><div id="winRate" style="font-size:13px;font-weight:700;color:#94a3b8;">0%</div></div>
+      <div><div style="font-size:10px;color:#94a3b8;">Trades</div><div id="tradeCount" style="font-size:13px;font-weight:700;color:#94a3b8;">0</div></div>
     </div>
   </div>
 
   <!-- FEED CARD -->
-  <div class="card feed-card" style="padding:16px 18px;width:240px;height:168px;">
-    <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;">
+  <div class="card feed-card" style="padding:14px 16px;width:240px;top:100px;right:0;">
+    <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
       <div id="liveDot" style="width:6px;height:6px;border-radius:50%;background:#22c55e;"></div>
       <span style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.6px;text-transform:uppercase;">Live Trades</span>
     </div>
-    <div style="display:flex;flex-direction:column;gap:9px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(239,68,68,.15);color:#ef4444;font-weight:700;">SELL</span>
-          <span style="font-size:12px;font-weight:600;">XAU/USD</span>
-        </div>
-        <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#ef4444;font-weight:700;">−$340</span>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(34,197,94,.15);color:#22c55e;font-weight:700;">BUY</span>
-          <span style="font-size:12px;font-weight:600;">NAS100</span>
-        </div>
-        <span style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#22c55e;font-weight:700;">+$612</span>
-      </div>
-      <div style="display:flex;align-items:center;justify-content:space-between;" id="openTrade">
-        <div style="display:flex;align-items:center;gap:8px;">
-          <span style="font-size:10px;padding:2px 7px;border-radius:4px;background:rgba(34,197,94,.15);color:#22c55e;font-weight:700;">BUY</span>
-          <span style="font-size:12px;font-weight:600;">XAU/USD</span>
-        </div>
-        <span id="openPnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;font-weight:700;">+$0</span>
-      </div>
-    </div>
-  </div>
-
-</div>
-</div>
-</section>
-
-<!-- FEATURES -->
-<section class="section" id="features">
-<div class="container">
-  <h2 class="section-title">The platform that replaces TradingView.</h2>
-  <p class="section-sub">Charts were only the beginning. TaliTrade connects execution tracking, risk analysis, and discipline into a single platform built for funded traders.</p>
-  <div class="feature-grid">
-
-    <div class="feature">
-      <div class="feature-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2daeff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      </div>
-      <h3>Never blow a limit again</h3>
-      <p>Get warned before you're in trouble — not after. TaliTrade watches your risk so you can focus on the trade.</p>
-    </div>
-
-    <div class="feature">
-      <div class="feature-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2daeff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-      </div>
-      <h3>Zero manual logging</h3>
-      <p>Every trade becomes structured performance data the moment it closes. Win rate, profit factor, best symbol — captured automatically.</p>
-    </div>
-
-    <div class="feature">
-      <div class="feature-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2daeff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      </div>
-      <h3>Always know what's in your pocket</h3>
-      <p>Live profit progress, day count, and your exact payout amount — updated in real time so you're never guessing.</p>
-    </div>
-
-    <div class="feature">
-      <div class="feature-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2daeff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      </div>
-      <h3>Manage everything from Telegram</h3>
-      <p>TaliTrade lives in your Telegram. Check your account, track your risk, and stay on top of your payout — from anywhere, any time.</p>
-    </div>
-
-    <div class="feature">
-      <div class="feature-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2daeff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      </div>
-      <h3>Find your actual edge</h3>
-      <p>Equity curve, symbol breakdown, and win/loss streaks that show you exactly what's working — and what to cut.</p>
-    </div>
-
-    <div class="feature">
-      <div class="feature-icon">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2daeff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-      </div>
-      <h3>See where you rank</h3>
-      <p>Real P&L from real traders. Anonymous, opt-in rankings that give you an honest benchmark — and push you to be better.</p>
-    </div>
-
-  </div>
-</div>
-</section>
-
-<!-- HOW IT WORKS -->
-<section class="section" id="how-it-works" style="background:linear-gradient(180deg,transparent,rgba(45,174,255,0.025),transparent);">
-<div class="container">
-  <h2 class="section-title">Up and running in minutes.</h2>
-  <p class="section-sub">No API keys. No manual setup. Just Telegram — and your entire trading operation in one place.</p>
-  <div class="steps-grid">
-
-    <div class="step">
-      <div class="step-num">01</div>
-      <div>
-        <h3>Connect via Telegram</h3>
-        <p>Start with a single message to TaliTrade. Your account is created, secured, and ready — no passwords, no forms.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-num">02</div>
-      <div>
-        <h3>Link your trading accounts</h3>
-        <p>TaliTrade automatically detects and links your prop firm accounts. All of them, under one Telegram identity.</p>
-      </div>
-    </div>
-
-    <div class="step">
-      <div class="step-num">03</div>
-      <div>
-        <h3>Your trading desk, anywhere</h3>
-        <p>Live risk, journal, payout tracker, analytics — all synced in real time and accessible from Telegram wherever you are.</p>
-      </div>
-    </div>
-
-  </div>
-</div>
-</section>
-
-<!-- PLATFORM PREVIEW / DEMO -->
-<section class="section" id="preview">
-<div class="container">
-  <h2 class="section-title">A trading workspace that thinks with you.</h2>
-  <p class="section-sub">Click Buy or Sell on the live chart below. This is the same interactive canvas inside the TaliTrade platform.</p>
-
-  <div class="platform-preview" style="padding:0;overflow:hidden;position:relative;height:470px;background:#06101e;">
-
-    <div id="pv-chart" style="position:absolute;inset:0;">
-      <svg style="position:absolute;inset:0;width:100%;height:100%;" preserveAspectRatio="none">
-        <line x1="0" y1="25%" x2="100%" y2="25%" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
-        <line x1="0" y1="50%" x2="100%" y2="50%" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
-        <line x1="0" y1="75%" x2="100%" y2="75%" stroke="rgba(255,255,255,0.03)" stroke-width="1"/>
-        <line x1="12.5%" y1="0" x2="12.5%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-        <line x1="25%" y1="0" x2="25%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-        <line x1="37.5%" y1="0" x2="37.5%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-        <line x1="50%" y1="0" x2="50%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-        <line x1="62.5%" y1="0" x2="62.5%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-        <line x1="75%" y1="0" x2="75%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-        <line x1="87.5%" y1="0" x2="87.5%" y2="100%" stroke="rgba(255,255,255,0.02)" stroke-width="1"/>
-      </svg>
-      <canvas id="previewCanvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
-
-      <div id="chartInteractionLayer" style="position:absolute;inset:0;z-index:5;cursor:crosshair;touch-action:none;">
-        <div id="crosshairX" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.15);display:none;pointer-events:none"></div>
-        <div id="crosshairY" style="position:absolute;left:0;right:0;height:1px;background:rgba(255,255,255,0.12);display:none;pointer-events:none"></div>
-        <div id="crosshairDot" style="position:absolute;width:10px;height:10px;border-radius:50%;background:#2daeff;box-shadow:0 0 0 6px rgba(45,174,255,0.15);transform:translate(-50%,-50%);display:none;pointer-events:none"></div>
-        <div id="crosshairPrice" style="position:absolute;right:12px;padding:6px 10px;border-radius:10px;background:rgba(8,16,30,0.9);border:1px solid rgba(255,255,255,0.1);font-size:11px;font-weight:700;color:#dbeafe;font-family:'JetBrains Mono',monospace;display:none;transform:translateY(-50%);pointer-events:none"></div>
-        <div id="entryTag" style="position:absolute;padding:8px 11px;border-radius:12px;background:rgba(7,14,26,0.94);border:1px solid rgba(45,174,255,0.22);font-size:11px;font-weight:800;color:#8bd8ff;font-family:'Inter',sans-serif;letter-spacing:-.01em;display:none;transform:translate(-50%,-120%);pointer-events:none;white-space:nowrap;box-shadow:0 14px 38px rgba(0,0,0,0.28);backdrop-filter:blur(8px)"></div>
-        <div id="floatingPnl" style="position:absolute;padding:8px 12px;border-radius:999px;background:rgba(7,14,26,0.94);border:1px solid rgba(255,255,255,0.08);font-size:12px;font-weight:800;color:#e8f0ff;font-family:'Inter',sans-serif;letter-spacing:-.01em;display:none;transform:translate(-50%,-190%);pointer-events:none;white-space:nowrap;box-shadow:0 14px 40px rgba(0,0,0,0.34);backdrop-filter:blur(8px)"></div>
-      </div>
-
-      <div style="position:absolute;top:20px;left:24px;display:flex;align-items:center;gap:12px;z-index:6;">
-        <div style="font-size:12px;font-weight:700;color:rgba(255,255,255,0.72);letter-spacing:.5px;">US30</div>
-        <div style="width:1px;height:12px;background:rgba(255,255,255,0.08);"></div>
-        <div style="font-size:11px;color:#4ade80;font-weight:700;display:flex;align-items:center;gap:6px;">
-          <span style="width:6px;height:6px;border-radius:50%;background:#22c55e;display:inline-block;box-shadow:0 0 10px rgba(34,197,94,.5)"></span>LIVE DEMO
-        </div>
-      </div>
-
-      <div style="position:absolute;top:16px;right:24px;text-align:right;z-index:6;">
-        <div id="pvPrice" style="font-size:16px;font-weight:700;font-family:'JetBrains Mono',monospace;color:#e8f0ff;letter-spacing:-.5px;transition:color .15s;">42,318.50</div>
-        <div id="pvChange" style="font-size:11px;color:#22c55e;margin-top:1px;">▲ +0.24%</div>
-        <div id="pvUpdated" style="font-size:10px;color:rgba(255,255,255,0.34);margin-top:6px;">Updated just now</div>
-      </div>
-
-      <div id="paperPositionBox" style="position:absolute;left:24px;bottom:24px;z-index:7;min-width:340px;padding:14px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(8,16,30,0.94),rgba(8,16,30,0.86));border:1px solid rgba(255,255,255,0.07);box-shadow:0 16px 44px rgba(0,0,0,0.34);backdrop-filter:blur(10px);">
-        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;align-items:end;">
-          <div><div style="font-size:10px;color:rgba(255,255,255,0.42);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Position</div><div id="paperPosition" style="font-size:18px;font-weight:800;letter-spacing:-.04em;color:#f8fbff;line-height:1;font-family:'Inter',sans-serif;">Flat</div></div>
-          <div><div style="font-size:10px;color:rgba(255,255,255,0.42);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Entry</div><div id="paperEntry" style="font-size:15px;font-weight:700;color:#dbe7f7;line-height:1.05;letter-spacing:-.02em;">–</div></div>
-          <div><div style="font-size:10px;color:rgba(255,255,255,0.42);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">Now</div><div id="paperNow" style="font-size:15px;font-weight:700;color:#f8fbff;line-height:1.05;letter-spacing:-.02em;">42,318.50</div></div>
-          <div><div style="font-size:10px;color:rgba(255,255,255,0.42);font-weight:700;letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px;">P&amp;L</div><div id="paperPnl" style="font-size:15px;font-weight:800;color:#94a3b8;line-height:1.05;letter-spacing:-.02em;">$0.00</div></div>
-        </div>
-      </div>
-
-      <div id="simControls" style="position:absolute;right:24px;bottom:24px;display:flex;gap:10px;z-index:7;">
-        <button id="buyBtn" style="padding:14px 22px;border:none;border-radius:14px;background:linear-gradient(180deg,#22c55e,#16a34a);color:#04110a;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 16px 32px rgba(34,197,94,.24);font-family:'Inter',sans-serif;letter-spacing:-.02em;">Buy</button>
-        <button id="sellBtn" style="padding:14px 22px;border:none;border-radius:14px;background:linear-gradient(180deg,#ef4444,#dc2626);color:#fff;font-size:18px;font-weight:800;cursor:pointer;box-shadow:0 16px 32px rgba(239,68,68,.22);font-family:'Inter',sans-serif;letter-spacing:-.02em;">Sell</button>
-        <button id="closeTradeBtn" disabled style="padding:14px 22px;border:none;border-radius:14px;background:rgba(255,255,255,0.08);color:rgba(255,255,255,0.46);font-size:18px;font-weight:800;cursor:not-allowed;font-family:'Inter',sans-serif;letter-spacing:-.02em;">Close</button>
-      </div>
-
-      <div id="simOutcome" style="position:absolute;inset:0;background:linear-gradient(180deg,rgba(4,10,18,.64),rgba(4,10,18,.86));backdrop-filter:blur(10px);display:none;align-items:center;justify-content:center;z-index:10;padding:24px;">
-        <div style="max-width:420px;width:100%;text-align:center;background:linear-gradient(180deg,rgba(255,255,255,0.035),rgba(255,255,255,0.02));border:1px solid rgba(255,255,255,0.08);border-radius:24px;padding:28px 26px 24px;box-shadow:0 24px 80px rgba(0,0,0,0.45);">
-
-          <!-- STATE 1: result + save to leaderboard -->
-          <div id="outcomeState1">
-            <div id="outcomeBadge" style="display:inline-flex;align-items:center;gap:8px;padding:7px 12px;border-radius:999px;background:rgba(45,174,255,0.08);border:1px solid rgba(45,174,255,0.16);font-size:11px;font-weight:800;color:#7dd3fc;letter-spacing:.08em;text-transform:uppercase;">Demo trade closed</div>
-            <div id="outcomeValue" style="font-size:40px;line-height:1;font-weight:800;letter-spacing:-.06em;margin-top:18px;font-family:'JetBrains Mono',monospace;">+$128.40</div>
-            <h3 id="outcomeHeadline" style="font-size:26px;line-height:1.02;font-weight:800;letter-spacing:-.05em;color:#f8fbff;margin-top:16px;">Nice trade.</h3>
-            <p id="outcomeCopy" style="font-size:14px;line-height:1.6;color:rgba(232,240,255,0.72);margin-top:10px;margin-bottom:22px;">Sign in with Telegram to save your score to the leaderboard.</p>
-            <!-- Telegram Login Widget renders here -->
-            <div id="tgDemoWidgetWrap" style="display:flex;justify-content:center;margin-bottom:14px;min-height:44px;">
-              <button id="demoSaveAuthBtn" onclick="beginDemoSaveAuth(event)" style="width:100%;padding:14px 16px;border:none;border-radius:12px;background:linear-gradient(135deg,#60c8ff,#2daeff);color:#021019;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:.02em;box-shadow:0 16px 40px rgba(45,174,255,0.24);font-family:'Inter',sans-serif;">Sign in with Telegram to save score</button>
-            </div>
-            <button id="outcomeContinueBtn" style="margin-top:4px;width:100%;padding:13px;border:1px solid rgba(255,255,255,0.08);border-radius:12px;background:transparent;color:rgba(232,240,255,0.45);font-size:13px;font-weight:600;cursor:pointer;font-family:'Inter',sans-serif;">Skip → just show me TaliTrade</button>
-          </div>
-
-          <!-- STATE 2: saved confirmation -->
-          <div id="outcomeState2" style="display:none;">
-            <div style="width:64px;height:64px;margin:0 auto 18px;border-radius:50%;border:2px solid rgba(34,197,94,0.3);background:rgba(34,197,94,0.08);display:flex;align-items:center;justify-content:center;">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-            </div>
-            <div id="savedScore" style="font-size:36px;font-weight:800;letter-spacing:-.04em;font-family:'JetBrains Mono',monospace;color:#22c55e;">+$0.00</div>
-            <h3 style="font-size:22px;font-weight:800;letter-spacing:-.04em;color:#f8fbff;margin-top:12px;">Score saved, <span id="savedUsername" style="color:#2daeff;"></span></h3>
-            <p style="font-size:13px;color:rgba(232,240,255,0.6);margin-top:8px;margin-bottom:24px;line-height:1.6;">You're on the leaderboard. Now get the real platform.</p>
-            <a href="https://t.me/talitrade" target="_blank" rel="noopener" style="display:flex;align-items:center;justify-content:center;gap:9px;width:100%;padding:15px;background:linear-gradient(135deg,#60c8ff,#2daeff);border-radius:12px;font-size:15px;font-weight:800;color:#020e1c;text-decoration:none;font-family:'Inter',sans-serif;box-shadow:0 16px 40px rgba(45,174,255,0.25);">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="#020e1c"><path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.248l-2.008 9.464c-.148.658-.537.818-1.084.508l-3-2.21-1.447 1.394c-.16.16-.295.295-.605.295l.213-3.053 5.56-5.023c.242-.213-.054-.333-.373-.12L7.48 14.607l-2.95-.924c-.64-.203-.654-.64.136-.948l11.527-4.447c.537-.194 1.006.131.369.96z"/></svg>
-              Join TaliTrade on Telegram
-            </a>
-          </div>
-
-        </div>
-      </div>
-    </div>
-  </div>
-
-</div>
-</section>
-
-<!-- DEMO LEADERBOARD -->
-<section class="section" id="demo-leaderboard" style="padding:80px 0;">
-<div class="container">
-  <h2 class="section-title" style="font-size:36px;">Demo leaderboard.</h2>
-  <p class="section-sub" style="margin-bottom:40px;">Top scores from the live demo above. Close a trade and sign in with Telegram to get on the board.</p>
-
-  <div id="lbWrap" style="max-width:680px;">
-
-    <!-- Loading state -->
-    <div id="lbLoading" style="display:flex;align-items:center;gap:10px;color:var(--muted);font-size:14px;">
-      <svg style="animation:spin .8s linear infinite;flex-shrink:0;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-      Loading leaderboard...
-    </div>
-
     <!-- Empty state -->
-    <div id="lbEmpty" style="display:none;color:var(--muted);font-size:14px;">No scores yet — be the first. Close a demo trade above and sign in with Telegram.</div>
-
-    <!-- Rows -->
-    <div id="lbRows" style="display:none;display:flex;flex-direction:column;gap:10px;"></div>
-
+    <div id="feedEmpty" style="display:flex;align-items:center;justify-content:center;padding:20px 0 8px;">
+      <span style="font-size:12px;color:rgba(148,163,184,0.35);font-weight:500;">No trades yet</span>
+    </div>
+    <!-- Rows: open trade first, then 2 closed below -->
+    <div id="feedRows" style="display:none;flex-direction:column;">
+      <!-- Open trade row — always at top -->
+      <div id="openTradeRow" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;">
+        <div style="display:flex;align-items:center;gap:7px;">
+          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
+          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
+        </div>
+        <span id="openPnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;font-weight:700;">—</span>
+      </div>
+      <!-- Divider shown only when open + closed both present -->
+      <div id="feedDivider" style="display:none;height:1px;background:rgba(255,255,255,0.06);margin:2px 0;"></div>
+      <!-- 3 most recent closed trades -->
+      <div class="feed-row" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;">
+        <div style="display:flex;align-items:center;gap:7px;">
+          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
+          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
+        </div>
+        <span class="feed-pnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;">+$0</span>
+      </div>
+      <div class="feed-row" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;border-top:1px solid rgba(255,255,255,0.04);">
+        <div style="display:flex;align-items:center;gap:7px;">
+          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
+          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
+        </div>
+        <span class="feed-pnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;">+$0</span>
+      </div>
+      <div class="feed-row" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;border-top:1px solid rgba(255,255,255,0.04);">
+        <div style="display:flex;align-items:center;gap:7px;">
+          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
+          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
+        </div>
+        <span class="feed-pnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;">+$0</span>
+      </div>
+    </div>
   </div>
+
 </div>
-</section>
-
-<!-- PRICING -->
-<section class="section" id="pricing">
-<div class="container">
-  <h2 class="section-title">Simple pricing. No surprises.</h2>
-  <p class="section-sub">Beta is free while we finish building. Paid plans launch after beta — locked-in pricing for early members.</p>
-
-  <div class="pricing-grid">
-
-    <!-- STARTER -->
-    <div class="pricing-card">
-      <div class="pricing-name">Starter</div>
-      <div class="pricing-desc">Everything you need to track one funded account.</div>
-      <div class="pricing-price">
-        <span class="amount">$19</span><span class="period">/mo</span>
-      </div>
-      <ul class="pricing-features">
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>1 connected account</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Real-time risk monitoring</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Automatic trade journal</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Telegram alerts + commands</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Payout eligibility tracker</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="rgba(100,116,139,0.5)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span style="color:var(--muted);">Multi-account</span></li>
-      </ul>
-      <button class="pricing-cta ghost" onclick="requireHomepageAuth(event, 'cta')">Join beta for free →</button>
-    </div>
-
-    <!-- PRO (featured) -->
-    <div class="pricing-card featured">
-      <div class="pricing-badge">
-        <div style="width:6px;height:6px;border-radius:50%;background:#2daeff;box-shadow:0 0 6px #2daeff88;"></div>
-        Most Popular
-      </div>
-      <div class="pricing-name" style="color:#7dd3fc;">Pro</div>
-      <div class="pricing-desc">For serious traders running multiple funded accounts.</div>
-      <div class="pricing-price">
-        <span class="amount" style="color:#2daeff;">$39</span><span class="period">/mo</span>
-      </div>
-      <ul class="pricing-features">
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Up to 5 accounts</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Everything in Starter</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Advanced analytics + equity curve</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Weekly performance reports</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Leaderboard access</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Priority support</li>
-      </ul>
-      <button class="pricing-cta primary" onclick="requireHomepageAuth(event, 'cta')">Join beta for free →</button>
-    </div>
-
-    <!-- BETA -->
-    <div class="pricing-card" style="background:linear-gradient(160deg,rgba(34,197,94,0.05),rgba(15,22,36,1));border-color:rgba(34,197,94,0.2);">
-      <div class="pricing-badge" style="background:rgba(34,197,94,0.1);border-color:rgba(34,197,94,0.22);color:#86efac;">
-        <div style="width:6px;height:6px;border-radius:50%;background:#22c55e;animation:livePulse 1.6s ease-in-out infinite;"></div>
-        Active Now
-      </div>
-      <div class="pricing-name" style="color:#86efac;">Beta</div>
-      <div class="pricing-desc">Free access while we build. Limited spots for early members.</div>
-      <div class="pricing-price">
-        <span class="free-label">Free</span>
-      </div>
-      <ul class="pricing-features">
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Full platform access</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Price locked when paid launches</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Direct access to founder</li>
-        <li><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>Shape the roadmap</li>
-        <li style="color:var(--muted);font-size:13px;"> <span id="pricingWaitlistCount" style="color:#86efac;font-weight:700;">247</span> Traders already in</li>
-      </ul>
-      <button class="pricing-cta" style="background:linear-gradient(135deg,#4ade80,#22c55e);color:#031a0a;font-weight:800;" onclick="requireHomepageAuth(event, 'cta')">Claim Your Spot →</button>
-    </div>
-
-  </div>
 </div>
 </section>
 
@@ -742,8 +396,8 @@ footer{
 
   <h2>The next generation <br>trading platform.</h2>
   <p>We're building the software prop traders should have had from the start.</p>
-  <a class="btn-primary" style="display:inline-flex;" href="#" onclick="requireHomepageAuth(event, 'cta')">
-    Request Early Access
+  <a class="btn-primary" style="display:inline-flex;" href="#" onclick="openModal(event)">
+    Join Waitlist
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
   </a>
 </div>
@@ -763,7 +417,7 @@ footer{
     <div id="modalStep1" style="padding:40px;">
       <div style="display:inline-flex;align-items:center;gap:7px;background:rgba(45,174,255,0.08);border:1px solid rgba(45,174,255,0.18);border-radius:999px;padding:5px 12px 5px 8px;margin-bottom:28px;">
         <div style="width:7px;height:7px;border-radius:50%;background:#2daeff;box-shadow:0 0 8px #2daeff88;animation:livePulse 1.6s ease-in-out infinite;"></div>
-        <span style="font-size:11px;font-weight:700;color:#7dd3fc;letter-spacing:.8px;text-transform:uppercase;font-family:'Inter',sans-serif;">Beta Now Open</span>
+        <span style="font-size:11px;font-weight:700;color:#7dd3fc;letter-spacing:.8px;text-transform:uppercase;font-family:'Inter',sans-serif;">Early Access Open</span>
       </div>
 
       <h2 style="font-size:26px;font-weight:800;color:#f0f8ff;letter-spacing:-.7px;line-height:1.08;margin-bottom:10px;">Get early access<br>to TaliTrade.</h2>
@@ -837,8 +491,6 @@ footer{
   </div>
 </div>
 
-
-
 <div id="homepageAuthGate" style="display:none;position:fixed;inset:0;z-index:1650;align-items:center;justify-content:center;padding:20px;">
   <div style="position:absolute;inset:0;background:rgba(2,6,14,0.86);backdrop-filter:blur(12px);" onclick="closeHomepageAuthGate()"></div>
   <div id="homepageAuthCard" style="position:relative;z-index:1;max-width:430px;width:100%;border-radius:20px;background:linear-gradient(180deg,rgba(10,17,29,0.98),rgba(6,11,21,0.98));border:1px solid rgba(255,255,255,0.1);padding:26px;box-shadow:0 26px 70px rgba(0,0,0,0.44);">
@@ -860,16 +512,12 @@ footer{
   <div style="font-size:13px;">© 2026 TaliTrade. Built for funded traders.</div>
   <div class="footer-links">
     <a href="https://t.me/talitrade" target="_blank">Telegram</a>
-    <a href="/cdn-cgi/l/email-protection#aedddbdedec1dcdaeedacfc2c7dadccfcacb80cdc1c3">Support</a>
+    <a href="mailto:support@talitrade.com">Support</a>
     <a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Dashboard</a>
   </div>
 </div>
 </footer>
 
-
-<!-- ── SCRIPTS ──────────────────────────────────────────────────────────────── -->
-
-<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script>
 <script src="/tali-api-base.js"></script><script>
 const AUTH_DIAGNOSTICS = [];
 const AUTH_DEBUG_QUERY_KEY = 'debugAuth';
@@ -888,8 +536,9 @@ function isHomepageAuthDebugMode() {
 }
 
 function getBaseApiUrl() {
-  // Do not bypass TaliApiBase resolution here: it enforces runtime -> build-time -> production fallback order.
-  return window.TaliApiBase.resolveApiBase();
+  return (window.TaliApiBase && window.TaliApiBase.resolveApiBase)
+    ? window.TaliApiBase.resolveApiBase()
+    : 'https://api.talitrade.com';
 }
 
 function classifyAuthConfigFailure(error, status) {
@@ -920,7 +569,7 @@ function pushHomepageAuthDiag(message) {
 const DEMO_CANONICAL_HOST = 'www.talitrade.com';
 let DEMO_LOGIN_DOMAIN = DEMO_CANONICAL_HOST;
 let DEMO_BOT_USERNAME = 'TaliTradeBot';
-let DEMO_BOT_USERNAME_SOURCE = 'hardcoded_canonical'; // must match BotFather @username exactly
+let DEMO_BOT_USERNAME_SOURCE = 'hardcoded_canonical';
 let demoTelegramConfigFailed = false;
 
 function normalizeLoginHost(value) {
@@ -940,12 +589,14 @@ async function hydrateDemoTelegramConfig() {
   const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');
   try {
     const res = await fetch(configUrl, { credentials: 'include', mode: 'cors' });
-    window.TaliApiBase.formatTelegramConfigDiagnostics({
-      resolvedApiBase: apiBase,
-      configUrl,
-      configFetchStatus: res.status,
-      configFetchContentType: res.headers.get('content-type') || 'missing',
-    }).forEach(pushHomepageAuthDiag);
+    if (window.TaliApiBase && window.TaliApiBase.formatTelegramConfigDiagnostics) {
+      window.TaliApiBase.formatTelegramConfigDiagnostics({
+        resolvedApiBase: apiBase,
+        configUrl,
+        configFetchStatus: res.status,
+        configFetchContentType: res.headers.get('content-type') || 'missing',
+      }).forEach(pushHomepageAuthDiag);
+    }
     if (!res.ok) {
       demoTelegramConfigFailed = true;
       pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(null, res.status)}`);
@@ -964,62 +615,22 @@ async function hydrateDemoTelegramConfig() {
     homepageConfigFailed = false;
   } catch (error) {
     pushHomepageAuthDiag(`config_fetch_failed=${classifyAuthConfigFailure(error)}`);
-    window.TaliApiBase.formatTelegramConfigDiagnostics({
-      resolvedApiBase: apiBase,
-      configUrl,
-      configFetchStatus: 'request_failed',
-      configFetchContentType: 'missing',
-      configFetchErrorName: error?.name || 'unknown',
-      configFetchErrorMessage: String(error?.message || '').slice(0, 120) || 'n/a',
-    }).forEach(pushHomepageAuthDiag);
+    if (window.TaliApiBase && window.TaliApiBase.formatTelegramConfigDiagnostics) {
+      window.TaliApiBase.formatTelegramConfigDiagnostics({
+        resolvedApiBase: apiBase,
+        configUrl,
+        configFetchStatus: 'request_failed',
+        configFetchContentType: 'missing',
+        configFetchErrorName: error?.name || 'unknown',
+        configFetchErrorMessage: String(error?.message || '').slice(0, 120) || 'n/a',
+      }).forEach(pushHomepageAuthDiag);
+    }
     demoTelegramConfigFailed = true;
     homepageConfigFailed = true;
-  } finally {
-    // no timeout abort: allow slower cold starts during auth bootstrap
   }
 }
 
-// ── Demo leaderboard ──────────────────────────────────────────────────────────
-function fetchDemoLeaderboard(){
-  fetch(window.TaliApiBase.buildApiUrl('/demo/leaderboard'))
-    .then(r => r.json())
-    .then(data => renderLeaderboard(data.leaderboard || []))
-    .catch(() => {
-      document.getElementById('lbLoading').style.display = 'none';
-      document.getElementById('lbEmpty').style.display = 'block';
-    });
-}
-
-function renderLeaderboard(rows){
-  const loading = document.getElementById('lbLoading');
-  const empty   = document.getElementById('lbEmpty');
-  const wrap    = document.getElementById('lbRows');
-  loading.style.display = 'none';
-  if(!rows.length){ empty.style.display = 'block'; return; }
-  empty.style.display = 'none';
-  wrap.style.display  = 'flex';
-  wrap.innerHTML = rows.map((r, i) => {
-    const pos = r.best_pnl >= 0;
-    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `<span style="font-size:13px;font-weight:700;color:var(--muted);font-family:'JetBrains Mono',monospace;">#${i+1}</span>`;
-    const avatar = r.photo_url
-      ? `<img src="${r.photo_url}" style="width:38px;height:38px;border-radius:50%;object-fit:cover;border:1.5px solid rgba(255,255,255,0.08);" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
-         <div style="display:none;width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#2daeff,#0ea5e9);align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;">${(r.telegram_username||'?')[0].toUpperCase()}</div>`
-      : `<div style="display:flex;width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#2daeff,#0ea5e9);align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#fff;flex-shrink:0;">${(r.telegram_username||'?')[0].toUpperCase()}</div>`;
-    return `
-      <div style="display:flex;align-items:center;gap:14px;padding:14px 18px;background:rgba(255,255,255,0.025);border:1px solid rgba(255,255,255,0.06);border-radius:14px;transition:border-color .2s;" onmouseover="this.style.borderColor='rgba(45,174,255,0.18)'" onmouseout="this.style.borderColor='rgba(255,255,255,0.06)'">
-        <div style="width:28px;text-align:center;flex-shrink:0;">${medal}</div>
-        <div style="position:relative;flex-shrink:0;">${avatar}</div>
-        <div style="flex:1;min-width:0;">
-          <div style="font-size:14px;font-weight:700;color:#e8f0ff;letter-spacing:-.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">@${r.telegram_username || 'trader'}</div>
-        </div>
-        <div style="font-size:18px;font-weight:800;font-family:'JetBrains Mono',monospace;color:${pos?'#22c55e':'#ef4444'};letter-spacing:-.04em;flex-shrink:0;">${pos?'+':'−'}$${Math.abs(r.best_pnl).toFixed(2)}</div>
-      </div>`;
-  }).join('');
-}
-
-// Global homepage auth gate (shared by platform entry + demo score save)
 let homepageAuthIntent = 'cta';
-let homepageAuthPendingPnl = null;
 let homepageAuthWidgetLoaded = false;
 
 function setHomepageAuthError(message) {
@@ -1032,19 +643,17 @@ function setHomepageAuthError(message) {
 }
 
 function getHomepageAuthCopy(intent) {
-  if (intent === 'demo_save') return 'Sign in with Telegram to save your demo result to the leaderboard.';
   if (intent === 'platform_entry') return 'Sign in with Telegram to open TaliTrade Platform.';
   return 'Sign in with Telegram to continue.';
 }
 
-function openHomepageAuthGate(intent = 'cta', options = {}) {
+function openHomepageAuthGate(intent = 'cta') {
   homepageDebugMode = isHomepageAuthDebugMode();
   homepageAuthIntent = intent;
-  homepageAuthPendingPnl = typeof options.pnl === 'number' ? options.pnl : window._demoPnlToSave || 0;
   const modal = document.getElementById('homepageAuthGate');
   const title = document.getElementById('homepageAuthTitle');
   const copy = document.getElementById('homepageAuthCopy');
-  if (title) title.textContent = intent === 'demo_save' ? 'Save your demo score' : 'Continue with Telegram';
+  if (title) title.textContent = 'Continue with Telegram';
   if (copy) copy.textContent = getHomepageAuthCopy(intent);
   setHomepageAuthError('');
   if (modal) {
@@ -1063,10 +672,7 @@ function closeHomepageAuthGate() {
   document.body.style.overflow = '';
   AUTH_DIAGNOSTICS.length = 0;
   const diagEl = document.getElementById('homepageAuthDiag');
-  if (diagEl) {
-    diagEl.textContent = '';
-    diagEl.style.display = 'none';
-  }
+  if (diagEl) { diagEl.textContent = ''; diagEl.style.display = 'none'; }
 }
 
 function retryHomepageAuthSetup() {
@@ -1081,42 +687,9 @@ function requireHomepageAuth(e, intent = 'platform_entry') {
   return false;
 }
 
-function beginDemoSaveAuth(e) {
-  if (e) e.preventDefault();
-  openHomepageAuthGate('demo_save', { pnl: window._demoPnlToSave || 0 });
-}
-
-function saveDemoScore(user, pnl) {
-  const username = user.username || user.first_name || ('user' + user.id);
-  document.getElementById('savedUsername').textContent = '@' + username;
-  document.getElementById('savedScore').textContent = (pnl >= 0 ? '+' : '−') + '$' + Math.abs(pnl).toFixed(2);
-  document.getElementById('savedScore').style.color = pnl >= 0 ? '#22c55e' : '#ef4444';
-  document.getElementById('outcomeState1').style.display = 'none';
-  document.getElementById('outcomeState2').style.display = 'block';
-
-  fetch(getBaseApiUrl() + '/demo/score', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      telegram_user_id: String(user.id),
-      telegram_username: username,
-      photo_url: user.photo_url || null,
-      pnl: pnl
-    })
-  })
-  .then(r => r.json())
-  .then(() => fetchDemoLeaderboard())
-  .catch(() => {});
-}
-
 window.onHomepageTelegramAuth = function(user){
-  const pnl = homepageAuthPendingPnl || window._demoPnlToSave || 0;
   pushHomepageAuthDiag(`telegram_widget_success user_id=${user?.id || 'unknown'}`);
   closeHomepageAuthGate();
-  if (homepageAuthIntent === 'demo_save') {
-    saveDemoScore(user, pnl);
-    return;
-  }
   window.location.href = '/app';
 };
 
@@ -1126,7 +699,6 @@ async function ensureHomepageAuthWidget(){
   if (homepageAuthWidgetLoaded) return;
   wrap.innerHTML = '<div style="font-size:12px;color:rgba(148,163,184,0.86);">Preparing secure Telegram sign-in…</div>';
   await hydrateDemoTelegramConfig();
-  const currentHost = normalizeLoginHost(window.location.hostname);
   const canonicalHost = normalizeLoginHost(DEMO_CANONICAL_HOST);
   const loginDomain = normalizeLoginHost(DEMO_LOGIN_DOMAIN);
   if (!isDemoCanonicalHost()) {
@@ -1176,9 +748,6 @@ async function ensureHomepageAuthWidget(){
   homepageAuthWidgetLoaded = true;
 }
 
-// Fetch leaderboard on page load
-fetchDemoLeaderboard();
-
 // ── Waitlist count ────────────────────────────────────────────
 var _wlCount = 247;
 
@@ -1190,13 +759,11 @@ function setWaitlistCount(n){
   });
 }
 
-// Fetch real count from backend
 (function fetchCount(){
   fetch(getBaseApiUrl() + '/waitlist/count')
     .then(function(r){ return r.json(); })
     .then(function(d){ if(d && d.count) setWaitlistCount(d.count); })
     .catch(function(){
-      // Silently fall back to default + slow drift
       setInterval(function(){
         if(Math.random() > 0.75){ setWaitlistCount(_wlCount + 1); }
       }, 9000);
@@ -1242,7 +809,7 @@ document.getElementById('tgInput').addEventListener('keydown', function(e){
   if(e.key === 'Enter') handleSubmit();
 });
 
-// ── Submit → POST to backend ──────────────────────────────────
+// ── Submit ────────────────────────────────────────────────────
 function handleSubmit(){
   var val = document.getElementById('tgInput').value.trim().replace(/^@/,'');
   var err = document.getElementById('inputError');
@@ -1253,8 +820,6 @@ function handleSubmit(){
     document.getElementById('inputWrap').style.boxShadow = '0 0 0 3px rgba(239,68,68,0.08)';
     return;
   }
-
-  // Loading state
   document.getElementById('submitBtnText').style.display = 'none';
   document.getElementById('submitBtnLoading').style.display = 'inline';
   document.getElementById('submitBtn').disabled = true;
@@ -1272,7 +837,6 @@ function handleSubmit(){
     showSuccess(val, count);
   })
   .catch(function(){
-    // Still show success — don't penalise user for network hiccups
     showSuccess(val, _wlCount + 1);
   });
 }
@@ -1334,411 +898,343 @@ function launchConfetti(){
 <script>
 (function(){
   const W=284, H=160, PAD=12;
-  let pts = [105,100,85,80,75,90,70,55,60,45,32,50,38,28,35,20,10,18,12];
-  let basePrice = 19482.50, currentPrice = basePrice;
-  let pnl = 1284, openPnlVal = 0, winRate = 74;
 
+  // ── State ────────────────────────────────────────────────────
+  let basePrice = 19247.50, currentPrice = basePrice;
+  let pts = Array(23).fill(80);
+  let sessionPnl = 0, winRate = 0, tradeCount = 0, totalWins = 0;
+  let activeTrade = null;
+  let openPnlVal = 0;
+  // 3 most recent CLOSED trades (index 0 = newest)
+  let closedTrades = [];
+  const SYMBOL = 'NAS100';
+  let momentum = 0;
+
+  // ── Chart math ───────────────────────────────────────────────
   function ptToSvg(i, arr){
     const x = (i/(arr.length-1))*(W-PAD*2)+PAD;
     const min=Math.min(...arr), max=Math.max(...arr);
-    const y = PAD + ((arr[i]-min)/(max-min||1))*(H-PAD*2);
-    return {x, y: H - y + PAD};
+    const range = max-min||1;
+    return {x, y: H - (PAD + ((arr[i]-min)/range)*(H-PAD*2)) + PAD};
   }
   function buildPath(arr){
-    if(arr.length<2) return {line:'',fill:'',last:{x:0,y:0}};
-    let d='', fd='';
-    for(let i=0;i<arr.length;i++){
-      const {x,y}=ptToSvg(i,arr);
-      d += (i===0?`M${x},${y}`:`L${x},${y}`);
-    }
-    const last=ptToSvg(arr.length-1,arr), first=ptToSvg(0,arr);
-    fd = d + ` L${last.x},${H} L${first.x},${H} Z`;
-    return {line:d, fill:fd, last};
+    let d='';
+    for(let i=0;i<arr.length;i++){const p=ptToSvg(i,arr);d+=i===0?`M${p.x},${p.y}`:`L${p.x},${p.y}`;}
+    const last=ptToSvg(arr.length-1,arr),first=ptToSvg(0,arr);
+    return {line:d, fill:d+` L${last.x},${H} L${first.x},${H} Z`, last};
   }
   function renderChart(){
-    const {line,fill,last} = buildPath(pts);
-    document.getElementById('chartLinePath').setAttribute('d', line);
-    document.getElementById('chartFillPath').setAttribute('d', fill);
+    const {line,fill,last}=buildPath(pts);
+    document.getElementById('chartLinePath').setAttribute('d',line);
+    document.getElementById('chartFillPath').setAttribute('d',fill);
     ['cursorDot','cursorRing','cursorPulse'].forEach(id=>{
-      document.getElementById(id).setAttribute('cx', last.x);
-      document.getElementById(id).setAttribute('cy', last.y);
+      document.getElementById(id).setAttribute('cx',last.x);
+      document.getElementById(id).setAttribute('cy',last.y);
     });
+    renderTradeOverlay();
   }
-  function flashEl(el){ el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
+
+  // ── Trade overlay ────────────────────────────────────────────
+  function renderTradeOverlay(){
+    const svg=document.getElementById('liveSvg');
+    svg.querySelectorAll('.trade-overlay').forEach(el=>el.remove());
+    if(!activeTrade) return;
+
+    const last  = ptToSvg(pts.length-1, pts);
+    const entry = activeTrade.entryPoint;
+    const isBuy = activeTrade.side==='BUY';
+
+    // P&L: BUY profits when currentPrice > entryPrice, SELL profits when currentPrice < entryPrice
+    const rawPnl   = currentPrice - activeTrade.entryPrice;
+    const pnl      = isBuy ? rawPnl : -rawPnl;
+    const inProfit = pnl >= 0;
+    const profitColour = inProfit ? '#22c55e' : '#ef4444';
+    const sideColour   = isBuy ? '#22c55e' : '#ef4444';
+
+    // Shaded fill — green if profitable, red if losing
+    const slicePts = pts.slice(activeTrade.entryIndex);
+    if(slicePts.length > 1){
+      let d='';
+      for(let i=0;i<slicePts.length;i++){
+        const p=ptToSvg(activeTrade.entryIndex+i,pts);
+        d+=i===0?`M${p.x},${p.y}`:`L${p.x},${p.y}`;
+      }
+      d+=` L${last.x},${entry.y} L${entry.x},${entry.y} Z`;
+      const fillEl=document.createElementNS('http://www.w3.org/2000/svg','path');
+      fillEl.setAttribute('class','trade-overlay');
+      fillEl.setAttribute('d',d);
+      fillEl.setAttribute('fill', profitColour);
+      fillEl.setAttribute('opacity','0.10');
+      svg.insertBefore(fillEl,svg.querySelector('g'));
+    }
+
+    // Dashed entry line — profit colour
+    const dline=document.createElementNS('http://www.w3.org/2000/svg','line');
+    dline.setAttribute('class','trade-overlay');
+    dline.setAttribute('x1',entry.x); dline.setAttribute('y1',entry.y);
+    dline.setAttribute('x2',last.x);  dline.setAttribute('y2',entry.y);
+    dline.setAttribute('stroke', profitColour);
+    dline.setAttribute('stroke-width','1');
+    dline.setAttribute('stroke-dasharray','4 3');
+    dline.setAttribute('opacity','0.5');
+    svg.insertBefore(dline,svg.querySelector('g'));
+
+    // Entry dot — trade side colour
+    const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('class','trade-overlay');
+    dot.setAttribute('cx',entry.x); dot.setAttribute('cy',entry.y);
+    dot.setAttribute('r','4'); dot.setAttribute('fill',sideColour); dot.setAttribute('opacity','0.95');
+    svg.appendChild(dot);
+
+    // BUY/SELL label at entry
+    const sideLabel=document.createElementNS('http://www.w3.org/2000/svg','text');
+    sideLabel.setAttribute('class','trade-overlay');
+    sideLabel.setAttribute('x',entry.x+7); sideLabel.setAttribute('y',entry.y+4);
+    sideLabel.setAttribute('font-size','8'); sideLabel.setAttribute('font-weight','800');
+    sideLabel.setAttribute('font-family','Inter,sans-serif');
+    sideLabel.setAttribute('fill',sideColour); sideLabel.setAttribute('opacity','0.85');
+    sideLabel.textContent=activeTrade.side;
+    svg.appendChild(sideLabel);
+
+    // P&L pill — white text, profit/loss background
+    const pillW=52,pillH=16,pillR=4;
+    const px=Math.min(Math.max(last.x-pillW/2,2),W-pillW-2);
+    const py=last.y<PAD+20?last.y+6:last.y-pillH-4;
+    const pill=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    pill.setAttribute('class','trade-overlay');
+    pill.setAttribute('x',px); pill.setAttribute('y',py);
+    pill.setAttribute('width',pillW); pill.setAttribute('height',pillH);
+    pill.setAttribute('rx',pillR); pill.setAttribute('fill',profitColour); pill.setAttribute('opacity','0.92');
+    svg.appendChild(pill);
+    const pnlTxt=document.createElementNS('http://www.w3.org/2000/svg','text');
+    pnlTxt.setAttribute('class','trade-overlay');
+    pnlTxt.setAttribute('x',px+pillW/2); pnlTxt.setAttribute('y',py+pillH/2+3.5);
+    pnlTxt.setAttribute('text-anchor','middle'); pnlTxt.setAttribute('font-size','9');
+    pnlTxt.setAttribute('font-weight','800'); pnlTxt.setAttribute('font-family','JetBrains Mono,monospace');
+    pnlTxt.setAttribute('fill','#ffffff');
+    pnlTxt.textContent=(pnl>=0?'+$':'−$')+Math.abs(pnl).toFixed(0);
+    svg.appendChild(pnlTxt);
+  }
+
   function pulseCursor(){
     const p=document.getElementById('cursorPulse');
     p.style.animation='none'; void p.offsetWidth;
     p.style.animation='cursorPulseAnim .8s ease-out forwards';
   }
+
+  // ── Feed render ──────────────────────────────────────────────
+  // Open trade at top, then 2 closed (active) or 3 closed (no active trade)
+  function renderFeed(){
+    const emptyEl   = document.getElementById('feedEmpty');
+    const feedWrap  = document.getElementById('feedRows');
+    const divider   = document.getElementById('feedDivider');
+    const rows      = document.querySelectorAll('#feedRows .feed-row');
+    const openRow   = document.getElementById('openTradeRow');
+    const hasAny    = closedTrades.length > 0 || activeTrade;
+    // Show 2 closed when trade is open, 3 closed when idle
+    const showClosed = activeTrade ? 2 : 3;
+
+    if(emptyEl)  emptyEl.style.display  = hasAny ? 'none' : 'flex';
+    if(feedWrap) feedWrap.style.display = hasAny ? 'flex'  : 'none';
+
+    // Open trade row at top
+    if(openRow){
+      if(activeTrade){
+        openRow.style.display='flex';
+        openRow.style.visibility='visible';
+        const s=openRow.querySelector('.feed-side');
+        s.textContent=activeTrade.side;
+        // BUY = green badge, SELL = red badge always
+        s.style.background=activeTrade.side==='BUY'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)';
+        s.style.color=activeTrade.side==='BUY'?'#22c55e':'#ef4444';
+        openRow.querySelector('.feed-sym').textContent=SYMBOL;
+      } else {
+        openRow.style.display='none';
+        openRow.style.visibility='hidden';
+      }
+    }
+
+    // Divider between open and closed
+    if(divider) divider.style.display=(activeTrade && closedTrades.length>0)?'block':'none';
+
+    // Closed trade rows
+    for(let i=0;i<3;i++){
+      const row=rows[i]; if(!row) continue;
+      const t=closedTrades[i];
+      if(!t || i>=showClosed){
+        row.style.visibility='hidden';
+        row.style.height='0';
+        row.style.padding='0';
+        row.style.overflow='hidden';
+      } else {
+        row.style.visibility='visible';
+        row.style.height='';
+        row.style.padding='6px 0';
+        row.style.overflow='';
+        const pos=t.pnl>=0;
+        const sideEl=row.querySelector('.feed-side');
+        // BUY always green, SELL always red — regardless of P&L
+        sideEl.textContent=t.side;
+        sideEl.style.background=t.side==='BUY'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)';
+        sideEl.style.color=t.side==='BUY'?'#22c55e':'#ef4444';
+        row.querySelector('.feed-sym').textContent=SYMBOL;
+        // P&L color based on win/loss
+        row.querySelector('.feed-pnl').textContent=(pos?'+$':'−$')+Math.abs(t.pnl).toLocaleString();
+        row.querySelector('.feed-pnl').style.color=pos?'#22c55e':'#ef4444';
+      }
+    }
+  }
+
+  function robotOpenTrade(side){}
+  function robotReact(won){}
+
+  // ── Open trade ───────────────────────────────────────────────
+  function openTrade(){
+    if(activeTrade) return;
+    const side=Math.random()<0.62?'BUY':'SELL';
+    activeTrade={
+      side, symbol:SYMBOL,
+      entryPrice:currentPrice,
+      entryIndex:pts.length-1,
+      entryPoint:ptToSvg(pts.length-1,pts),
+    };
+    openPnlVal=0;
+    robotOpenTrade(activeTrade.side);
+    renderFeed();
+    renderChart();
+  }
+
+  // ── Close trade ──────────────────────────────────────────────
+  function closeTrade(){
+    if(!activeTrade) return;
+    const isBuy=activeTrade.side==='BUY';
+    // Correct P&L: BUY profits when price went UP, SELL profits when price went DOWN
+    const rawPnl=currentPrice-activeTrade.entryPrice;
+    const pnl=Math.round(isBuy ? rawPnl : -rawPnl);
+
+    closedTrades.unshift({side:activeTrade.side,symbol:SYMBOL,pnl});
+    if(closedTrades.length>3) closedTrades.pop();
+
+    sessionPnl+=pnl;
+    tradeCount++;
+    if(pnl>0) totalWins++;
+    winRate=tradeCount>0?Math.round((totalWins/tradeCount)*100):0;
+    robotReact(pnl>0);
+
+    // Animate top closed row
+    const rows=document.querySelectorAll('#feedRows .feed-row');
+    if(rows[0]){
+      rows[0].style.opacity='0'; rows[0].style.transform='translateY(-5px)';
+      setTimeout(()=>{
+        renderFeed();
+        rows[0].style.transition='opacity .3s,transform .3s';
+        rows[0].style.opacity='1'; rows[0].style.transform='translateY(0)';
+      },60);
+    } else { renderFeed(); }
+
+    // Update metric card
+    const pnlEl=document.getElementById('pnlValue');
+    if(pnlEl){
+      pnlEl.textContent=(sessionPnl>=0?'+$':'−$')+Math.abs(sessionPnl).toLocaleString();
+      pnlEl.style.color=sessionPnl>=0?'#22c55e':'#ef4444';
+    }
+    const wrEl=document.getElementById('winRate');
+    if(wrEl){wrEl.textContent=winRate+'%';wrEl.style.color=winRate>=60?'#2daeff':'#94a3b8';}
+    const tcEl=document.getElementById('tradeCount');
+    if(tcEl){tcEl.textContent=tradeCount;tcEl.style.color='#e8f0ff';}
+
+    activeTrade=null;
+    openPnlVal=0;
+
+    // Clear open P&L display
+    const openEl=document.getElementById('openPnl');
+    if(openEl){openEl.textContent='—';openEl.style.color='#94a3b8';}
+
+    renderChart();
+  }
+
+  // ── Price tick every 900ms ───────────────────────────────────
   renderChart();
+  renderFeed();
+
   setInterval(()=>{
-    const delta=(Math.random()-0.46)*8;
-    currentPrice+=delta;
-    const pct=((currentPrice-basePrice)/basePrice*100).toFixed(2);
-    const priceEl=document.getElementById('chartPrice'), pctEl=document.getElementById('chartPct');
-    priceEl.textContent=currentPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    let delta;
+    if(activeTrade){
+      // Strong directional momentum: BUY = price trends up, SELL = trends down
+      const dirBias=activeTrade.side==='BUY'?0.66:0.34;
+      const raw=(Math.random()-(1-dirBias))*16;
+      momentum=momentum*0.55+raw*0.45;
+      delta=momentum;
+    } else {
+      momentum=momentum*0.35+(Math.random()-0.5)*8*0.65;
+      delta=momentum;
+    }
+
+    currentPrice=Math.max(18500,currentPrice+delta);
+    const pct=((currentPrice-basePrice)/basePrice*100);
     const up=delta>=0;
-    priceEl.style.color=up?'#22c55e':'#ef4444';
-    setTimeout(()=>{priceEl.style.color='';},400);
-    pctEl.textContent=(up?'▲ +':'▼ ')+Math.abs(pct)+'%';
-    pctEl.style.color=up?'#22c55e':'#ef4444';
+
+    const priceEl=document.getElementById('chartPrice');
+    const pctEl=document.getElementById('chartPct');
+    if(priceEl){
+      priceEl.textContent=currentPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+      priceEl.style.color=up?'#22c55e':'#ef4444';
+      setTimeout(()=>{priceEl.style.color='';},350);
+    }
+    if(pctEl){
+      pctEl.textContent=(pct>=0?'▲ +':'▼ ')+Math.abs(pct).toFixed(2)+'%';
+      pctEl.style.color=pct>=0?'#22c55e':'#ef4444';
+    }
+
+    // Chart point: price up = pts value increases = line goes up on screen
     const lastY=pts[pts.length-1];
-    const newY=Math.max(8,Math.min(148,lastY+(Math.random()-0.46)*10));
-    pts.push(newY); if(pts.length>22) pts.shift();
-    renderChart(); pulseCursor();
-  }, 1200);
-  setInterval(()=>{
-    const change=Math.floor((Math.random()-0.35)*60);
-    pnl+=change;
-    const el=document.getElementById('pnlValue'), pos=pnl>=0;
-    el.textContent=(pos?'+$':'−$')+Math.abs(pnl).toLocaleString();
-    el.style.color=pos?'#22c55e':'#ef4444';
-  }, 2000);
-  setInterval(()=>{
-    openPnlVal+=Math.floor((Math.random()-0.4)*25);
-    const el=document.getElementById('openPnl'), pos=openPnlVal>=0;
-    el.textContent=(pos?'+$':'−$')+Math.abs(openPnlVal);
-    el.style.color=pos?'#22c55e':'#ef4444';
-  }, 800);
-  setInterval(()=>{
-    winRate=Math.min(85,Math.max(65,winRate+(Math.random()>.5?1:-1)));
-    document.getElementById('winRate').textContent=winRate+'%';
-  }, 5000);
+    const chartDelta=(delta/2.8);
+    const newY=Math.max(6,Math.min(150,lastY+chartDelta+(Math.random()-0.5)*2.5));
+    pts.push(newY);
+    if(pts.length>24) pts.shift();
+
+    // Slide entry index
+    if(activeTrade){
+      activeTrade.entryIndex=Math.max(0,activeTrade.entryIndex-1);
+      if(activeTrade.entryIndex===0){closeTrade();return;}
+      activeTrade.entryPoint=ptToSvg(activeTrade.entryIndex,pts);
+
+      // Open P&L: BUY profits when currentPrice > entryPrice
+      const isBuy=activeTrade.side==='BUY';
+      const rawPnl=currentPrice-activeTrade.entryPrice;
+      openPnlVal=Math.round(isBuy?rawPnl:-rawPnl);
+      const openEl=document.getElementById('openPnl');
+      if(openEl){
+        openEl.textContent=(openPnlVal>=0?'+$':'−$')+Math.abs(openPnlVal).toLocaleString();
+        openEl.style.color=openPnlVal>=0?'#22c55e':'#ef4444';
+      }
+    }
+
+    renderChart();
+    pulseCursor();
+  },900);
+
+  // ── Trade lifecycle ──────────────────────────────────────────
+  function scheduleTrade(){
+    const preDelay=2000+Math.random()*3000;
+    const holdTicks=10+Math.floor(Math.random()*7);
+    setTimeout(()=>{
+      openTrade();
+      setTimeout(()=>{
+        closeTrade();
+        setTimeout(scheduleTrade,3000+Math.random()*3000);
+      },holdTicks*900);
+    },preDelay);
+  }
+  scheduleTrade();
+
 })();
 </script>
 
 <style>
-@keyframes livePulse2{0%,100%{opacity:.4;transform:scale(1)}50%{opacity:1;transform:scale(1.3)}}
 @keyframes cursorPulseAnim{0%{r:7;opacity:.4}100%{r:16;opacity:0}}
-@keyframes rowFlash{0%{background:rgba(45,174,255,.12)}100%{background:transparent}}
-.flash{animation:rowFlash .6s ease-out;}
 #liveDot{animation:livePulse 1.4s ease-in-out infinite;}
 </style>
-
-<!-- Interactive platform demo -->
-<script>
-(function(){
-  const canvas = document.getElementById('previewCanvas');
-  const ctx = canvas.getContext('2d');
-  const layer = document.getElementById('chartInteractionLayer');
-  const crosshairX = document.getElementById('crosshairX');
-  const crosshairY = document.getElementById('crosshairY');
-  const crosshairDot = document.getElementById('crosshairDot');
-  const crosshairPrice = document.getElementById('crosshairPrice');
-  const entryTag = document.getElementById('entryTag');
-  const floatingPnl = document.getElementById('floatingPnl');
-  const buyBtn = document.getElementById('buyBtn');
-  const sellBtn = document.getElementById('sellBtn');
-  const closeTradeBtn = document.getElementById('closeTradeBtn');
-  const outcome = document.getElementById('simOutcome');
-  const outcomeValue = document.getElementById('outcomeValue');
-  const outcomeHeadline = document.getElementById('outcomeHeadline');
-  const outcomeCopy = document.getElementById('outcomeCopy');
-  const outcomeBadge = document.getElementById('outcomeBadge');
-  const outcomeContinueBtn = document.getElementById('outcomeContinueBtn');
-  const paperPosition = document.getElementById('paperPosition');
-  const paperEntry = document.getElementById('paperEntry');
-  const paperNow = document.getElementById('paperNow');
-  const paperPnl = document.getElementById('paperPnl');
-
-  // ── Real market data ─────────────────────────────────────────────────────────
-  // pts stores normalised chart values (not actual prices — keeps the chart
-  // render logic simple). priceHistory maps index → actual price so crosshair
-  // and P&L are always in real dollars.
-  let pts = [];
-  let priceHistory = [];   // parallel array: actual DJIA price per pt
-  let basePrice = 42318.50, livePrice = basePrice;
-  let dataLoaded = false;
-
-  // Seed with synthetic data immediately so chart isn't blank while fetching
-  (function seedSynthetic(){
-    let s = 100;
-    for(let i=0;i<90;i++){ s += (Math.random()-0.46)*0.8; pts.push(s); priceHistory.push(basePrice); }
-    livePrice = basePrice;
-  })();
-
-  // Fetch real DJIA 1-min candles from Yahoo Finance (public, no key needed)
-  fetch('https://query1.finance.yahoo.com/v8/finance/chart/%5EDJI?interval=1m&range=1d', {
-    headers: { 'Accept': 'application/json' }
-  })
-  .then(r => r.json())
-  .then(data => {
-    const result = data?.chart?.result?.[0];
-    if (!result) return;
-    const closes = result.indicators?.quote?.[0]?.close || [];
-    // Filter out nulls, take last 90 points
-    const clean = closes.filter(v => v != null && isFinite(v));
-    if (clean.length < 5) return;
-    const slice = clean.slice(-90);
-    basePrice = slice[slice.length - 1];
-    livePrice = basePrice;
-    // Map real prices to normalised chart pts
-    const minP = Math.min(...slice), maxP = Math.max(...slice), rngP = maxP - minP || 1;
-    pts = slice.map(p => ((p - minP) / rngP) * 80 + 10);
-    priceHistory = [...slice];
-    dataLoaded = true;
-    // Update header
-    document.getElementById('pvPrice').textContent = livePrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-    document.getElementById('pvChange').textContent = '▲ +0.00%';
-    if(canvas.parentElement.clientWidth > 0) draw();
-  })
-  .catch(() => { dataLoaded = true; }); // silently stay on synthetic if fetch fails
-
-  let hoverIndex=null, hoveredPrice=null;
-  let entryLocked=false, entrySide=null, entryPrice=null;
-  let entryX=null, entryY=null, currentPnl=0, tickCounter=0;
-
-  function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
-
-  function getBounds(){
-    const W=canvas.clientWidth, H=canvas.clientHeight;
-    const PAD_T=56, PAD_B=44;
-    const min=Math.min(...pts), max=Math.max(...pts), rng=max-min||1;
-    return {W,H,PAD_T,PAD_B,min,max,rng};
-  }
-
-  function toPoint(i){
-    const {W,H,PAD_T,PAD_B,min,rng}=getBounds();
-    return {x:(i/(pts.length-1))*W, y:PAD_T+(H-PAD_T-PAD_B)-((pts[i]-min)/rng)*(H-PAD_T-PAD_B)};
-  }
-
-  function draw(){
-    const rect=canvas.parentElement.getBoundingClientRect();
-    const ratio=window.devicePixelRatio||1;
-    canvas.width=rect.width*ratio; canvas.height=rect.height*ratio;
-    canvas.style.width=rect.width+'px'; canvas.style.height=rect.height+'px';
-    ctx.setTransform(ratio,0,0,ratio,0,0);
-    const {W,H,PAD_T}=getBounds();
-    ctx.clearRect(0,0,W,H);
-    const pp=pts.map((_,i)=>toPoint(i));
-    const g=ctx.createLinearGradient(0,PAD_T,0,H);
-    g.addColorStop(0,'rgba(45,174,255,0.16)'); g.addColorStop(1,'rgba(45,174,255,0)');
-    ctx.beginPath(); ctx.moveTo(pp[0].x,pp[0].y);
-    for(let i=1;i<pp.length;i++){const cx=(pp[i-1].x+pp[i].x)/2; ctx.bezierCurveTo(cx,pp[i-1].y,cx,pp[i].y,pp[i].x,pp[i].y);}
-    ctx.lineTo(pp[pp.length-1].x,H); ctx.lineTo(pp[0].x,H); ctx.closePath();
-    ctx.fillStyle=g; ctx.fill();
-    ctx.beginPath(); ctx.moveTo(pp[0].x,pp[0].y);
-    for(let i=1;i<pp.length;i++){const cx=(pp[i-1].x+pp[i].x)/2; ctx.bezierCurveTo(cx,pp[i-1].y,cx,pp[i].y,pp[i].x,pp[i].y);}
-    const lg=ctx.createLinearGradient(0,0,W,0);
-    lg.addColorStop(0,'rgba(45,174,255,0)'); lg.addColorStop(.12,'rgba(45,174,255,.9)');
-    lg.addColorStop(.88,'rgba(45,174,255,.9)'); lg.addColorStop(1,'rgba(45,174,255,0)');
-    ctx.strokeStyle=lg; ctx.lineWidth=2; ctx.stroke();
-    const tip=pp[pp.length-1];
-    ctx.beginPath(); ctx.arc(tip.x,tip.y,8,0,Math.PI*2); ctx.fillStyle='rgba(45,174,255,0.18)'; ctx.fill();
-    ctx.beginPath(); ctx.arc(tip.x,tip.y,4,0,Math.PI*2); ctx.fillStyle='#2daeff'; ctx.fill();
-    if(entryLocked) renderEntryTag();
-  }
-
-  function syntheticPriceForIndex(index){
-    // Use real price history if available, otherwise interpolate from livePrice
-    if(priceHistory[index] != null) return priceHistory[index];
-    return livePrice + (index - (pts.length - 1)) * (livePrice * 0.00005);
-  }
-
-  function getChartPoint(clientX, clientY){
-    const rect=layer.getBoundingClientRect();
-    const x=clamp(clientX-rect.left,0,rect.width);
-    const index=clamp(Math.round((x/rect.width)*(pts.length-1)),0,pts.length-1);
-    const p=toPoint(index);
-    return {x:p.x,y:p.y,index,price:syntheticPriceForIndex(index)};
-  }
-
-  function showCrosshair(p){
-    hoverIndex=p.index; hoveredPrice=p.price;
-    crosshairX.style.display='block'; crosshairY.style.display='block';
-    crosshairDot.style.display='block'; crosshairPrice.style.display='block';
-    crosshairX.style.left=p.x+'px'; crosshairY.style.top=p.y+'px';
-    crosshairDot.style.left=p.x+'px'; crosshairDot.style.top=p.y+'px';
-    crosshairPrice.style.top=p.y+'px';
-    crosshairPrice.textContent=p.price.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-  }
-
-  function hideCrosshair(){
-    crosshairX.style.display='none'; crosshairY.style.display='none';
-    crosshairDot.style.display='none'; crosshairPrice.style.display='none';
-    hoverIndex=null; hoveredPrice=null;
-  }
-
-  function renderEntryTag(){
-    if(!entryLocked||entryPrice==null) return;
-    const {W,H}=getBounds();
-    // Price display lives in top-right ~200px wide, ~80px tall — keep tag clear of it
-    const nearRight = entryX > W * 0.60;
-    const nearTop   = entryY < 110;
-    let tx, ty, transform;
-    if(nearRight && nearTop){
-      // Flip: render tag to the LEFT of the entry point, vertically centred
-      tx = clamp(entryX - 150, 12, W - 180);
-      ty = clamp(entryY + 28, 24, H - 40);
-      transform = 'translate(0, 0)';
-    } else if(nearRight){
-      // Right edge: pin tag to the left
-      tx = clamp(entryX - 8, 12, W - 180);
-      ty = clamp(entryY - 18, 24, H - 40);
-      transform = 'translate(-100%, -50%)';
-    } else if(nearTop){
-      // Near top: render below entry
-      tx = clamp(entryX, 12, W - 180);
-      ty = clamp(entryY + 16, 24, H - 40);
-      transform = 'translate(-50%, 0)';
-    } else {
-      // Default: above entry
-      tx = clamp(entryX, 12, W - 180);
-      ty = clamp(entryY, 60, H - 86);
-      transform = 'translate(-50%, -120%)';
-    }
-    entryTag.style.display='block';
-    entryTag.style.left=tx+'px';
-    entryTag.style.top=ty+'px';
-    entryTag.style.transform=transform;
-    entryTag.style.borderColor=entrySide==='buy'?'rgba(34,197,94,0.3)':'rgba(239,68,68,0.3)';
-    entryTag.style.color=entrySide==='buy'?'#86efac':'#fca5a5';
-    entryTag.textContent=`${entrySide.toUpperCase()} · ${entryPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-  }
-
-  function getPaperPnl(){
-    if(!entryLocked||entryPrice==null) return 0;
-    return (livePrice-entryPrice)*(entrySide==='buy'?1:-1)*1;
-  }
-
-  function renderFloatingPnl(){
-    if(!entryLocked){floatingPnl.style.display='none';return;}
-    const {W,H}=getBounds();
-    currentPnl=getPaperPnl();
-    const pos=currentPnl>=0;
-    const clampedX=clamp(entryX,24,W-120), clampedY=clamp(entryY-18,92,H-72);
-    floatingPnl.style.display='block';
-    floatingPnl.style.left=clampedX+'px'; floatingPnl.style.top=clampedY+'px';
-    floatingPnl.style.transform='translate(-50%,-100%)';
-    floatingPnl.style.color=pos?'#86efac':'#fca5a5';
-    floatingPnl.style.borderColor=pos?'rgba(34,197,94,0.26)':'rgba(239,68,68,0.26)';
-    floatingPnl.textContent=`${pos?'+':'−'}$${Math.abs(currentPnl).toFixed(2)}`;
-  }
-
-  function renderPositionBox(){
-    paperNow.textContent=livePrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-    if(!entryLocked||entryPrice==null){
-      paperPosition.textContent='Flat'; paperPosition.style.color='#f8fbff';
-      paperEntry.textContent='–'; paperPnl.textContent='$0.00'; paperPnl.style.color='#94a3b8'; return;
-    }
-    currentPnl = getPaperPnl();   // always fresh
-    const pos=currentPnl>=0;
-    paperPosition.textContent=entrySide==='buy'?'Long':'Short';
-    paperPosition.style.color=entrySide==='buy'?'#86efac':'#fca5a5';
-    paperEntry.textContent=entryPrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-    paperPnl.textContent=`${pos?'+':'−'}$${Math.abs(currentPnl).toFixed(2)}`;
-    paperPnl.style.color=pos?'#86efac':'#fca5a5';
-  }
-
-  function setButtonStates(){
-    const active=entryLocked;
-    buyBtn.disabled=active; sellBtn.disabled=active;
-    buyBtn.style.opacity=active?'.45':'1'; sellBtn.style.opacity=active?'.45':'1';
-    buyBtn.style.cursor=active?'not-allowed':'pointer'; sellBtn.style.cursor=active?'not-allowed':'pointer';
-    closeTradeBtn.disabled=!active; closeTradeBtn.style.cursor=active?'pointer':'not-allowed';
-    closeTradeBtn.style.background=active?'rgba(255,255,255,0.12)':'rgba(255,255,255,0.08)';
-    closeTradeBtn.style.color=active?'#f8fbff':'rgba(255,255,255,0.46)';
-  }
-
-  function openTrade(side){
-    if(entryLocked) return;
-    entrySide=side; entryLocked=true;
-    if(hoveredPrice!=null&&hoverIndex!=null){
-      entryPrice=hoveredPrice; const p=toPoint(hoverIndex); entryX=p.x; entryY=p.y;
-    } else {
-      entryPrice=livePrice; const p=toPoint(pts.length-1); entryX=p.x; entryY=p.y;
-    }
-    renderEntryTag(); renderFloatingPnl(); renderPositionBox(); setButtonStates();
-  }
-
-  function closeTrade(){
-    if(!entryLocked) return;
-    const pnl = getPaperPnl();
-    const won = pnl >= 0;
-    // Store pnl for Telegram auth callback
-    window._demoPnlToSave = pnl;
-    // Reset to state 1 (in case overlay was shown before)
-    document.getElementById('outcomeState1').style.display = 'block';
-    document.getElementById('outcomeState2').style.display = 'none';
-    outcome.style.display='flex';
-    outcomeValue.textContent=`${won?'+':'−'}$${Math.abs(pnl).toFixed(2)}`;
-    outcomeValue.style.color=won?'#22c55e':'#ef4444';
-    outcomeBadge.style.color=won?'#86efac':'#fca5a5';
-    outcomeBadge.style.borderColor=won?'rgba(34,197,94,0.22)':'rgba(239,68,68,0.22)';
-    outcomeBadge.style.background=won?'rgba(34,197,94,0.08)':'rgba(239,68,68,0.08)';
-    outcomeHeadline.textContent=won?'Nice trade.':'The edge is in the response.';
-    outcomeCopy.textContent=won
-      ? 'Sign in with Telegram to save your score to the leaderboard.'
-      : 'Sign in with Telegram and try again. Your best score gets saved.';
-    // Reuse the global auth gate for demo score save flow.
-  }
-
-  function resetTrade(){
-    entryLocked=false; entrySide=null; entryPrice=null; entryX=null; entryY=null; currentPnl=0;
-    entryTag.style.display='none'; floatingPnl.style.display='none';
-    renderPositionBox(); setButtonStates();
-  }
-
-  function tick(){
-    // Realistic DJIA tick: ~$5-20 per 700ms (DJIA daily range ~300pts, ~390 trading mins)
-    const move = (Math.random() - 0.46) * 18;
-    livePrice = Math.max(livePrice + move, 1);
-    const up = livePrice >= basePrice;
-
-    // Append to price history (keeps crosshair accurate)
-    priceHistory.push(livePrice);
-    if(priceHistory.length > 90) priceHistory.shift();
-
-    // Normalise pts from real priceHistory
-    const minP = Math.min(...priceHistory), maxP = Math.max(...priceHistory), rngP = maxP - minP || 1;
-    pts = priceHistory.map(p => ((p - minP) / rngP) * 80 + 10);
-
-    const pe = document.getElementById('pvPrice');
-    const ce = document.getElementById('pvChange');
-    pe.textContent = livePrice.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-    pe.style.color = up ? '#22c55e' : '#ef4444';
-    setTimeout(()=>{ pe.style.color = '#e8f0ff'; }, 220);
-    const pct = ((livePrice - basePrice) / basePrice * 100);
-    ce.textContent = (pct >= 0 ? '▲ +' : '▼ ') + Math.abs(pct).toFixed(2) + '%';
-    ce.style.color = pct >= 0 ? '#22c55e' : '#ef4444';
-    const d = new Date();
-    document.getElementById('pvUpdated').textContent = 'Updated ' + d.toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
-    draw();
-    if(entryLocked){ renderFloatingPnl(); renderPositionBox(); }
-    tickCounter++;
-  }
-
-  layer.addEventListener('mousemove', e=>showCrosshair(getChartPoint(e.clientX,e.clientY)));
-  layer.addEventListener('mouseleave', hideCrosshair);
-  layer.addEventListener('touchmove', e=>{if(!e.touches[0])return; showCrosshair(getChartPoint(e.touches[0].clientX,e.touches[0].clientY));},{passive:true});
-  layer.addEventListener('touchend', hideCrosshair);
-  buyBtn.addEventListener('click', ()=>openTrade('buy'));
-  sellBtn.addEventListener('click', ()=>openTrade('sell'));
-  closeTradeBtn.addEventListener('click', closeTrade);
-  outcomeContinueBtn.addEventListener('click', ()=>{outcome.style.display='none'; resetTrade(); openHomepageAuthGate('platform_entry');});
-  outcome.addEventListener('click', e=>{if(e.target===outcome){outcome.style.display='none'; resetTrade();}});
-
-  window.addEventListener('resize', draw);
-
-  // Defer first draw until the canvas parent has real dimensions
-  // (clientWidth=0 on first paint if section is below the fold)
-  function initDraw(){
-    if(canvas.parentElement && canvas.parentElement.clientWidth > 0){
-      draw();
-      renderPositionBox();
-      setButtonStates();
-      document.getElementById('pvUpdated').textContent = 'Updated just now';
-      if(window.ResizeObserver){
-        new ResizeObserver(()=>draw()).observe(canvas.parentElement);
-      }
-    } else {
-      requestAnimationFrame(initDraw);
-    }
-  }
-  requestAnimationFrame(initDraw);
-  setInterval(tick, 700);
-})();
-</script>
 
 </body>
 </html>
