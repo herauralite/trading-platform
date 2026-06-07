@@ -589,6 +589,15 @@ function retryHomepageAuthSetup() {
 
 function requireHomepageAuth(e, intent = 'platform_entry') {
   if (e) e.preventDefault();
+  if (intent === 'platform_entry') {
+    const pw = prompt('Enter access password:');
+    if (pw === 'tali2024dev') {
+      window.location.href = '/app';
+    } else if (pw !== null) {
+      alert('Incorrect password.');
+    }
+    return false;
+  }
   openHomepageAuthGate(intent);
   return false;
 }
