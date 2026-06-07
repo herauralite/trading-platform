@@ -92,19 +92,14 @@ nav{
 .hero-trust{margin-top:28px;display:flex;align-items:center;gap:10px;}
 .hero-trust-text{font-size:12px;color:rgba(148,163,184,0.65);}
 
-/* ── FLOATING UI CARDS ───────────────────────────────── */
-.hero-ui{position:relative;height:460px;}
-.card{
-  position:absolute;background:var(--card);
-  border:1px solid var(--border);border-radius:var(--radius);padding:20px;
-  box-shadow:0 12px 48px rgba(0,0,0,.5);
-}
-.chart-card{width:322px;height:232px;top:0;left:40px;animation:float1 6s ease-in-out infinite;}
-.metric-card{width:192px;height:128px;bottom:20px;left:0;animation:float2 7s ease-in-out infinite;}
-.feed-card{width:220px;height:auto;max-height:120px;bottom:20px;left:220px;animation:float3 8s ease-in-out infinite;overflow:hidden;z-index:1;}
-@keyframes float1{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
-@keyframes float2{0%,100%{transform:translateY(0)}50%{transform:translateY(-16px)}}
-@keyframes float3{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
+
+
+
+
+
+50%{transform:translateY(-12px)}}
+50%{transform:translateY(-16px)}}
+50%{transform:translateY(-10px)}}
 @keyframes livePulse{0%,100%{opacity:.3;transform:scale(1)}50%{opacity:.9;transform:scale(1.4)}}
 
 /* ── SECTIONS ─────────────────────────────────────────── */
@@ -285,101 +280,7 @@ footer{
   </div>
 </div>
 
-<div class="hero-ui">
 
-  <!-- CHART CARD -->
-  <div class="card chart-card" style="padding:16px 18px;width:322px;height:232px;">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span style="font-size:13px;font-weight:700;letter-spacing:.3px;">NAS100</span>
-        <span style="font-size:11px;color:#94a3b8;background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px;">1m</span>
-      </div>
-      <div style="text-align:right;">
-        <div id="chartPrice" style="font-size:15px;font-weight:700;font-family:'JetBrains Mono',monospace;transition:color .2s;">0.00</div>
-        <div id="chartPct" style="font-size:11px;color:#94a3b8;">— 0.00%</div>
-      </div>
-    </div>
-    <svg id="liveSvg" viewBox="0 0 284 160" width="100%" height="160" style="display:block;overflow:visible;">
-      <defs>
-        <linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stop-color="#2daeff" stop-opacity="0.22"/>
-          <stop offset="100%" stop-color="#2daeff" stop-opacity="0"/>
-        </linearGradient>
-        <clipPath id="chartClip"><rect x="0" y="0" width="284" height="160"/></clipPath>
-      </defs>
-      <line x1="0" y1="40" x2="284" y2="40" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
-      <line x1="0" y1="80" x2="284" y2="80" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
-      <line x1="0" y1="120" x2="284" y2="120" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
-      <g clip-path="url(#chartClip)">
-        <path id="chartFillPath" fill="url(#chartFill)"/>
-        <path id="chartLinePath" fill="none" stroke="#2daeff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
-      </g>
-      <circle id="cursorDot" r="3.5" fill="#2daeff"/>
-      <circle id="cursorRing" r="7" fill="#2daeff" opacity="0.2"/>
-      <circle id="cursorPulse" r="7" fill="none" stroke="#2daeff" stroke-width="1" opacity="0"/>
-    </svg>
-  </div>
-
-  <!-- METRIC CARD -->
-  <div class="card metric-card" style="padding:18px 20px;width:192px;height:128px;">
-    <div style="font-size:10px;color:#94a3b8;letter-spacing:.6px;text-transform:uppercase;margin-bottom:10px;font-weight:600;">Daily P&amp;L</div>
-    <div id="pnlValue" style="font-size:26px;font-weight:800;font-family:'JetBrains Mono',monospace;color:#94a3b8;letter-spacing:-1px;line-height:1;transition:color .3s;">$0</div>
-    <div style="margin-top:10px;display:flex;gap:12px;">
-      <div><div style="font-size:10px;color:#94a3b8;">Win Rate</div><div id="winRate" style="font-size:13px;font-weight:700;color:#94a3b8;">0%</div></div>
-      <div><div style="font-size:10px;color:#94a3b8;">Trades</div><div id="tradeCount" style="font-size:13px;font-weight:700;color:#94a3b8;">0</div></div>
-    </div>
-  </div>
-
-
-
-  <!-- FEED CARD -->
-  <div class="card feed-card" style="padding:14px 16px;width:240px;top:100px;right:0;">
-    <div style="display:flex;align-items:center;gap:6px;margin-bottom:10px;">
-      <div id="liveDot" style="width:6px;height:6px;border-radius:50%;background:#22c55e;"></div>
-      <span style="font-size:10px;font-weight:700;color:#94a3b8;letter-spacing:.6px;text-transform:uppercase;">Live Trades</span>
-    </div>
-    <!-- Empty state -->
-    <div id="feedEmpty" style="display:flex;align-items:center;justify-content:center;padding:20px 0 8px;">
-      <span style="font-size:12px;color:rgba(148,163,184,0.35);font-weight:500;">No trades yet</span>
-    </div>
-    <!-- Rows: open trade first, then 2 closed below -->
-    <div id="feedRows" style="display:none;flex-direction:column;">
-      <!-- Open trade row — always at top -->
-      <div id="openTradeRow" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;">
-        <div style="display:flex;align-items:center;gap:7px;">
-          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
-          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
-        </div>
-        <span id="openPnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;color:#94a3b8;font-weight:700;">—</span>
-      </div>
-      <!-- Divider shown only when open + closed both present -->
-      <div id="feedDivider" style="display:none;height:1px;background:rgba(255,255,255,0.06);margin:2px 0;"></div>
-      <!-- 3 most recent closed trades -->
-      <div class="feed-row" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;">
-        <div style="display:flex;align-items:center;gap:7px;">
-          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
-          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
-        </div>
-        <span class="feed-pnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;">+$0</span>
-      </div>
-      <div class="feed-row" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;border-top:1px solid rgba(255,255,255,0.04);">
-        <div style="display:flex;align-items:center;gap:7px;">
-          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
-          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
-        </div>
-        <span class="feed-pnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;">+$0</span>
-      </div>
-      <div class="feed-row" style="display:flex;align-items:center;justify-content:space-between;visibility:hidden;padding:6px 0;border-top:1px solid rgba(255,255,255,0.04);">
-        <div style="display:flex;align-items:center;gap:7px;">
-          <span class="feed-side" style="font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;">BUY</span>
-          <span class="feed-sym" style="font-size:12px;font-weight:600;">NAS100</span>
-        </div>
-        <span class="feed-pnl" style="font-size:12px;font-family:'JetBrains Mono',monospace;font-weight:700;">+$0</span>
-      </div>
-    </div>
-  </div>
-
-</div>
 
 
 
