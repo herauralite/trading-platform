@@ -253,7 +253,7 @@ footer{
     <a href="#how-it-works">How It Works</a>
     <a href="#pricing">Pricing</a>
   </div>
-  <a class="nav-cta" href="#" onclick="requireHomepageAuth(event, 'cta')">Get Early Access</a>
+  <a class="nav-cta" href="#" onclick="openHomepageAuthGate('platform_entry');return false;">Get Early Access</a>
 </div>
 </nav>
 
@@ -398,17 +398,29 @@ footer{
 </div>
 
 <div id="homepageAuthGate" style="display:none;position:fixed;inset:0;z-index:1650;align-items:center;justify-content:center;padding:20px;">
-  <div style="position:absolute;inset:0;background:rgba(2,6,14,0.86);backdrop-filter:blur(12px);" onclick="closeHomepageAuthGate()"></div>
-  <div id="homepageAuthCard" style="position:relative;z-index:1;max-width:430px;width:100%;border-radius:20px;background:linear-gradient(180deg,rgba(10,17,29,0.98),rgba(6,11,21,0.98));border:1px solid rgba(255,255,255,0.1);padding:26px;box-shadow:0 26px 70px rgba(0,0,0,0.44);">
-    <button onclick="closeHomepageAuthGate()" style="position:absolute;top:14px;right:14px;width:30px;height:30px;border-radius:8px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:rgba(232,240,255,0.6);cursor:pointer;">✕</button>
-    <div style="display:inline-flex;align-items:center;gap:8px;padding:6px 11px;border-radius:999px;background:rgba(45,174,255,0.12);border:1px solid rgba(45,174,255,0.26);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:#8bd8ff;">Telegram Sign-in Required</div>
-    <h3 id="homepageAuthTitle" style="margin-top:14px;font-size:25px;line-height:1.1;letter-spacing:-.04em;color:#f8fbff;">Continue to platform</h3>
-    <p id="homepageAuthCopy" style="margin-top:10px;font-size:14px;line-height:1.6;color:rgba(232,240,255,0.74);">Sign in with Telegram to continue.</p>
-    <div id="homepageAuthError" style="display:none;margin-top:12px;padding:11px 12px;border-radius:10px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);font-size:12px;line-height:1.5;color:#fca5a5;"></div>
-    <pre id="homepageAuthDiag" style="display:none;margin-top:10px;padding:10px 12px;border-radius:10px;background:rgba(45,174,255,0.1);border:1px solid rgba(45,174,255,0.28);font-size:11px;line-height:1.45;color:#bae6fd;white-space:pre-wrap;text-align:left;"></pre>
-    <div id="homepageAuthWidgetWrap" style="margin-top:16px;display:flex;justify-content:center;min-height:48px;align-items:center;"></div>
-    <button id="homepageAuthRetryBtn" onclick="retryHomepageAuthSetup()" style="display:none;margin-top:14px;width:100%;padding:11px 14px;border-radius:10px;border:1px solid rgba(45,174,255,0.4);background:rgba(45,174,255,0.12);color:#bae6fd;font-size:13px;font-weight:700;cursor:pointer;">Retry Telegram setup</button>
-    <div style="margin-top:12px;font-size:12px;color:rgba(148,163,184,0.85);text-align:center;">Once hosting sends traffic to <b>www.talitrade.com</b>, sign-in and app entry will work consistently.</div>
+  <div style="position:absolute;inset:0;background:rgba(2,6,14,0.88);backdrop-filter:blur(14px);" onclick="closeHomepageAuthGate()"></div>
+  <div id="homepageAuthCard" style="position:relative;z-index:1;max-width:420px;width:100%;border-radius:22px;background:linear-gradient(160deg,#0d1929,#08111e);border:1px solid rgba(45,174,255,0.15);padding:38px;box-shadow:0 60px 120px rgba(0,0,0,0.7),inset 0 1px 0 rgba(255,255,255,0.04);">
+    <div style="position:absolute;top:-80px;right:-60px;width:240px;height:240px;background:radial-gradient(circle,rgba(45,174,255,0.08),transparent 68%);pointer-events:none;"></div>
+    <button onclick="closeHomepageAuthGate()" style="position:absolute;top:16px;right:16px;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
+
+    <div style="display:inline-flex;align-items:center;gap:7px;background:rgba(45,174,255,0.08);border:1px solid rgba(45,174,255,0.18);border-radius:999px;padding:5px 12px 5px 8px;margin-bottom:24px;">
+      <div style="width:7px;height:7px;border-radius:50%;background:#2daeff;box-shadow:0 0 8px #2daeff88;animation:livePulse 1.6s ease-in-out infinite;"></div>
+      <span style="font-size:11px;font-weight:700;color:#7dd3fc;letter-spacing:.8px;text-transform:uppercase;">Beta Access</span>
+    </div>
+
+    <h2 style="font-size:24px;font-weight:800;color:#f0f8ff;letter-spacing:-.6px;line-height:1.1;margin-bottom:8px;">Enter access password</h2>
+    <p style="font-size:14px;color:rgba(148,163,184,0.85);line-height:1.6;margin-bottom:26px;">TaliTrade is currently in private beta. Enter your password to continue.</p>
+
+    <label style="display:block;font-size:10px;font-weight:800;color:rgba(148,163,184,0.6);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Password</label>
+    <div id="pwInputWrap" style="display:flex;align-items:center;background:rgba(0,0,0,0.3);border:1.5px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;transition:border-color .2s,box-shadow .2s;margin-bottom:10px;">
+      <input id="pwInput" type="password" placeholder="••••••••••••" autocomplete="off" style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f0ff;font-family:'JetBrains Mono',monospace;caret-color:#2daeff;" onkeydown="if(event.key==='Enter')checkPassword()"/>
+    </div>
+    <div id="pwError" style="font-size:12px;color:#f87171;margin-bottom:14px;display:none;">Incorrect password. Try again.</div>
+
+    <button onclick="checkPassword()" style="width:100%;padding:15px;background:linear-gradient(135deg,#60c8ff,#2daeff);border:none;border-radius:12px;font-size:15px;font-weight:800;color:#020e1c;cursor:pointer;font-family:'Inter',sans-serif;transition:opacity .15s;">
+      Continue →
+    </button>
+    <p style="text-align:center;margin-top:12px;font-size:12px;color:rgba(100,116,139,0.7);">Beta access only. Apply via waitlist to get access.</p>
   </div>
 </div>
 
@@ -554,20 +566,13 @@ function getHomepageAuthCopy(intent) {
 }
 
 function openHomepageAuthGate(intent = 'cta') {
-  homepageDebugMode = isHomepageAuthDebugMode();
-  homepageAuthIntent = intent;
   const modal = document.getElementById('homepageAuthGate');
-  const title = document.getElementById('homepageAuthTitle');
-  const copy = document.getElementById('homepageAuthCopy');
-  if (title) title.textContent = 'Continue with Telegram';
-  if (copy) copy.textContent = getHomepageAuthCopy(intent);
-  setHomepageAuthError('');
   if (modal) {
     modal.style.display = 'flex';
     modal.classList.add('open');
     document.body.style.overflow = 'hidden';
+    setTimeout(()=>{ const i=document.getElementById('pwInput'); if(i) i.focus(); }, 200);
   }
-  ensureHomepageAuthWidget();
 }
 
 function closeHomepageAuthGate() {
@@ -589,17 +594,24 @@ function retryHomepageAuthSetup() {
 
 function requireHomepageAuth(e, intent = 'platform_entry') {
   if (e) e.preventDefault();
-  if (intent === 'platform_entry') {
-    const pw = prompt('Enter access password:');
-    if (pw === 'tali2024dev') {
-      window.location.href = '/app';
-    } else if (pw !== null) {
-      alert('Incorrect password.');
-    }
-    return false;
-  }
-  openHomepageAuthGate(intent);
+  openHomepageAuthGate('platform_entry');
   return false;
+}
+
+function checkPassword(){
+  const val = document.getElementById('pwInput').value;
+  const err = document.getElementById('pwError');
+  const wrap = document.getElementById('pwInputWrap');
+  if(val === 'tali2024dev'){
+    err.style.display = 'none';
+    closeHomepageAuthGate();
+    window.location.href = '/app';
+  } else {
+    err.style.display = 'block';
+    wrap.style.borderColor = 'rgba(239,68,68,0.5)';
+    document.getElementById('pwInput').value = '';
+    setTimeout(()=>{ wrap.style.borderColor = ''; }, 1500);
+  }
 }
 
 window.onHomepageTelegramAuth = function(user){
