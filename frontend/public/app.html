@@ -2359,7 +2359,7 @@ function renderAddAccountFlow(){
 
   if(addAcctFlowState.step===1){
     stepEl.textContent='Step 1 · Select broker';
-    const BROKER_FAVICONS={fundingpips:'https://fundingpips.com/favicon.ico',tradelocker:'https://tradelocker.com/favicon.ico',mt5:'https://www.metatrader5.com/favicon.ico'};
+    const BROKER_FAVICONS={fundingpips:'https://www.google.com/s2/favicons?domain=fundingpips.com&sz=64',tradelocker:'https://www.google.com/s2/favicons?domain=tradelocker.com&sz=64',mt5:'https://www.google.com/s2/favicons?domain=metatrader5.com&sz=64'};
     function brokerCard(key){
       const p=ADD_ACCOUNT_PATHS[key];
       const isSelected=addAcctFlowState.path===key;
@@ -2399,7 +2399,7 @@ function renderAddAccountFlow(){
       content=`<div style="background:#0d1a11;border:1px solid rgba(34,197,94,0.2);border-radius:16px;padding:20px 18px;">
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid rgba(34,197,94,0.12)">
           <div style="width:40px;height:40px;border-radius:10px;background:#0a1a0d;border:1px solid rgba(34,197,94,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">
-            <img src="https://fundingpips.com/favicon.ico" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none'" alt="FundingPips">
+            <img src="https://www.google.com/s2/favicons?domain=fundingpips.com&sz=64" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none'" alt="FundingPips">
           </div>
           <div style="flex:1">
             <div style="font-weight:700;font-size:14px;color:#e8f0ff">FundingPips</div>
@@ -2434,7 +2434,7 @@ function renderAddAccountFlow(){
     content=`<div style="background:${p.portalBg};border:1px solid ${p.portalBorder};border-radius:16px;padding:20px 18px;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid ${p.portalBorder}">
         <div style="width:40px;height:40px;border-radius:10px;background:${p.logoBg};border:1px solid ${p.portalBorder};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">
-          <img src="https://www.metatrader5.com/favicon.ico" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none'" alt="MetaTrader 5">
+          <img src="https://www.google.com/s2/favicons?domain=metatrader5.com&sz=64" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none'" alt="MetaTrader 5">
         </div>
         <div style="flex:1"><div style="font-weight:700;font-size:14px;color:#e8f0ff">${p.title}</div><div style="font-size:11px;color:rgba(148,163,184,0.7);margin-top:1px">Bridge pairing flow</div></div>
       </div>
@@ -2446,7 +2446,7 @@ function renderAddAccountFlow(){
     content=`<div style="background:${p.portalBg};border:1px solid ${p.portalBorder};border-radius:16px;padding:20px 18px;">
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid ${p.portalBorder}">
         <div style="width:40px;height:40px;border-radius:10px;background:${p.logoBg};border:1px solid ${p.portalBorder};display:flex;align-items:center;justify-content:center;flex-shrink:0;overflow:hidden">
-          <img src="https://tradelocker.com/favicon.ico" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none'" alt="TradeLocker">
+          <img src="https://www.google.com/s2/favicons?domain=tradelocker.com&sz=64" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none'" alt="TradeLocker">
         </div>
         <div style="flex:1"><div style="font-weight:700;font-size:14px;color:#e8f0ff">${p.title}</div><div style="font-size:11px;color:rgba(148,163,184,0.7);margin-top:1px">Secure login portal</div></div>
         <div style="display:flex;align-items:center;gap:5px">
