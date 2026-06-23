@@ -33,92 +33,280 @@ function mt5ProviderState(pairing) {
   return 'bridge_required'
 }
 
-// ─── FundingPips Prop Firm Flow ───────────────────────────────────────────────
+// Broker metadata for the picker UI
+const BROKER_META = {
+  fundingpips_prop: {
+    name: 'FundingPips',
+    tagline: 'Prop Firm',
+    badge: 'PROP FIRM',
+    badgeColor: '#1a6b3a',
+    badgeBg: 'rgba(34,197,94,0.12)',
+    accent: '#22c55e',
+    portalBg: '#0d1a11',
+    portalBorder: 'rgba(34,197,94,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#0d1a11"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="16" fontWeight="800" fill="#22c55e" fontFamily="Inter, sans-serif">FP</text>
+      </svg>
+    ),
+  },
+  tradelocker_api: {
+    name: 'TradeLocker',
+    tagline: 'API Connection',
+    badge: 'LIVE',
+    badgeColor: '#2AABEE',
+    badgeBg: 'rgba(42,171,238,0.12)',
+    accent: '#2AABEE',
+    portalBg: '#0d1520',
+    portalBorder: 'rgba(42,171,238,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#0d1520"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="14" fontWeight="800" fill="#2AABEE" fontFamily="Inter, sans-serif">TL</text>
+      </svg>
+    ),
+  },
+  mt5_bridge: {
+    name: 'MetaTrader 5',
+    tagline: 'MT5 Bridge',
+    badge: 'BRIDGE',
+    badgeColor: '#a78bfa',
+    badgeBg: 'rgba(167,139,250,0.12)',
+    accent: '#a78bfa',
+    portalBg: '#110d1a',
+    portalBorder: 'rgba(167,139,250,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#110d1a"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="13" fontWeight="800" fill="#a78bfa" fontFamily="Inter, sans-serif">MT5</text>
+      </svg>
+    ),
+  },
+  alpaca_api: {
+    name: 'Alpaca',
+    tagline: 'API Connection',
+    badge: 'BETA',
+    badgeColor: '#f59e0b',
+    badgeBg: 'rgba(245,158,11,0.12)',
+    accent: '#f59e0b',
+    portalBg: '#1a1500',
+    portalBorder: 'rgba(245,158,11,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#1a1500"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="13" fontWeight="800" fill="#f59e0b" fontFamily="Inter, sans-serif">ALP</text>
+      </svg>
+    ),
+  },
+  oanda_api: {
+    name: 'OANDA',
+    tagline: 'API Connection',
+    badge: 'BETA',
+    badgeColor: '#f59e0b',
+    badgeBg: 'rgba(245,158,11,0.12)',
+    accent: '#f59e0b',
+    portalBg: '#1a1500',
+    portalBorder: 'rgba(245,158,11,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#1a1500"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="11" fontWeight="800" fill="#f59e0b" fontFamily="Inter, sans-serif">OAN</text>
+      </svg>
+    ),
+  },
+  binance_api: {
+    name: 'Binance',
+    tagline: 'API Connection',
+    badge: 'BETA',
+    badgeColor: '#f59e0b',
+    badgeBg: 'rgba(245,158,11,0.12)',
+    accent: '#f59e0b',
+    portalBg: '#1a1500',
+    portalBorder: 'rgba(245,158,11,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#1a1500"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="11" fontWeight="800" fill="#f59e0b" fontFamily="Inter, sans-serif">BNB</text>
+      </svg>
+    ),
+  },
+  tradingview_webhook: {
+    name: 'TradingView',
+    tagline: 'Webhook Signals',
+    badge: 'SIGNALS',
+    badgeColor: '#2AABEE',
+    badgeBg: 'rgba(42,171,238,0.12)',
+    accent: '#2AABEE',
+    portalBg: '#0d1520',
+    portalBorder: 'rgba(42,171,238,0.2)',
+    logo: (
+      <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+        <rect width="36" height="36" rx="8" fill="#0d1520"/>
+        <text x="18" y="24" textAnchor="middle" fontSize="11" fontWeight="800" fill="#2AABEE" fontFamily="Inter, sans-serif">TV</text>
+      </svg>
+    ),
+  },
+}
 
-function FundingPipsPropFlow({ draft, setDraft, discoveredAccounts, isDiscovering, discoverError }) {
+// Broker card picker — step 1
+function BrokerPicker({ providers, selectedProviderType, setSelectedProviderType }) {
   return (
-    <div className="prop-firm-flow">
-      <div className="prop-firm-header">
-        <div className="prop-firm-icon">FP</div>
-        <div>
-          <p className="hint">
-            Enter your FundingPips portal credentials. TaliTrade will authenticate
-            on your behalf, discover all your funded accounts, and extract the
-            MatchTrader connection details automatically.
-          </p>
-          <p className="hint" style={{ marginTop: 4 }}>
-            Your credentials are encrypted server-side and never stored in plain text.
-          </p>
-        </div>
-      </div>
-
-      <div className="row">
-        <input
-          type="email"
-          placeholder="FundingPips email"
-          value={draft.email || ''}
-          onChange={(e) => setDraft((prev) => ({ ...prev, email: e.target.value }))}
-          autoComplete="email"
-          required
-        />
-      </div>
-      <div className="row">
-        <input
-          type="password"
-          placeholder="FundingPips password"
-          value={draft.password || ''}
-          onChange={(e) => setDraft((prev) => ({ ...prev, password: e.target.value }))}
-          autoComplete="current-password"
-          required
-        />
-      </div>
-      <div className="row">
-        <input
-          placeholder="Label (optional — e.g. My $100K Account)"
-          value={draft.display_label || ''}
-          onChange={(e) => setDraft((prev) => ({ ...prev, display_label: e.target.value }))}
-        />
-      </div>
-
-      {isDiscovering ? (
-        <div className="prop-firm-discovering">
-          <span className="discovering-spinner" />
-          <span className="hint">Authenticating and discovering accounts…</span>
-        </div>
-      ) : null}
-
-      {discoverError ? (
-        <p className="error-text">{discoverError}</p>
-      ) : null}
-
-      {discoveredAccounts && discoveredAccounts.length > 0 ? (
-        <div className="discovered-accounts">
-          <p className="hint success-text">
-            ✓ {discoveredAccounts.length} account{discoveredAccounts.length !== 1 ? 's' : ''} discovered
-          </p>
-          <div className="meta-grid">
-            {discoveredAccounts.map((acct) => (
-              <div key={acct.external_account_id} className="meta-card">
-                <span className="hint">{acct.display_label}</span>
-                <strong>{acct.external_account_id}</strong>
-                {acct.account_type ? <span className="hint">{acct.account_type}</span> : null}
-                {acct.account_size ? <span className="hint">${acct.account_size.toLocaleString()}</span> : null}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      {providers.map((provider) => {
+        const meta = BROKER_META[provider.connectorType] || {}
+        const isSelected = provider.connectorType === selectedProviderType
+        return (
+          <button
+            key={provider.connectorType}
+            type="button"
+            onClick={() => setSelectedProviderType(provider.connectorType)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 14,
+              padding: '14px 16px',
+              background: isSelected ? 'rgba(42,171,238,0.07)' : 'rgba(255,255,255,0.03)',
+              border: isSelected ? `1px solid ${meta.accent || '#2AABEE'}` : '1px solid rgba(255,255,255,0.07)',
+              borderRadius: 12,
+              cursor: 'pointer',
+              textAlign: 'left',
+              transition: 'all 0.15s',
+              width: '100%',
+            }}
+          >
+            {meta.logo || null}
+            <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                <span style={{ fontWeight: 700, fontSize: 15, color: '#e8f0ff' }}>{meta.name || provider.title}</span>
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  letterSpacing: '0.8px',
+                  padding: '2px 7px',
+                  borderRadius: 99,
+                  color: meta.badgeColor || '#2AABEE',
+                  background: meta.badgeBg || 'rgba(42,171,238,0.12)',
+                }}>
+                  {meta.badge || provider.badge}
+                </span>
               </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      <p className="hint" style={{ marginTop: 8 }}>
-        After connecting, your accounts appear in the Accounts tab. MatchTrader
-        sessions are established automatically — no further setup needed.
-      </p>
+              <span style={{ fontSize: 13, color: 'rgba(148,163,184,0.75)' }}>{meta.tagline || provider.description}</span>
+            </div>
+            {isSelected && (
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <circle cx="9" cy="9" r="8" stroke="#2AABEE" strokeWidth="1.5"/>
+                <path d="M5.5 9l2.5 2.5L12.5 6" stroke="#2AABEE" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-// ─── Main Modal ───────────────────────────────────────────────────────────────
+// Branded portal wrapper for credentials steps
+function BrokerPortal({ connectorType, children }) {
+  const meta = BROKER_META[connectorType] || {}
+  return (
+    <div style={{
+      background: meta.portalBg || '#0d1520',
+      border: `1px solid ${meta.portalBorder || 'rgba(42,171,238,0.2)'}`,
+      borderRadius: 16,
+      padding: '24px 20px',
+      marginTop: 4,
+    }}>
+      {/* Portal header */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, paddingBottom: 16, borderBottom: `1px solid ${meta.portalBorder || 'rgba(42,171,238,0.1)'}` }}>
+        {meta.logo}
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 15, color: '#e8f0ff' }}>{meta.name}</div>
+          <div style={{ fontSize: 12, color: 'rgba(148,163,184,0.7)', marginTop: 1 }}>Secure login portal</div>
+        </div>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M3 5V4a3 3 0 016 0v1" stroke={meta.accent || '#2AABEE'} strokeWidth="1.3" strokeLinecap="round"/>
+            <rect x="1.5" y="5" width="9" height="6" rx="1.5" fill={meta.accent || '#2AABEE'} opacity="0.15" stroke={meta.accent || '#2AABEE'} strokeWidth="1.2"/>
+          </svg>
+          <span style={{ fontSize: 11, color: meta.accent || '#2AABEE', fontWeight: 600 }}>Encrypted</span>
+        </div>
+      </div>
+      {children}
+    </div>
+  )
+}
 
+// FundingPips Prop Firm Flow
+function FundingPipsPropFlow({ draft, setDraft, discoveredAccounts, isDiscovering, discoverError }) {
+  return (
+    <BrokerPortal connectorType="fundingpips_prop">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <p className="hint" style={{ marginBottom: 4 }}>
+          Enter your FundingPips portal credentials. TaliTrade will authenticate on your behalf, discover all your funded accounts, and extract connection details automatically.
+        </p>
+
+        <input
+          type="email"
+          placeholder="Email address"
+          value={draft.email || ''}
+          onChange={(e) => setDraft((prev) => ({ ...prev, email: e.target.value }))}
+          autoComplete="email"
+          required
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 8, padding: '11px 14px', color: '#e8f0ff', fontSize: 14, outline: 'none', width: '100%' }}
+        />
+        <input
+          type="password"
+          placeholder="Password"
+          value={draft.password || ''}
+          onChange={(e) => setDraft((prev) => ({ ...prev, password: e.target.value }))}
+          autoComplete="current-password"
+          required
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 8, padding: '11px 14px', color: '#e8f0ff', fontSize: 14, outline: 'none', width: '100%' }}
+        />
+        <input
+          placeholder="Label (optional — e.g. My $100K Account)"
+          value={draft.display_label || ''}
+          onChange={(e) => setDraft((prev) => ({ ...prev, display_label: e.target.value }))}
+          style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: 8, padding: '11px 14px', color: '#e8f0ff', fontSize: 14, outline: 'none', width: '100%' }}
+        />
+
+        <p className="hint" style={{ fontSize: 11, color: 'rgba(148,163,184,0.55)', marginTop: 2 }}>
+          Your credentials are encrypted server-side and never stored in plain text.
+        </p>
+
+        {isDiscovering ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 0' }}>
+            <span className="discovering-spinner" />
+            <span className="hint">Authenticating and discovering accounts…</span>
+          </div>
+        ) : null}
+
+        {discoverError ? <p className="error-text">{discoverError}</p> : null}
+
+        {discoveredAccounts && discoveredAccounts.length > 0 ? (
+          <div className="discovered-accounts">
+            <p className="hint success-text">
+              ✔ {discoveredAccounts.length} account{discoveredAccounts.length !== 1 ? 's' : ''} discovered
+            </p>
+            <div className="meta-grid">
+              {discoveredAccounts.map((acct) => (
+                <div key={acct.external_account_id} className="meta-card">
+                  <span className="hint">{acct.display_label}</span>
+                  <strong>{acct.external_account_id}</strong>
+                  {acct.account_type ? <span className="hint">{acct.account_type}</span> : null}
+                  {acct.account_size ? <span className="hint">${acct.account_size.toLocaleString()}</span> : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </BrokerPortal>
+  )
+}
+
+// Main Modal
 function AddAccountFlowModal({
   isOpen,
   providers,
@@ -143,12 +331,16 @@ function AddAccountFlowModal({
   const [mt5IsCreatingToken, setMt5IsCreatingToken] = useState(false)
   const [copiedField, setCopiedField] = useState('')
 
-  // Prop firm state
   const [discoveredAccounts, setDiscoveredAccounts] = useState(null)
   const [isDiscovering, setIsDiscovering] = useState(false)
   const [discoverError, setDiscoverError] = useState('')
 
-  const selectedProvider = providers.find((provider) => provider.connectorType === selectedProviderType) || null
+  // Filter out legacy/non-broker connectors
+  const brokerProviders = providers.filter(
+    (p) => !['fundingpips_extension', 'csv_import', 'manual'].includes(p.connectorType)
+  )
+
+  const selectedProvider = brokerProviders.find((p) => p.connectorType === selectedProviderType) || null
   const isMt5 = selectedProvider?.connectorType === 'mt5_bridge'
   const isFundingPipsProp = selectedProvider?.connectorType === 'fundingpips_prop'
 
@@ -237,12 +429,10 @@ function AddAccountFlowModal({
   }
 
   async function submitCurrentProvider() {
-    // For prop firm flows, trigger account discovery first if not yet done
     if (isFundingPipsProp && !discoveredAccounts) {
       setIsDiscovering(true)
       setDiscoverError('')
       try {
-        // onSubmit handles the actual API call — for prop firm it returns discovered accounts
         const result = await onSubmit(selectedProvider, { preview: false })
         if (result?.accounts) {
           setDiscoveredAccounts(result.accounts)
@@ -269,7 +459,6 @@ function AddAccountFlowModal({
     }
   }
 
-  // Derive the submit button label
   function submitLabel() {
     if (isSubmitting || isDiscovering) return 'Working…'
     if (isFundingPipsProp) {
@@ -288,44 +477,29 @@ function AddAccountFlowModal({
         <div className="row modal-header-row">
           <div>
             <h2>Add Account</h2>
-            <p className="hint">Choose a broker/platform, complete the matching flow, and continue in Accounts.</p>
+            <p className="hint">Select your broker or prop firm to get started.</p>
           </div>
           <button type="button" className="secondary-button" onClick={onClose}>Close</button>
         </div>
 
-        <div className="provider-grid">
-          {providers.map((provider) => {
-            const isSelected = provider.connectorType === selectedProviderType
-            const isPropFirm = PROP_FIRM_CONNECTORS.includes(provider.connectorType)
-            return (
-              <button
-                key={provider.connectorType}
-                type="button"
-                className={`provider-card${isSelected ? ' selected' : ''}${isPropFirm ? ' provider-card--prop-firm' : ''}`}
-                onClick={() => setSelectedProviderType(provider.connectorType)}
-              >
-                <div className="row">
-                  <strong>{provider.title}</strong>
-                  <span className={`pill${isPropFirm ? ' pill--prop' : ''}`}>{provider.badge}</span>
-                </div>
-                <p className="hint">{provider.description}</p>
-                {provider.notes ? <p className="hint">Catalog note: {provider.notes}</p> : null}
-              </button>
-            )
-          })}
-        </div>
+        {/* Step 1 — Broker picker */}
+        <BrokerPicker
+          providers={brokerProviders}
+          selectedProviderType={selectedProviderType}
+          setSelectedProviderType={setSelectedProviderType}
+        />
 
+        {/* Step 2 — Selected broker flow */}
         {selectedProvider ? (
           <form
             className="card add-account-form"
+            style={{ marginTop: 16 }}
             onSubmit={(event) => {
               event.preventDefault()
               void submitCurrentProvider()
             }}
           >
-            <h3>{selectedProvider.title}</h3>
-
-            {/* ── FundingPips Prop Firm Flow ── */}
+            {/* FundingPips Prop Firm */}
             {isFundingPipsProp ? (
               <FundingPipsPropFlow
                 draft={draft}
@@ -336,9 +510,9 @@ function AddAccountFlowModal({
               />
             ) : null}
 
-            {/* ── MT5 Bridge Flow (unchanged) ── */}
+            {/* MT5 Bridge Flow — unchanged */}
             {isMt5 ? (
-              <>
+              <BrokerPortal connectorType="mt5_bridge">
                 <p className="hint mt5-step-label">{stepLabel(mt5Step)}</p>
 
                 {mt5Step === 1 ? (
@@ -359,29 +533,12 @@ function AddAccountFlowModal({
                   <div className="mt5-wizard-block">
                     <p className="hint">Enter MT5 connection info used by your bridge setup.</p>
                     <div className="row">
-                      <input
-                        placeholder="Account ID"
-                        value={draft.external_account_id}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, external_account_id: event.target.value }))}
-                        required
-                      />
-                      <input
-                        placeholder="Display label"
-                        value={draft.display_label}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
-                      />
+                      <input placeholder="Account ID" value={draft.external_account_id} onChange={(event) => setDraft((prev) => ({ ...prev, external_account_id: event.target.value }))} required />
+                      <input placeholder="Display label" value={draft.display_label} onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))} />
                     </div>
                     <div className="row">
-                      <input
-                        placeholder="MT5 server (optional but recommended)"
-                        value={draft.mt5_server}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, mt5_server: event.target.value }))}
-                      />
-                      <input
-                        placeholder="Bridge URL (optional metadata only)"
-                        value={draft.bridge_url}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, bridge_url: event.target.value }))}
-                      />
+                      <input placeholder="MT5 server (optional but recommended)" value={draft.mt5_server} onChange={(event) => setDraft((prev) => ({ ...prev, mt5_server: event.target.value }))} />
+                      <input placeholder="Bridge URL (optional metadata only)" value={draft.bridge_url} onChange={(event) => setDraft((prev) => ({ ...prev, bridge_url: event.target.value }))} />
                     </div>
                     <div className="row">
                       <button type="button" className="secondary-button" onClick={() => setMt5Step(1)}>Back</button>
@@ -437,9 +594,7 @@ function AddAccountFlowModal({
                     {mt5PairingError ? <p className="error-text">{mt5PairingError}</p> : null}
                     <div className="row">
                       <button type="button" className="secondary-button" onClick={() => setMt5Step(2)}>Edit info</button>
-                      <button type="button" className="secondary-button" onClick={() => void runMt5PairingCheck()} disabled={mt5IsChecking}>
-                        {mt5IsChecking ? 'Refreshing…' : 'Refresh pairing state'}
-                      </button>
+                      <button type="button" className="secondary-button" onClick={() => void runMt5PairingCheck()} disabled={mt5IsChecking}>{mt5IsChecking ? 'Refreshing…' : 'Refresh pairing state'}</button>
                       <button type="button" className="secondary-button" onClick={() => void refreshRegistrationStatus()}>Load bridge status</button>
                       <button type="button" onClick={() => setMt5Step(5)} disabled={!canGoToMt5Confirm}>Continue</button>
                     </div>
@@ -463,47 +618,16 @@ function AddAccountFlowModal({
                 ) : null}
 
                 <p className="hint">Step 6 happens after confirm: you are returned to <span className="mono">/app/accounts</span> with success focus.</p>
-              </>
+              </BrokerPortal>
             ) : null}
 
-            {/* ── FundingPips Extension (legacy) ── */}
-            {selectedProvider.connectorType === 'fundingpips_extension' ? (
-              <>
-                <p className="hint">Enter your FundingPips account ID — the numeric ID shown in your MTR dashboard (e.g. <span className="mono">1917136</span>). The extension will auto-link once you open FundingPips in a new tab.</p>
-                <div className="row">
-                  <input
-                    placeholder="Account ID (e.g. 1917136)"
-                    value={draft.external_account_id}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, external_account_id: event.target.value.replace(/\D/g, '') }))}
-                    inputMode="numeric"
-                    required
-                  />
-                  <input
-                    placeholder="Display label (optional)"
-                    value={draft.display_label}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
-                  />
-                </div>
-                <p className="hint">After adding, open <span className="mono">mtr-platform.fundingpips.com</span> with the extension active — data syncs automatically.</p>
-              </>
-            ) : null}
-
-            {/* ── TradingView Webhook ── */}
+            {/* TradingView Webhook */}
             {selectedProvider.connectorType === 'tradingview_webhook' ? (
-              <>
+              <BrokerPortal connectorType="tradingview_webhook">
                 <p className="hint">Create a TradingView webhook connection. Paste this webhook URL into your TradingView alert. Status stays <strong>Awaiting first alert</strong> until a real event arrives.</p>
                 <div className="row">
-                  <input
-                    placeholder="Connection label"
-                    value={draft.display_label}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
-                    required
-                  />
-                  <input
-                    placeholder="Optional account alias"
-                    value={draft.account_alias || ''}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
-                  />
+                  <input placeholder="Connection label" value={draft.display_label} onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))} required />
+                  <input placeholder="Optional account alias" value={draft.account_alias || ''} onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))} />
                 </div>
                 {draft.tradingview_webhook_url ? (
                   <div className="meta-grid">
@@ -521,133 +645,67 @@ function AddAccountFlowModal({
                 ) : null}
                 {draft.tradingview_webhook_url ? <p className="hint">Connection becomes active after your first valid alert.</p> : null}
                 {copiedField ? <p className="hint success-text">Copied.</p> : null}
-              </>
+              </BrokerPortal>
             ) : null}
 
-            {/* ── Public API Connectors (Alpaca, TradeLocker) ── */}
+            {/* Public API Connectors (Alpaca, TradeLocker) */}
             {PUBLIC_API_CONNECTORS.includes(selectedProvider.connectorType) ? (
-              <>
+              <BrokerPortal connectorType={selectedProvider.connectorType}>
                 <p className="hint">
                   {selectedProvider.connectorType === 'alpaca_api'
                     ? 'Connect read-only Alpaca API credentials. Credentials are validated server-side and never echoed back.'
-                    : 'Connect TradeLocker API credentials. Credentials are validated server-side, secrets are never echoed back, and this adds the account to your authenticated workspace.'}
+                    : 'Connect TradeLocker API credentials. Credentials are validated server-side and secrets are never echoed back.'}
                 </p>
                 <div className="row">
-                  <input
-                    placeholder="Account label"
-                    value={draft.display_label}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
-                    required
-                  />
-                  <select
-                    value={draft.environment || 'paper'}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
-                  >
+                  <input placeholder="Account label" value={draft.display_label} onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))} required />
+                  <select value={draft.environment || 'paper'} onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}>
                     <option value="paper">Paper</option>
                     <option value="live">Live</option>
                   </select>
                 </div>
                 {selectedProvider.connectorType === 'alpaca_api' ? (
                   <div className="row">
-                    <input
-                      placeholder="API key"
-                      value={draft.api_key || ''}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, api_key: event.target.value }))}
-                      required
-                    />
-                    <input
-                      type="password"
-                      placeholder="API secret"
-                      value={draft.api_secret || ''}
-                      onChange={(event) => setDraft((prev) => ({ ...prev, api_secret: event.target.value }))}
-                      required
-                    />
+                    <input placeholder="API key" value={draft.api_key || ''} onChange={(event) => setDraft((prev) => ({ ...prev, api_key: event.target.value }))} required />
+                    <input type="password" placeholder="API secret" value={draft.api_secret || ''} onChange={(event) => setDraft((prev) => ({ ...prev, api_secret: event.target.value }))} required />
                   </div>
                 ) : (
                   <>
                     <div className="row">
-                      <input
-                        placeholder="Base URL"
-                        value={draft.base_url || ''}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, base_url: event.target.value }))}
-                        required
-                      />
-                      <input
-                        placeholder="Account ID"
-                        value={draft.account_id || ''}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, account_id: event.target.value }))}
-                        required
-                      />
+                      <input placeholder="Base URL" value={draft.base_url || ''} onChange={(event) => setDraft((prev) => ({ ...prev, base_url: event.target.value }))} required />
+                      <input placeholder="Account ID" value={draft.account_id || ''} onChange={(event) => setDraft((prev) => ({ ...prev, account_id: event.target.value }))} required />
                     </div>
                     <div className="row">
-                      <input
-                        placeholder="Email"
-                        value={draft.email || ''}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, email: event.target.value }))}
-                        required
-                      />
-                      <input
-                        type="password"
-                        placeholder="Password"
-                        value={draft.password || ''}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, password: event.target.value }))}
-                        required
-                      />
+                      <input placeholder="Email" value={draft.email || ''} onChange={(event) => setDraft((prev) => ({ ...prev, email: event.target.value }))} required />
+                      <input type="password" placeholder="Password" value={draft.password || ''} onChange={(event) => setDraft((prev) => ({ ...prev, password: event.target.value }))} required />
                     </div>
                     <div className="row">
-                      <input
-                        placeholder="Server (optional)"
-                        value={draft.server || ''}
-                        onChange={(event) => setDraft((prev) => ({ ...prev, server: event.target.value }))}
-                      />
+                      <input placeholder="Server (optional)" value={draft.server || ''} onChange={(event) => setDraft((prev) => ({ ...prev, server: event.target.value }))} />
                     </div>
-                    <p className="hint">Credentials are validated server-side. Secrets are never echoed back in this UI.</p>
                   </>
                 )}
-              </>
+              </BrokerPortal>
             ) : null}
 
-            {/* ── Beta Connectors ── */}
+            {/* Beta Connectors */}
             {PUBLIC_API_BETA_CONNECTORS.includes(selectedProvider.connectorType) ? (
-              <>
+              <BrokerPortal connectorType={selectedProvider.connectorType}>
                 <p className="hint">Register this provider for beta onboarding. We only save safe metadata in this slice.</p>
                 <div className="row">
-                  <input
-                    placeholder="Display name"
-                    value={draft.display_label}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))}
-                    required
-                  />
-                  <select
-                    value={draft.environment || 'paper'}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}
-                  >
+                  <input placeholder="Display name" value={draft.display_label} onChange={(event) => setDraft((prev) => ({ ...prev, display_label: event.target.value }))} required />
+                  <select value={draft.environment || 'paper'} onChange={(event) => setDraft((prev) => ({ ...prev, environment: event.target.value }))}>
                     <option value="paper">Paper</option>
                     <option value="live">Live (metadata only)</option>
                   </select>
-                  <input
-                    placeholder="Optional account alias"
-                    value={draft.account_alias || ''}
-                    onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))}
-                  />
+                  <input placeholder="Optional account alias" value={draft.account_alias || ''} onChange={(event) => setDraft((prev) => ({ ...prev, account_alias: event.target.value }))} />
                 </div>
                 <p className="hint">End state: <strong>Awaiting secure auth</strong>. No live broker connectivity is claimed yet.</p>
-              </>
-            ) : null}
-
-            {selectedProvider.connectorType === 'csv_import' ? (
-              <p className="hint">This sends you to the CSV import tools in Connections where you can paste/import rows.</p>
-            ) : null}
-
-            {selectedProvider.connectorType === 'manual' ? (
-              <p className="hint">This sends you to Manual Journal tools in Connections to create and journal an account.</p>
+              </BrokerPortal>
             ) : null}
 
             {error ? <p className="error-text">{error}</p> : null}
 
-            {/* Submit button — hidden for MT5 (it has its own step buttons) */}
             {!isMt5 ? (
-              <div className="row">
+              <div className="row" style={{ marginTop: 16 }}>
                 <button
                   type="submit"
                   disabled={isSubmitting || isDiscovering || (isFundingPipsProp && !canSubmitPropFirm)}
