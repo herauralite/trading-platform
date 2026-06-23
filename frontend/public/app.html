@@ -2311,9 +2311,9 @@ function renderAcctSheet(){
 }
 
 const ADD_ACCOUNT_PATHS={
-  fundingpips:{title:'FundingPips extension',status:'functional',desc:'Link any account currently synced by the TaliTrade browser extension.'},
-  brokerApi:{title:'Broker / API account',status:'functional',desc:'Connect an account manually through the secure link-account backend flow.'},
-  manualPath:{title:'Manual / supported integration path',status:'coming_soon',desc:'Guided onboarding for additional supported integrations is rolling out soon.'}
+  fundingpips:{title:'FundingPips',tagline:'Prop Firm',badge:'PROP FIRM',badgeColor:'#22c55e',accent:'#22c55e',portalBg:'#0d1a11',portalBorder:'rgba(34,197,94,0.2)',logoText:'FP',logoColor:'#22c55e',logoBg:'#0a1a0d',desc:'Connect with your FundingPips login. Accounts are discovered automatically.'},
+  tradelocker:{title:'TradeLocker',tagline:'API Connection',badge:'LIVE',badgeColor:'#2AABEE',accent:'#2AABEE',portalBg:'#0d1520',portalBorder:'rgba(42,171,238,0.2)',logoText:'TL',logoColor:'#2AABEE',logoBg:'#0a1220',desc:'Connect your TradeLocker account via secure API credentials.'},
+  mt5:{title:'MetaTrader 5',tagline:'MT5 Bridge',badge:'BRIDGE',badgeColor:'#a78bfa',accent:'#a78bfa',portalBg:'#110d1a',portalBorder:'rgba(167,139,250,0.2)',logoText:'MT5',logoColor:'#a78bfa',logoBg:'#0e0a18',desc:'Connect your MT5 account through the TaliTrade bridge pairing flow.'}
 };
 let addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
 
@@ -2358,20 +2358,25 @@ function renderAddAccountFlow(){
   if(!body||!footer||!stepEl)return;
 
   if(addAcctFlowState.step===1){
-    stepEl.textContent='Step 1 · Choose connection';
-    body.innerHTML=`<div class="aaf-flow-note">Choose how you want to connect this account. Only grounded backend paths are fully enabled today.</div>
-      <button class="aaf-option rip" onclick="setAddAccountPath('fundingpips')">
-        <div class="aaf-option-top"><div class="aaf-option-title">${ADD_ACCOUNT_PATHS.fundingpips.title}</div><span class="aaf-functional">live now</span></div>
-        <div class="aaf-option-desc">${ADD_ACCOUNT_PATHS.fundingpips.desc}</div>
-      </button>
-      <button class="aaf-option rip" onclick="setAddAccountPath('brokerApi')">
-        <div class="aaf-option-top"><div class="aaf-option-title">${ADD_ACCOUNT_PATHS.brokerApi.title}</div><span class="aaf-functional">live now</span></div>
-        <div class="aaf-option-desc">${ADD_ACCOUNT_PATHS.brokerApi.desc}</div>
-      </button>
-      <button class="aaf-option rip" onclick="setAddAccountPath('manualPath')">
-        <div class="aaf-option-top"><div class="aaf-option-title">${ADD_ACCOUNT_PATHS.manualPath.title}</div><span class="aaf-coming">coming soon</span></div>
-        <div class="aaf-option-desc">${ADD_ACCOUNT_PATHS.manualPath.desc}</div>
+    stepEl.textContent='Step 1 · Select broker';
+    function brokerCard(key){
+      const p=ADD_ACCOUNT_PATHS[key];
+      const isSelected=addAcctFlowState.path===key;
+      return `<button class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${key}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer;text-align:left;transition:all 0.15s;">
+        <div style="width:38px;height:38px;border-radius:9px;background:${p.logoBg};display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid ${p.portalBorder}">
+          <span style="font-size:12px;font-weight:800;color:${p.logoColor};font-family:Inter,sans-serif">${p.logoText}</span>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:2px">
+            <span style="font-weight:700;font-size:14px;color:#e8f0ff">${p.title}</span>
+            <span style="font-size:9px;font-weight:700;letter-spacing:0.8px;padding:2px 7px;border-radius:99px;color:${p.badgeColor};background:rgba(255,255,255,0.06)">${p.badge}</span>
+          </div>
+          <span style="font-size:12px;color:rgba(148,163,184,0.75)">${p.tagline}</span>
+        </div>
+        ${isSelected?`<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8" stroke="${p.accent}" stroke-width="1.5"/><path d="M5.5 9l2.5 2.5L12.5 6" stroke="${p.accent}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`:''}
       </button>`;
+    }
+    body.innerHTML=brokerCard('fundingpips')+brokerCard('tradelocker')+brokerCard('mt5');
     footer.innerHTML=`<button class="btn btn-ghost rip" onclick="closeAddAccountFlow()">Cancel</button>`;
     return;
   }
@@ -2389,7 +2394,27 @@ function renderAddAccountFlow(){
       content=acctHtml;
       footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button><button class="btn btn-blue rip" onclick="confirmFundingPipsAccounts()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Saving...':'Add selected accounts'}</button>`;
     } else {
-      content=`<div class="aaf-flow-note">Enter your FundingPips login credentials. TaliTrade will securely connect and import your trading accounts.</div><div class="aaf-form"><label><div class="aaf-field-label">Email</div><input class="aaf-input" id="fpEmailInput" type="email" placeholder="your@email.com" autocomplete="email"></label><label><div class="aaf-field-label">Password</div><input class="aaf-input" id="fpPasswordInput" type="password" placeholder="Your FundingPips password" autocomplete="current-password"></label></div>`;
+      content=`<div style="background:#0d1a11;border:1px solid rgba(34,197,94,0.2);border-radius:16px;padding:20px 18px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid rgba(34,197,94,0.12)">
+          <div style="width:38px;height:38px;border-radius:9px;background:#0a1a0d;border:1px solid rgba(34,197,94,0.2);display:flex;align-items:center;justify-content:center;flex-shrink:0">
+            <span style="font-size:12px;font-weight:800;color:#22c55e;font-family:Inter,sans-serif">FP</span>
+          </div>
+          <div style="flex:1">
+            <div style="font-weight:700;font-size:14px;color:#e8f0ff">FundingPips</div>
+            <div style="font-size:11px;color:rgba(148,163,184,0.7);margin-top:1px">Secure login portal</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:5px">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5V4a3 3 0 016 0v1" stroke="#22c55e" stroke-width="1.3" stroke-linecap="round"/><rect x="1.5" y="5" width="9" height="6" rx="1.5" fill="rgba(34,197,94,0.15)" stroke="#22c55e" stroke-width="1.2"/></svg>
+            <span style="font-size:11px;color:#22c55e;font-weight:600">Encrypted</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <input class="aaf-input" id="fpEmailInput" type="email" placeholder="Email address" autocomplete="email" style="border-color:rgba(34,197,94,0.2)">
+          <input class="aaf-input" id="fpPasswordInput" type="password" placeholder="Password" autocomplete="current-password" style="border-color:rgba(34,197,94,0.2)">
+          <div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:2px">Your credentials are encrypted server-side and never stored in plain text.</div>
+          ${addAcctFlowState.loading?'<div style="display:flex;align-items:center;gap:8px;padding:6px 0"><div style="width:14px;height:14px;border:2px solid rgba(34,197,94,0.3);border-top-color:#22c55e;border-radius:50%;animation:spin 0.8s linear infinite"></div><span style="font-size:12px;color:rgba(148,163,184,0.7)">Authenticating and discovering accounts…</span></div>':''}
+        </div>
+      </div>`;
       footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button><button class="btn btn-blue rip" onclick="submitFundingPipsCredentials()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Connecting...':'Connect FundingPips'}</button>`;
     }
   } else if(addAcctFlowState.path==='brokerApi'){
@@ -2402,11 +2427,42 @@ function renderAddAccountFlow(){
       </div>`;
     footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button>
       <button class="btn btn-blue rip" onclick="submitBrokerApiAccountFlow()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Connecting…':'Connect account'}</button>`;
+  } else if(addAcctFlowState.path==='mt5'){
+    const p=ADD_ACCOUNT_PATHS.mt5;
+    content=`<div style="background:${p.portalBg};border:1px solid ${p.portalBorder};border-radius:16px;padding:20px 18px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid ${p.portalBorder}">
+        <div style="width:38px;height:38px;border-radius:9px;background:${p.logoBg};border:1px solid ${p.portalBorder};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:12px;font-weight:800;color:${p.logoColor};font-family:Inter,sans-serif">${p.logoText}</span>
+        </div>
+        <div style="flex:1"><div style="font-weight:700;font-size:14px;color:#e8f0ff">${p.title}</div><div style="font-size:11px;color:rgba(148,163,184,0.7);margin-top:1px">Bridge pairing flow</div></div>
+      </div>
+      <div style="font-size:12px;color:rgba(148,163,184,0.75);line-height:1.6">MT5 bridge pairing is coming soon. You’ll be able to connect your MT5 account through a trusted bridge worker flow.</div>
+    </div>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button>`;
+  } else if(addAcctFlowState.path==='tradelocker'){
+    const p=ADD_ACCOUNT_PATHS.tradelocker;
+    content=`<div style="background:${p.portalBg};border:1px solid ${p.portalBorder};border-radius:16px;padding:20px 18px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid ${p.portalBorder}">
+        <div style="width:38px;height:38px;border-radius:9px;background:${p.logoBg};border:1px solid ${p.portalBorder};display:flex;align-items:center;justify-content:center;flex-shrink:0">
+          <span style="font-size:12px;font-weight:800;color:${p.logoColor};font-family:Inter,sans-serif">${p.logoText}</span>
+        </div>
+        <div style="flex:1"><div style="font-weight:700;font-size:14px;color:#e8f0ff">${p.title}</div><div style="font-size:11px;color:rgba(148,163,184,0.7);margin-top:1px">Secure login portal</div></div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M3 5V4a3 3 0 016 0v1" stroke="${p.accent}" stroke-width="1.3" stroke-linecap="round"/><rect x="1.5" y="5" width="9" height="6" rx="1.5" fill="rgba(42,171,238,0.15)" stroke="${p.accent}" stroke-width="1.2"/></svg>
+          <span style="font-size:11px;color:${p.accent};font-weight:600">Encrypted</span>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <input class="aaf-input" id="tlEmailInput" type="email" placeholder="Email address" autocomplete="email" style="border-color:rgba(42,171,238,0.2)">
+        <input class="aaf-input" id="tlPasswordInput" type="password" placeholder="Password" autocomplete="current-password" style="border-color:rgba(42,171,238,0.2)">
+        <input class="aaf-input" id="tlServerInput" placeholder="Server (e.g. tradelocker.com)" style="border-color:rgba(42,171,238,0.2)">
+        <div style="font-size:11px;color:rgba(148,163,184,0.5);margin-top:2px">Your credentials are encrypted server-side and never stored in plain text.</div>
+      </div>
+    </div>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button><button class="btn btn-blue rip" onclick="backAddAccountStep()">Coming soon</button>`;
   } else {
-    content=`<div class="aaf-option" style="margin-bottom:0"><div class="aaf-option-top"><div class="aaf-option-title">Manual / supported integration path</div><span class="aaf-coming">coming soon</span></div>
-      <div class="aaf-option-desc">This guided path is not fully wired in backend yet. Use Broker / API account for live account linking right now.</div></div>`;
-    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button>
-      <button class="btn btn-blue rip" onclick="backAddAccountStep()">Use live options</button>`;
+    content='';
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()">Back</button>`;
   }
 
   const statusHtml=addAcctFlowState.error?`<div class="aaf-status error">${addAcctFlowState.error}</div>`:(addAcctFlowState.success?`<div class="aaf-status success">${addAcctFlowState.success}</div>`:'');
