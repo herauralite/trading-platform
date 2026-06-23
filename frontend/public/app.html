@@ -1547,40 +1547,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div style="flex:1"><div style="font-size:13px;font-weight:600" id="alertTitle">All limits safe</div><div style="font-size:11px;color:var(--t3)" id="alertSub">No alerts fired · monitoring active</div></div>
     <div class="alert-pill" id="alertPill" style="color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)">0 alerts</div>
   </div>
-  <div class="card card-p" style="margin-top:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Today Focus</div><div class="h-r" id="dashHealthMeta">Waiting for active account</div></div>
-    <div id="dashHealthSummary" style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Sync</div><div id="dashHealthSync" style="font-size:12px;margin-top:4px">—</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Progress</div><div id="dashHealthProgress" style="font-size:12px;margin-top:4px">—</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Risk Usage</div><div id="dashHealthRisk" style="font-size:12px;margin-top:4px">—</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Open Positions</div><div id="dashHealthPositions" style="font-size:12px;margin-top:4px">—</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Today P&amp;L</div><div id="dashHealthDaily" style="font-size:12px;margin-top:4px">—</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Overall P&amp;L</div><div id="dashHealthOverall" style="font-size:12px;margin-top:4px">—</div></div>
-    </div>
-  </div>
-  <div class="card card-p" style="margin-top:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Alerts & News</div><div class="h-r" id="dashAlertsMeta">No active feed items</div></div>
-    <div id="dashAlertsList" style="display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">Waiting for live alerts and news feed.</div>
-    </div>
-  </div>
-  <div class="card card-p" style="margin-top:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Upcoming Events</div><div class="h-r" id="dashEventsMeta">Calendar</div></div>
-    <div id="dashEventsList" style="display:flex;flex-direction:column;gap:8px">
-      <div style="font-size:11px;color:var(--t3);padding:10px;border:1px dashed var(--border);border-radius:10px;background:var(--s2)">Waiting for economic calendar.</div>
-    </div>
-  </div>
-  <div class="card card-p" style="margin-top:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Quick Actions</div><div class="h-r" id="dashQuickMeta">In-shell controls</div></div>
-    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openAddAccountFlow()">Add account</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" id="dashSyncBtn" onclick="dashboardSyncNow()">Sync now</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openRules()">Trading rules</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('account');fetchPayout();">Payout</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('challenges');fetchChallenges();fetchLeaderboard();">Challenge</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openAcctSheet()">Switch account</button>
-    </div>
-  </div>
+
   <div class="footer-card"><span>TaliTrade v3.2</span><span id="footerTime">--:--:--</span><span id="footerAcct">10K 2-Step</span></div>
 </div>
 
