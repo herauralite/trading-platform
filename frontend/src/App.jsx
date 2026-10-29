@@ -439,7 +439,8 @@ function App() {
   async function signInWithOidcToken(idToken, nonce = null) {
     setIsBootstrapping(true)
     try {
-      const res = await axios.post(buildApiUrl('/auth/telegram/oidc'), { id_token: idToken, nonce })
+      const redirectUri = `${window.location.origin}${window.location.pathname}`
+      const res = await axios.post(buildApiUrl('/auth/telegram/oidc'), { id_token: idToken, nonce, redirect_uri: redirectUri })
       const user = normalizeSessionUser(res.data?.user)
       const token = res.data?.access_token || ''
       if (!token || !user?.telegram_user_id) throw new Error('Telegram OIDC returned no session token')
