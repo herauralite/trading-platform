@@ -95,6 +95,10 @@ enforce_single_process_runtime()
 
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+# HTTPX/HTTPCore debug logs can include full Telegram API URLs, which contain bot tokens.
+# Keep transport logs above INFO so credentials are never written through request URLs.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 APP_BASE_URL    = os.getenv("APP_BASE_URL", "https://api.talitrade.com").rstrip("/")
@@ -2014,13 +2018,22 @@ def telegram_command_matches(raw_cmd: str, base_cmd: str) -> bool:
 async def setup_telegram_webhook():
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
+        logger.warning("Telegram webhook setup skipped: TELEGRAM_BOT_TOKEN is not configured")
         return
     try:
         async with httpx.AsyncClient() as client:
-            res = await client.post(f"https://api.telegram.org/bot{token}/setWebhook", json={"url": f"{APP_BASE_URL}/telegram/webhook"})
-            logger.info(f"Telegram webhook: {res.json()}")
-    except Exception as e:
-        logger.error(f"Webhook setup failed: {e}")
+            res = await client.post(
+                f"https://api.telegram.org/bot{token}/setWebhook",
+                json={"url": f"{APP_BASE_URL}/telegram/webhook"},
+            )
+            # Never log request URLs or raw HTTPX responses here: the URL contains the bot token.
+            if res.is_success:
+                logger.info("Telegram webhook registered successfully (HTTP %s)", res.status_code)
+            else:
+                logger.warning("Telegram webhook registration failed (HTTP %s)", res.status_code)
+    except Exception as exc:
+        # Exception strings can include the request URL; log only the exception type.
+        logger.error("Telegram webhook setup failed (exception type=%s)", type(exc).__name__)
 
 
 # ─── Schedulers ───────────────────────────────────────────────────────────────
