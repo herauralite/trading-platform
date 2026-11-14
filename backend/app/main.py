@@ -76,6 +76,7 @@ from app.services.provider_onboarding import (
 )
 from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
+from app.core import admin_auth
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -2585,7 +2586,9 @@ async def get_payout(account_id: str = None):
 
 
 # ─── Admin ────────────────────────────────────────────────────────────────────
-@app.get("/admin/dedup-trades/preview")
+# Every route in this section requires admin_auth.require_admin: maintenance mode must be
+# explicitly enabled AND the server-side admin token presented. User sessions grant nothing.
+@app.get("/admin/dedup-trades/preview", dependencies=[Depends(admin_auth.require_admin)], include_in_schema=False)
 async def dedup_trades_preview():
     from app.core.database import engine
     async with engine.connect() as conn:
@@ -2596,27 +2599,37 @@ async def dedup_trades_preview():
     return {"total_realtime_rows": total, "sample": rows}
 
 
-@app.delete("/admin/dedup-trades")
+@app.delete("/admin/dedup-trades", dependencies=[Depends(admin_auth.require_admin)], include_in_schema=False)
 async def dedup_trades():
     from app.core.database import engine
-    async with engine.begin() as conn:
-        result = await conn.execute(text("DELETE FROM trades WHERE source = 'realtime' RETURNING id, account_id, symbol, direction, pnl, closed_at"))
-        deleted = [dict(r) for r in result.mappings().all()]
-    logger.info(f"dedup-trades: removed {len(deleted)} realtime rows")
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text("DELETE FROM trades WHERE source = 'realtime' RETURNING id, account_id, symbol, direction, pnl, closed_at"))
+            deleted = [dict(r) for r in result.mappings().all()]
+    except Exception as exc:
+        # engine.begin() has already rolled the transaction back.
+        logger.error("admin maintenance: op=dedup-trades outcome=failed error_type=%s", type(exc).__name__)
+        return JSONResponse(status_code=500, content={"detail": "Maintenance operation failed; no changes were made"})
+    logger.warning("admin maintenance: op=dedup-trades outcome=ok deleted=%s", len(deleted))
     return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
 
 
-@app.delete("/admin/purge-corrupt-trades")
+@app.delete("/admin/purge-corrupt-trades", dependencies=[Depends(admin_auth.require_admin)], include_in_schema=False)
 async def purge_corrupt_trades():
     from app.core.database import engine
-    async with engine.begin() as conn:
-        result = await conn.execute(text("DELETE FROM trades WHERE ABS(pnl) > account_size RETURNING id, account_id, symbol, pnl, account_size"))
-        deleted = [dict(r) for r in result.mappings().all()]
-    logger.info(f"purge-corrupt-trades: removed {len(deleted)} rows")
+    try:
+        async with engine.begin() as conn:
+            result = await conn.execute(text("DELETE FROM trades WHERE ABS(pnl) > account_size RETURNING id, account_id, symbol, pnl, account_size"))
+            deleted = [dict(r) for r in result.mappings().all()]
+    except Exception as exc:
+        # engine.begin() has already rolled the transaction back.
+        logger.error("admin maintenance: op=purge-corrupt-trades outcome=failed error_type=%s", type(exc).__name__)
+        return JSONResponse(status_code=500, content={"detail": "Maintenance operation failed; no changes were made"})
+    logger.warning("admin maintenance: op=purge-corrupt-trades outcome=ok deleted=%s", len(deleted))
     return {"status": "ok", "deleted_count": len(deleted), "deleted_rows": deleted}
 
 
-@app.get("/test/db")
+@app.get("/test/db", dependencies=[Depends(admin_auth.require_admin)], include_in_schema=False)
 async def test_db():
     async with engine.connect() as conn:
         count = (await conn.execute(text("SELECT COUNT(*) FROM trades"))).scalar()
