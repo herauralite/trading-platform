@@ -35,6 +35,19 @@ from app.services.connector_ingest import compute_account_key
 from app.services import connector_ingest as ci
 
 
+@pytest.fixture(autouse=True)
+def _accounts_are_unclaimed(monkeypatch):
+    """These tests fake the database, so ownership lookups report every account as unclaimed."""
+    async def no_owners(_account_id):
+        return set()
+
+    async def no_history(_account_id):
+        return False
+
+    monkeypatch.setattr("app.core.ingest_auth.get_account_owners", no_owners)
+    monkeypatch.setattr("app.core.ingest_auth.account_has_trades", no_history)
+
+
 def post_json(path: str, payload: dict):
     async def _run():
         transport = httpx.ASGITransport(app=app)
@@ -129,7 +142,7 @@ def test_extension_trade_compatibility(monkeypatch):
 
     monkeypatch.setattr("app.main.ingest_trade", fake_ingest_trade)
 
-    resp = post_json("/extension/trade", {
+    resp = post_json_auth("/extension/trade", {
         "accountId": "1917136",
         "accountType": "2_step_master",
         "accountSize": 10000,
@@ -180,7 +193,7 @@ def test_extension_data_compatibility_and_stale_cleanup(monkeypatch):
     monkeypatch.setattr("app.main.deactivate_missing_positions", fake_deactivate)
     monkeypatch.setattr("app.main.db_link_account", fake_link)
 
-    resp = post_json("/extension/data", {
+    resp = post_json_auth("/extension/data", {
         "accountId": "1917136",
         "accountType": "2_step_master",
         "accountSize": 10000,
@@ -195,7 +208,7 @@ def test_extension_data_compatibility_and_stale_cleanup(monkeypatch):
     })
     assert resp.status_code == 200
 
-    resp2 = post_json("/extension/data", {
+    resp2 = post_json_auth("/extension/data", {
         "accountId": "1917136",
         "accountType": "2_step_master",
         "accountSize": 10000,
