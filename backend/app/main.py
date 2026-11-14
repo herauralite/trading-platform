@@ -79,6 +79,8 @@ from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
 from app.core import ingest_auth
+from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
+from app.services.matchtrader_api.store import SqlStore as MtApiStore
 from app.core.ingest_auth import Principal
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
@@ -1299,6 +1301,9 @@ async def lifespan(app: FastAPI):
     await ensure_users_tables()
     await ensure_connector_tables()
     await ingest_auth.ensure_integration_tokens_table()
+    if mt_api_config.api_enabled():
+        # Match-Trader API integration is opt-in: its tables are created only when enabled.
+        await MtApiStore().ensure_schema()
     await backfill_legacy_prop_accounts_to_trading_accounts()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
@@ -1310,6 +1315,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(daily_summary_scheduler()),
         asyncio.create_task(connector_sync_worker_loop(stop_event, worker_id=SYNC_WORKER_ID)),
     ]
+    if mt_api_config.worker_enabled():
+        tasks.append(asyncio.create_task(mt_api_worker.worker_loop(stop_event)))
     yield
     stop_event.set()
     for t in tasks:
@@ -1359,6 +1366,7 @@ from app.routers import accounts
 app.include_router(accounts.router)
 from app.routers import ingest
 app.include_router(ingest.router)
+app.include_router(mt_api_routes.router)
 from app.core.database import engine
 
 logger.info(
