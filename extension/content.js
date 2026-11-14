@@ -17,6 +17,7 @@ const POLL_MS      = 5000;
 const SCRAPE_MS    = 60000;
 const TALI_STORAGE_KEY = 'tali_telegram_uid';  // key in chrome.storage.local
 const TALI_SESSION_TOKEN_KEY = 'tali_session_token';
+const TALI_INGEST_TOKEN_KEY = 'tali_ingest_token';  // revocable ingest-only credential
 
 // ─── Telegram user helpers ────────────────────────────────────────────────────
 // The web app (talitrade.com) and this content script run on different origins,
@@ -76,6 +77,30 @@ async function getSessionToken() {
     setCachedSessionToken(result[TALI_SESSION_TOKEN_KEY]);
     return _cachedSessionToken;
   } catch(e) { return null; }
+}
+
+// Credential for /extension/data and /extension/trade. Prefers the ingest-only token the
+// dashboard hands over at sign-in; falls back to the session token for older dashboards.
+// Read from storage each time so a new sign-in or sign-out takes effect immediately.
+async function getIngestCredential() {
+  try {
+    const result = await chrome.storage.local.get([TALI_INGEST_TOKEN_KEY, TALI_SESSION_TOKEN_KEY]);
+    return normalizeSessionToken(result[TALI_INGEST_TOKEN_KEY]) || normalizeSessionToken(result[TALI_SESSION_TOKEN_KEY]);
+  } catch(e) { return null; }
+}
+
+let _warnedMissingIngestCredential = false;
+async function buildIngestHeaders() {
+  const credential = await getIngestCredential();
+  if (!credential) {
+    if (!_warnedMissingIngestCredential) {
+      console.warn('TaliTrade: not signed in. Open www.talitrade.com/app and sign in to enable syncing.');
+      _warnedMissingIngestCredential = true;
+    }
+    return null;
+  }
+  _warnedMissingIngestCredential = false;
+  return { 'Content-Type': 'application/json', Authorization: 'Bearer ' + credential };
 }
 
 if (chrome?.storage?.onChanged) {
@@ -569,9 +594,11 @@ async function poll() {
   });
 
   try {
+    const ingestHeaders = await buildIngestHeaders();
+    if (!ingestHeaders) return;  // pendingNotifications kept; retried once signed in
     const res = await fetch(BACKEND_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: ingestHeaders,
       body:    JSON.stringify(payload),
     });
     if (!res.ok) {
@@ -984,11 +1011,18 @@ async function scrapeAndSyncHistory(config) {
     };
 
     try {
-      await fetch(JOURNAL_URL, {
+      const ingestHeaders = await buildIngestHeaders();
+      if (!ingestHeaders) break;  // not signed in: leave trades unsynced so they retry later
+      const res = await fetch(JOURNAL_URL, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: ingestHeaders,
         body:    JSON.stringify(trade),
       });
+      if (!res.ok) {
+        // Do not mark as synced: a rejected trade (e.g. expired sign-in) must be retried.
+        console.warn(`TaliTrade: extension/trade returned HTTP ${res.status}`);
+        continue;
+      }
       state.scrapedTradeKeys.add(key);
       sent++;
     } catch (e) {

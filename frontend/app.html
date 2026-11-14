@@ -1132,16 +1132,22 @@ async function finishTelegramLogin(data, widgetUser = null) {
   try {
     const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
     if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+      // The extension ingests with its own revocable, ingest-only token rather than the session.
+      let ingestToken = '';
+      try {
+        const tokenRes = await fetch(getBaseApiUrl() + '/auth/extension-token', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+        if (tokenRes.ok) ingestToken = String((await tokenRes.json()).token || '');
+      } catch (_) {}
       chrome.runtime.sendMessage(
         TALI_EXTENSION_ID,
-        { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token },
+        { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token, ingestToken },
         () => {}
       );
     }
   } catch (_) {}
 
   try {
-    const statusRes = await fetch(getBaseApiUrl() + '/extension/status');
+    const statusRes = await fetch(getBaseApiUrl() + '/extension/status', { headers: { Authorization: 'Bearer ' + token } });
     if (statusRes.ok) {
       const statusData = await statusRes.json();
       const liveAccounts = statusData.accounts || {};
@@ -1250,6 +1256,12 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
 
 function getSessionToken(){
   return localStorage.getItem(TALI_SESSION_TOKEN_KEY) || '';
+}
+
+// Private trading data is served only to the signed-in owner.
+function taliAuthHeaders(){
+  const token=getSessionToken();
+  return token?{Authorization:'Bearer '+token}:{};
 }
 
 async function authFetch(path, options={}){
@@ -2587,7 +2599,7 @@ async function fetchAllTrades(accountId, pageSize=200){
   const out=[];
   for(let page=0;page<100;page++){
     const offset=page*pageSize;
-    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc&source=scraper`);
+    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc&source=scraper`,{headers:taliAuthHeaders()});
     if(!res.ok) throw new Error('Journal fetch failed: '+res.status);
     const data=await res.json();
     const chunk=data.trades||[];
@@ -3000,7 +3012,7 @@ async function fetchStatus(){
   const requestSeq=++statusFetchSeq;
   const requestedAcct=activeAcct;
   try{
-    const res=await fetch(API+'/extension/status');
+    const res=await fetch(API+'/extension/status',{headers:taliAuthHeaders()});
     const data=await res.json();
     if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
     const acct=data.accounts&&data.accounts[activeAcct];
@@ -3211,7 +3223,7 @@ if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
 async function fetchLeaderboard(){
   try{
-    const res=await fetch(API+'/leaderboard?limit=10');
+    const res=await fetch(API+'/leaderboard?limit=10',{headers:taliAuthHeaders()});
     if(!res.ok)throw new Error('status '+res.status);
     const data=await res.json();
     const rows=data.leaderboard||[];
@@ -3229,7 +3241,7 @@ async function fetchLeaderboard(){
     ];
     const you=getTaliUser();
     el.innerHTML=rows.map((r,i)=>{
-      const isYou=you&&r.accountId===activeAcct;
+      const isYou=!!you&&r.isYou===true;
       const rankCls=medals[i]||'';
       const grad=gradients[i]||'linear-gradient(135deg,var(--s3),var(--s2))';
       const initial=(r.displayName||'T').charAt(0).toUpperCase();
@@ -3262,7 +3274,7 @@ async function fetchPayout(){
     return;
   }
   try{
-    const res=await fetch(API+'/extension/payout?account_id='+activeAcct);
+    const res=await fetch(API+'/extension/payout?account_id='+activeAcct,{headers:taliAuthHeaders()});
     if(!res.ok)throw new Error('status '+res.status);
     const payload=await res.json();
     if(requestSeq!==payoutFetchSeq||requestedAcct!==activeAcct) return;
@@ -4037,7 +4049,7 @@ async function loadHistoryPage(reset=false){
   const rid=++historyState.reqId;
   renderHistoryPanel();
   try{
-    const res=await fetch(API+`/extension/journal?account_id=${activeAcct}&limit=${HISTORY_PAGE_SIZE}&offset=${historyState.offset}&order=desc&source=scraper`);
+    const res=await fetch(API+`/extension/journal?account_id=${activeAcct}&limit=${HISTORY_PAGE_SIZE}&offset=${historyState.offset}&order=desc&source=scraper`,{headers:taliAuthHeaders()});
     if(!res.ok)throw new Error('status '+res.status);
     const data=await res.json();
     if(rid!==historyState.reqId||historyState.accountId!==activeAcct)return;
@@ -4344,7 +4356,7 @@ async function fetchChallenges(){
   meta.textContent='Account '+activeAcct;
   host.innerHTML='<div class="card card-p" style="text-align:center;color:var(--t3);font-size:12px">Loading challenge and payout checks…</div>';
   try{
-    const res=await fetch(API+'/extension/payout?account_id='+encodeURIComponent(activeAcct));
+    const res=await fetch(API+'/extension/payout?account_id='+encodeURIComponent(activeAcct),{headers:taliAuthHeaders()});
     if(!res.ok) throw new Error('payout failed');
     const ev=await res.json();
     const checks=Object.values(ev.checks||{});

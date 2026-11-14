@@ -80,4 +80,4 @@ class CsvTradeImportRequest(BaseModel):
     external_account_id: str
     account_type: str | None = None
     account_size: int | None = None
-    rows: list[dict[str, Any]]
+    rows: list[dict[str, Any]] = Field(max_length=5000)

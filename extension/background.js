@@ -1,5 +1,6 @@
 const TALI_STORAGE_KEY = 'tali_telegram_uid';
 const TALI_SESSION_TOKEN_KEY = 'tali_session_token';
+const TALI_INGEST_TOKEN_KEY = 'tali_ingest_token';
 
 function normalizeTelegramUserId(value) {
   if (value == null) return null;
@@ -49,21 +50,25 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
       return false;
     }
 
-    chrome.storage.local.set({ [TALI_STORAGE_KEY]: telegramUserId, [TALI_SESSION_TOKEN_KEY]: sessionToken }, () => {
+    // Ingest-only credential minted by the backend for this user. Always overwritten so a
+    // token from a previous sign-in can never be reused for a different user.
+    const rawIngestToken = String(message?.ingestToken || '').trim();
+    const ingestToken = rawIngestToken.startsWith('tti_') ? rawIngestToken : '';
+    chrome.storage.local.set({ [TALI_STORAGE_KEY]: telegramUserId, [TALI_SESSION_TOKEN_KEY]: sessionToken, [TALI_INGEST_TOKEN_KEY]: ingestToken }, () => {
       if (chrome.runtime.lastError) {
         console.error('TaliTrade: failed to set session context', chrome.runtime.lastError);
         sendResponse?.({ ok: false, error: chrome.runtime.lastError.message || 'storage_set_failed' });
         return;
       }
       console.log(`TaliTrade: stored session context from ${origin}`);
-      sendResponse?.({ ok: true, telegramUserId, hasSessionToken: true });
+      sendResponse?.({ ok: true, telegramUserId, hasSessionToken: true, hasIngestToken: !!ingestToken });
     });
 
     return true;
   }
 
   if (type === 'TALI_CLEAR_UID') {
-    chrome.storage.local.remove([TALI_STORAGE_KEY, TALI_SESSION_TOKEN_KEY], () => {
+    chrome.storage.local.remove([TALI_STORAGE_KEY, TALI_SESSION_TOKEN_KEY, TALI_INGEST_TOKEN_KEY], () => {
       if (chrome.runtime.lastError) {
         console.error('TaliTrade: failed to clear telegram uid', chrome.runtime.lastError);
         sendResponse?.({ ok: false, error: chrome.runtime.lastError.message || 'storage_remove_failed' });
