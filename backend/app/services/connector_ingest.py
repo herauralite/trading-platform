@@ -406,6 +406,162 @@ async def ensure_connector_tables() -> None:
         await conn.execute(text("ALTER TABLE trades ADD COLUMN IF NOT EXISTS import_provenance JSONB DEFAULT '{}'::jsonb"))
 
         # 2) Create/repair indexes & constraints needed by new logic.
+        
+        await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS platform_key TEXT"))
+        await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS platform_account_ref TEXT"))
+        await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS extension_device_id BIGINT"))
+        await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS platform_session_id BIGINT"))
+        await conn.execute(text("ALTER TABLE trading_accounts ADD COLUMN IF NOT EXISTS execution_enabled BOOLEAN NOT NULL DEFAULT FALSE"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS extension_pairing_tokens (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                pair_code TEXT NOT NULL UNIQUE,
+                pair_secret_hash TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                expires_at TIMESTAMPTZ NOT NULL,
+                consumed_at TIMESTAMPTZ,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS extension_pairing_tokens_user_idx ON extension_pairing_tokens(user_id, created_at DESC)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS extension_devices (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                device_fingerprint TEXT NOT NULL,
+                label TEXT,
+                platform TEXT,
+                browser TEXT,
+                extension_version TEXT,
+                status TEXT NOT NULL DEFAULT 'offline',
+                last_seen_at TIMESTAMPTZ,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (user_id, device_fingerprint)
+            )
+        """))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS extension_devices_user_idx ON extension_devices(user_id, updated_at DESC)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS extension_sessions (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                extension_device_id BIGINT NOT NULL REFERENCES extension_devices(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'active',
+                started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                last_heartbeat_at TIMESTAMPTZ,
+                ended_at TIMESTAMPTZ,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE extension_sessions ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE extension_sessions ADD COLUMN IF NOT EXISTS revoked_at TIMESTAMPTZ"))
+        await conn.execute(text("ALTER TABLE extension_sessions ADD COLUMN IF NOT EXISTS session_secret_hash TEXT"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS platform_sessions (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                extension_device_id BIGINT NOT NULL REFERENCES extension_devices(id) ON DELETE CASCADE,
+                adapter_key TEXT NOT NULL,
+                platform_key TEXT NOT NULL,
+                tab_id TEXT NOT NULL,
+                tab_url TEXT,
+                platform_account_ref TEXT,
+                session_ref TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                capabilities JSONB DEFAULT '{}'::jsonb,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                last_seen_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (extension_device_id, adapter_key, tab_id)
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS execution_batches (
+                id BIGSERIAL PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                request_id TEXT,
+                status TEXT NOT NULL DEFAULT 'queued',
+                requested_by TEXT,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS execution_commands (
+                id BIGSERIAL PRIMARY KEY,
+                execution_batch_id BIGINT NOT NULL REFERENCES execution_batches(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                trading_account_id INTEGER REFERENCES trading_accounts(id) ON DELETE SET NULL,
+                extension_device_id BIGINT REFERENCES extension_devices(id) ON DELETE SET NULL,
+                platform_session_id BIGINT REFERENCES platform_sessions(id) ON DELETE SET NULL,
+                adapter_key TEXT NOT NULL,
+                command_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                payload JSONB DEFAULT '{}'::jsonb,
+                metadata JSONB DEFAULT '{}'::jsonb,
+                dispatched_at TIMESTAMPTZ,
+                acked_at TIMESTAMPTZ,
+                started_at TIMESTAMPTZ,
+                completed_at TIMESTAMPTZ,
+                expires_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+        await conn.execute(text("ALTER TABLE execution_commands ADD COLUMN IF NOT EXISTS dispatch_lease_owner TEXT"))
+        await conn.execute(text("ALTER TABLE execution_commands ADD COLUMN IF NOT EXISTS dispatch_lease_expires_at TIMESTAMPTZ"))
+        await conn.execute(text("CREATE INDEX IF NOT EXISTS execution_commands_poll_idx ON execution_commands(user_id, extension_device_id, status, created_at)"))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS execution_results (
+                id BIGSERIAL PRIMARY KEY,
+                execution_command_id BIGINT NOT NULL REFERENCES execution_commands(id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                result_payload JSONB DEFAULT '{}'::jsonb,
+                adapter_error_code TEXT,
+                adapter_error_message TEXT,
+                received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """))
+
+        await conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS canonical_orders (
+                id BIGSERIAL PRIMARY KEY,
+                trading_account_id INTEGER NOT NULL REFERENCES trading_accounts(id) ON DELETE CASCADE,
+                platform_order_ref TEXT NOT NULL,
+                symbol TEXT,
+                side TEXT,
+                order_type TEXT,
+                status TEXT,
+                quantity DOUBLE PRECISION,
+                filled_quantity DOUBLE PRECISION,
+                price DOUBLE PRECISION,
+                stop_price DOUBLE PRECISION,
+                submitted_at TIMESTAMPTZ,
+                source_metadata JSONB DEFAULT '{}'::jsonb,
+                last_seen_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                UNIQUE (trading_account_id, platform_order_ref)
+            )
+        """))
+
         await conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS trading_accounts_account_key_uq ON trading_accounts(account_key)"))
         await conn.execute(text("CREATE INDEX IF NOT EXISTS account_snapshots_account_time_idx ON account_snapshots(trading_account_id, snapshot_time DESC)"))
         await conn.execute(text("DROP INDEX IF EXISTS positions_account_position_key_uq"))
@@ -495,15 +651,22 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
         "account_size": account.get("account_size"),
         "is_active": account.get("is_active", True),
         "metadata": json.dumps(account.get("metadata") or {}),
+        "platform_key": account.get("platform_key"),
+        "platform_account_ref": account.get("platform_account_ref"),
+        "extension_device_id": account.get("extension_device_id"),
+        "platform_session_id": account.get("platform_session_id"),
+        "execution_enabled": account.get("execution_enabled", False),
     }
     async with engine.begin() as conn:
         row = (await conn.execute(text("""
             INSERT INTO trading_accounts (
                 account_key, user_id, connector_type, broker_name, external_account_id,
-                display_label, account_type, account_size, is_active, metadata
+                display_label, account_type, account_size, is_active, metadata,
+                platform_key, platform_account_ref, extension_device_id, platform_session_id, execution_enabled
             ) VALUES (
                 :account_key, :user_id, :connector_type, :broker_name, :external_account_id,
-                :display_label, :account_type, :account_size, :is_active, CAST(:metadata AS jsonb)
+                :display_label, :account_type, :account_size, :is_active, CAST(:metadata AS jsonb),
+                :platform_key, :platform_account_ref, :extension_device_id, :platform_session_id, :execution_enabled
             )
             ON CONFLICT (account_key)
             DO UPDATE SET
@@ -514,6 +677,11 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
                 account_size = COALESCE(EXCLUDED.account_size, trading_accounts.account_size),
                 is_active = EXCLUDED.is_active,
                 metadata = trading_accounts.metadata || EXCLUDED.metadata,
+                platform_key = COALESCE(EXCLUDED.platform_key, trading_accounts.platform_key),
+                platform_account_ref = COALESCE(EXCLUDED.platform_account_ref, trading_accounts.platform_account_ref),
+                extension_device_id = COALESCE(EXCLUDED.extension_device_id, trading_accounts.extension_device_id),
+                platform_session_id = COALESCE(EXCLUDED.platform_session_id, trading_accounts.platform_session_id),
+                execution_enabled = EXCLUDED.execution_enabled,
                 updated_at = NOW()
             RETURNING *
         """), params)).mappings().first()
