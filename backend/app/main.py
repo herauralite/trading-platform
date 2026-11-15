@@ -2305,7 +2305,8 @@ async def get_user_primary_account(telegram_user_id: str) -> str:
 @app.get("/telegram/profile-status")
 async def telegram_profile_status():
     from app.services import community_bot
-    return {"default_and_english_verified": community_bot.profile_verified}
+    return {"default_and_english_verified": community_bot.profile_verified,
+            "verified_text": community_bot.PROFILE_TEXT if community_bot.profile_verified else None}
 
 
 @app.post("/telegram/webhook")
