@@ -36,8 +36,8 @@ async def restore_profile():
             return
         for lang in ("", "en"):
             for method, field, value in (
-                ("Description", "description", "Welcome to TaliTrade. Track connected trading accounts, follow market events and find the official community. Tap Start to get started."),
-                ("ShortDescription", "short_description", "Private account updates and market alerts from TaliTrade. Official channel: @talitrade."),
+                ("Description", "description", "Automated trading alerts and account tools from TaliTrade."),
+                ("ShortDescription", "short_description", "Automated trading alerts and account tools from TaliTrade."),
             ):
                 args = {"language_code": lang}
                 current = await api(client, "getMy" + method, data=args)
