@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field, SecretStr
 
 from app.core import ingest_auth
 from app.core.ingest_auth import Principal
-from app.services.matchtrader_api import client as api, config, crypto, engine, ratelimit, read_models, reconcile
+from app.services.matchtrader_api import worker, client as api, config, crypto, engine, ratelimit, read_models, reconcile
 from app.services.matchtrader_api.store import IdentityConflict, SqlStore, StaleWriter
 
 logger = logging.getLogger("app.matchtrader_api")
@@ -169,6 +169,9 @@ async def connect(body: TokenBody, principal: Principal = Depends(ingest_auth.re
     token = _submitted_token(body)
     if not crypto.is_configured():
         raise HTTPException(status_code=503, detail="Token storage is not configured on this server")
+    if not config.service_status()["accepting_connections"]:
+        # Schema, routes and worker can be live before the form is opened; until then nothing is stored.
+        raise HTTPException(status_code=503, detail="New Match-Trader connections are not open on this server yet")
     _throttle(principal.user_id)
     probe = await _probe(token)
     identity, capabilities = probe["identity"], probe["capabilities"]
@@ -193,7 +196,11 @@ async def connect(body: TokenBody, principal: Principal = Depends(ingest_auth.re
         logger.warning("matchtrader connect conflict user=%s", principal.user_id)
         raise HTTPException(status_code=409, detail="This trading account is already connected. If it is yours, replace its token instead.") from None
     logger.info("matchtrader connection created id=%s user=%s status=%s", connection["id"], principal.user_id, status)
-    return {"ok": True, "connection": _public(connection)}
+    request = None
+    if status == "active":   # the first refresh is queued for the worker; the browser never waits on the broker
+        request, _ = await store.request_sync(connection["id"])
+        worker.nudge()
+    return {"ok": True, "connection": _public(connection), "sync_request": read_models.public_sync_request(request)}
 
 
 @router.get("/connections")
@@ -202,7 +209,8 @@ async def list_connections(response: Response, principal: Principal = Depends(in
     connections = await store.list_connections(principal.user_id)
     cards = {card["id"]: card for card in await get_read_models().list_owned(principal.user_id)}
     _private(response)
-    return {"connections": [{**_public(c, await store.get_sync_state(c["id"]), await store.coverage(c["id"])), "card": cards.get(c["id"])} for c in connections]}
+    return {"service": config.service_status(),
+            "connections": [{**_public(c, await store.get_sync_state(c["id"]), await store.coverage(c["id"])), "card": cards.get(c["id"])} for c in connections]}
 
 
 @router.get("/connections/{connection_id}/snapshot")
@@ -265,16 +273,32 @@ async def resume(connection_id: int, principal: Principal = Depends(ingest_auth.
     return {"ok": True}
 
 
-@router.post("/connections/{connection_id}/sync")
-async def manual_sync(connection_id: int, principal: Principal = Depends(ingest_auth.require_session_principal)):
+@router.post("/connections/{connection_id}/sync", status_code=202)
+async def request_sync(connection_id: int, response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Queue a refresh. Answers at once with 202; the worker does the broker calls.
+
+    A 202 means "accepted", never "synchronized": poll ``GET .../sync`` (or the snapshot) and read
+    ``request.state``: queued -> running -> completed | partial | failed."""
     store = get_store()
     connection = await _owned(store, connection_id, principal)
     if connection["status"] != "active":
         raise HTTPException(status_code=409, detail="This connection is not active")
-    outcome = await engine.sync_connection(store, connection_id, client_factory=lambda token, budget: make_client(token, budget))
-    result = read_models.interpret_sync_outcome(outcome)   # shares the lease and rate budget with the worker
-    # ``ok`` means fresh live data was persisted by THIS request - not merely that the request ran.
-    return {"ok": result["state"] in ("ok", "partial"), "result": result, "outcome": outcome}
+    if not config.worker_enabled():
+        raise HTTPException(status_code=503, detail="Background sync is not running on this server")
+    request, created = await store.request_sync(connection_id)
+    if request is None:
+        raise HTTPException(status_code=409, detail="This connection is not active")
+    worker.nudge()
+    _private(response)
+    return {"accepted": True, "already_pending": not created, "request": read_models.public_sync_request(request)}
+
+
+@router.get("/connections/{connection_id}/sync")
+async def sync_status(connection_id: int, response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
+    store = get_store()
+    await _owned(store, connection_id, principal)
+    _private(response)
+    return {"request": read_models.public_sync_request(await store.get_sync_request(connection_id))}
 
 
 @router.post("/connections/{connection_id}/backfill")
@@ -292,6 +316,8 @@ async def start_backfill(connection_id: int, body: BackfillBody, principal: Prin
             continue
         if await store.enqueue_backfill(connection_id, resource, body.from_ms - 1, cutoff + 1):
             queued.append(resource)
+    if queued:
+        worker.nudge()
     return {"ok": True, "queued": queued, "requested_from": datetime.fromtimestamp(body.from_ms / 1000, tz=timezone.utc).isoformat(),
             "requested_to": datetime.fromtimestamp(cutoff / 1000, tz=timezone.utc).isoformat(), "background_refresh_enabled": config.worker_enabled(),
             "note": "History is imported in the background. Coverage is reported per resource; it is only 'complete' for the range you requested."}

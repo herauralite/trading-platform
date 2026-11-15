@@ -897,8 +897,18 @@ def test_auth_me_requires_authenticated_session(monkeypatch):
         def connect(self):
             return FakeConnect()
 
+    hydrated = []
+
+    async def fake_hydrate(uid, *, trigger):
+        # /auth/me also runs the FundingPips canonical backfill (added after this test was written).
+        # That module holds its own reference to the database engine, so without this stub the test
+        # tried to open a real PostgreSQL connection. The identity it is called with is asserted below.
+        hydrated.append((uid, trigger))
+        return {}
+
     monkeypatch.setattr("app.core.database.engine", FakeEngine())
     monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+    monkeypatch.setattr(main_mod, "hydrate_fundingpips_canonical_state", fake_hydrate)
 
     async def _run(path: str, headers=None):
         transport = httpx.ASGITransport(app=app)
@@ -907,11 +917,13 @@ def test_auth_me_requires_authenticated_session(monkeypatch):
 
     unauth = asyncio.run(_run("/auth/me?telegram_user_id=123"))
     assert unauth.status_code == 401
+    assert hydrated == []          # nothing runs for an unauthenticated caller, whatever the query string claims
 
     token = create_session_token("123")
     auth = asyncio.run(_run("/auth/me", headers={"Authorization": f"Bearer {token}"}))
     assert auth.status_code == 200
     assert auth.json()["user"]["telegram_user_id"] == "123"
+    assert hydrated == [("123", "auth_me")]   # the backfill runs for the session's user, not a client-supplied id
 
 
 def test_authenticated_ingest_manual_routes_use_session_user(monkeypatch):

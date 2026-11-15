@@ -21,6 +21,8 @@
   var SNAPSHOT_MIN_INTERVAL_MS = 8000;
   var IMPORT_POLL_MS = 10000;
   var IMPORT_POLL_MAX = 30;
+  var SYNC_POLL_MS = 1500;      // how often a queued refresh is checked
+  var SYNC_POLL_MAX = 60;       // ...and for how long (90 s) before the page stops waiting
   var RECENT_BACKFILL_DAYS = 7;
 
   // ───────────────────────── HTTP client ─────────────────────────
@@ -67,7 +69,9 @@
     return {
       listConnections: function (o) { return request('GET', '/connections', o); },
       connect: function (o) { return request('POST', '/connections', { body: { token: o.token }, signal: o.signal }); },
+      // Queues a refresh (HTTP 202). It has NOT synchronized anything yet: follow up with getSyncStatus().
       sync: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/sync', o); },
+      getSyncStatus: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/sync', o); },
       getSnapshot: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/snapshot', o); },
       listTrades: function (connectionId, o) {
         o = o || {};
@@ -261,23 +265,42 @@
     };
   }
 
-  function interpretSync(body) {
-    var result = (body && body.result) || {};
-    switch (result.state) {
-      case 'ok': return { status: 'succeeded', liveReady: true, message: 'Synced just now.' };
-      case 'partial': return { status: 'succeeded', liveReady: true, message: 'Balance and positions updated. Some history could not be refreshed yet.' };
-      case 'busy': return { status: 'syncing', liveReady: false, message: 'A sync is already running for this account. Showing saved data.' };
-      case 'needs_reauth': return { status: 'failed', liveReady: false, message: 'The broker rejected the saved token. Reconnect with a new read-only token.' };
-      case 'rate_limited': return { status: 'failed', liveReady: false, message: 'Broker rate limit reached. Try again in a minute.' };
-      case 'not_active': return { status: 'failed', liveReady: false, message: 'This connection is not active.' };
-      default: return { status: 'failed', liveReady: false, message: 'Sync failed. Showing the last saved data.' };
+  var SYNC_RESOURCE_NAMES = { summary: 'balance', positions: 'open positions', pending_orders: 'pending orders' };
+  var SYNC_FAILURE_TEXT = {
+    unauthorized: 'The broker rejected the saved token. Reconnect with a new read-only token.',
+    needs_reauth: 'The broker rejected the saved token. Reconnect with a new read-only token.',
+    rate_limited: 'Broker rate limit reached. Try again in a minute.',
+    not_active: 'This connection is not active.',
+    credential_unreadable: 'The saved token can no longer be read. Reconnect with a new read-only token.',
+    internal: 'The sync could not be completed. Showing the last saved data.'
+  };
+
+  // One "refresh now" request as the server reports it. ``status`` drives the existing sync chip
+  // (syncing | success | failed | idle); ``label`` is the precise state shown to the user:
+  // queued | running | partial | completed | failed. Accepted (HTTP 202) is never "completed".
+  function interpretSyncRequest(request) {
+    if (!request || !request.state) return { status: 'failed', label: 'failed', pending: false, liveReady: false, message: 'Sync could not be started. Showing the last saved data.' };
+    var resources = request.resources || {};
+    switch (request.state) {
+      case 'queued': return { status: 'syncing', label: 'queued', pending: true, liveReady: false, message: 'Queued. Waiting for the sync worker…' };
+      case 'running': return { status: 'syncing', label: 'running', pending: true, liveReady: false, message: 'Running. Reading balance and positions from the broker…' };
+      case 'completed': return { status: 'success', label: 'completed', pending: false, liveReady: true, message: 'Completed. Balance and positions are up to date.' };
+      case 'partial': {
+        var missed = Object.keys(resources).filter(function (name) { return resources[name] !== 'ok' && resources[name] !== 'not_permitted'; })
+          .map(function (name) { return SYNC_RESOURCE_NAMES[name] || name; });
+        return { status: 'success', label: 'partial', pending: false, liveReady: true,
+                 message: 'Partially updated. Could not refresh: ' + (missed.join(', ') || 'some data') + '.' };
+      }
+      case 'cancelled': return { status: 'failed', label: 'failed', pending: false, liveReady: false, message: 'Sync was cancelled because the connection changed.' };
+      default: return { status: 'failed', label: 'failed', pending: false, liveReady: false,
+                        message: 'Failed. ' + (SYNC_FAILURE_TEXT[request.detail] || 'The broker could not be reached. Showing the last saved data.') };
     }
   }
 
   var pure = { formatMoney: formatMoney, relativeTime: relativeTime, deriveDisplayState: deriveDisplayState, mergeAccounts: mergeAccounts,
-               tradeToHistoryRow: tradeToHistoryRow, interpretSync: interpretSync, isApiAccountKey: isApiAccountKey, connectionIdFromKey: connectionIdFromKey,
+               tradeToHistoryRow: tradeToHistoryRow, interpretSyncRequest: interpretSyncRequest, isApiAccountKey: isApiAccountKey, connectionIdFromKey: connectionIdFromKey,
                toNumber: toNumber, CONNECTION_STATUS_TEXT: CONNECTION_STATUS_TEXT,
-               SNAPSHOT_MIN_INTERVAL_MS: SNAPSHOT_MIN_INTERVAL_MS, IMPORT_POLL_MS: IMPORT_POLL_MS, IMPORT_POLL_MAX: IMPORT_POLL_MAX, RECENT_BACKFILL_DAYS: RECENT_BACKFILL_DAYS };
+               SNAPSHOT_MIN_INTERVAL_MS: SNAPSHOT_MIN_INTERVAL_MS, IMPORT_POLL_MS: IMPORT_POLL_MS, IMPORT_POLL_MAX: IMPORT_POLL_MAX, SYNC_POLL_MS: SYNC_POLL_MS, SYNC_POLL_MAX: SYNC_POLL_MAX, RECENT_BACKFILL_DAYS: RECENT_BACKFILL_DAYS };
   global.TaliMatchTraderApi = { create: createClient, ApiError: ApiError };
   global.TaliMatchTraderCore = pure;
 })(typeof window !== 'undefined' ? window : globalThis);

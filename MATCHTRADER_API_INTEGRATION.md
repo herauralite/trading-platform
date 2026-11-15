@@ -33,7 +33,7 @@ run the smoke script before trusting any field.
 | Token encryption | `crypto.py` | AES-256-GCM, versioned keys, AAD binds user + connection + external identity |
 | Rate budget | `ratelimit.py` | Per account, per endpoint sliding window at 70% of documented limit; backfill limited to half; honours headers and Retry-After |
 | History planner | `backfill.py` | Bisect on a full page; per-millisecond queries only after proving inclusive bounds; otherwise explicit gap |
-| Persistence | `store.py` | 9 new `mtapi_*` tables; every write fenced by status + generation + lease |
+| Persistence | `store.py` | 10 new `mtapi_*` tables; every write fenced by status + generation + lease |
 | Sync pass | `engine.py` | Live (summary, positions, pending orders) and history (closed positions, ledgers), independent of each other |
 | Worker | `worker.py` | Polls due connections; one failing account never blocks others |
 | Routes | `routes.py` | `/connectors/matchtrader-api/connections...` - session auth only, owner from session |
@@ -48,7 +48,8 @@ run the smoke script before trusting any field.
 | GET | `/connectors/matchtrader-api/connections` | Status, per-resource freshness, history coverage. Token is masked (`...abcd`) |
 | POST | `.../{id}/rotate` | New token must resolve to the same external account |
 | POST | `.../{id}/pause`, `.../{id}/resume` | |
-| POST | `.../{id}/sync` | Manual pass; shares the lease and rate budget with the worker |
+| POST | `.../{id}/sync` | Queues a refresh (202). The worker runs it under the lease and rate budget |
+| GET | `.../{id}/sync` | State of that request: queued, running, completed, partial, failed, cancelled |
 | POST | `.../{id}/backfill` | Body `{from_ms}`. Queues history import from that date |
 | GET | `.../{id}/reconciliation` | Read-only report vs legacy trades (only if the user owns the linked account) |
 | DELETE | `.../{id}` | Stops sync, deletes stored token, keeps imported history. Does not revoke the token at the broker |
@@ -69,14 +70,59 @@ and were not changed.
 | Provider bridge (cards, snapshot -> cards, history, sync, token form) | `frontend/public/tali-matchtrader-dashboard.js` |
 | Dispatch hooks, token form, account sheet | `frontend/public/app.html` |
 
-Flow: token form -> `POST /connections` -> one `POST /{id}/sync` -> `GET /{id}/snapshot` -> `POST /{id}/backfill`
-(last 7 days) -> the worker finishes the import -> the page re-reads the snapshot every 10 s while importing.
-Browser GETs read PostgreSQL only. The page's 5-second status timer reads the snapshot at most every 8 s and
-never triggers a broker call.
+Flow: token form -> `POST /connections` (stores the connection and queues the first refresh) ->
+`POST /{id}/backfill` (last 7 days) -> the page follows the queued refresh with `GET /{id}/sync` every 1.5 s
+and re-reads the snapshot when it reaches a final state -> the worker finishes the import while the page
+re-reads the snapshot every 10 s. No browser request ever waits on the broker: every web request reads or
+writes PostgreSQL only. The page's 5-second status timer reads the snapshot at most every 8 s.
 
-`POST /{id}/sync` now returns `{"ok": bool, "result": {"state", "live_ready", "resources"}, "outcome"}`.
-`ok` is true only when summary and positions were persisted by that request. `state` is one of
-`ok | partial | busy | needs_reauth | rate_limited | failed | not_active`.
+### Refresh requests ("Sync now")
+
+`POST /{id}/sync` answers `202 {"accepted": true, "already_pending": bool, "request": {...}}` at once. It only
+queues work. One row per connection in `mtapi_sync_requests` is the durable request; asking again while it is
+queued or running returns the same request, so there is never a second job. The worker claims it under the
+normal lease (so it is fenced by generation like every other write), runs the three live calls, and records
+the result. `GET /{id}/sync` and the snapshot's `sync_request` report it:
+
+| `request.state` | Meaning | Dashboard label |
+| --- | --- | --- |
+| `queued` | Stored, waiting for the worker | queued |
+| `running` | The lease holder is calling the broker | running |
+| `completed` | Balance, positions and pending orders were all stored | completed |
+| `partial` | Balance and positions stored; `resources` says what was not | partial ("Partially updated") |
+| `failed` | Live data was not refreshed; `detail` says why (`unauthorized`, `rate_limited`, `failed`, ...) | failed |
+| `cancelled` | The connection was paused, disconnected or its token replaced first | failed |
+
+A request left `running` by a crashed pass is picked up by the next lease holder, at most 3 times. With the
+worker off, `POST /{id}/sync` answers 503 and queues nothing. A 202 never means "synchronized".
+
+### Keeping live data fresh during imports
+
+* Rows are written in bulk: one `INSERT .. SELECT FROM jsonb_to_recordset(..) ON CONFLICT` per 500 rows
+  instead of one round trip per row. Same per-row rules (uid de-duplication, revision and `previous_raw` only
+  move when the payload changed), same single transaction per history range.
+* A worker round does all due live work (and queued refreshes) first, then history.
+* History is bounded per pass by range count and by `TALITRADE_MT_API_HISTORY_PASS_SECONDS` (12). Between
+  ranges the pass refreshes live data if it has fallen due. Ranges not reached stay queued.
+* While ranges are queued, history runs again after `TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS` (20)
+  instead of the 120 s history interval. A new backfill starts at the next round.
+* Backfill that runs out of rate budget stops quietly and continues next pass (it is not a failure).
+* The worker sleeps until the next scheduled work (1-6 s) rather than a fixed 5-7 s.
+* Each pass logs timings only: `matchtrader pass connection=.. seconds=.. live_seconds=.. history_seconds=..`.
+
+Measured in the sandbox (simulated broker at 400 ms per call, PostgreSQL behind a 60 ms round-trip link,
+1,200 closed entries + 150 ledger rows over 7 days, default intervals; not a real broker or the real network):
+
+| | Before (`7fa9e30`) | After |
+| --- | --- | --- |
+| First refresh after connect, until a result is reported | 48.6 s inside one web request | 5.4 s, queued; the web request returns at once |
+| Database round trips for that first refresh | 695 | 63 |
+| Longest history transaction (500 rows) | 33.5 s | 0.9 s |
+| Longest worker pass | 52.8 s | 10.6 s |
+| Live refreshes while importing | 2 in 112 s, worst gap 84 s | 3 in 123 s, worst gap 37 s (typical 32 s) |
+| 7-day import progress after 2 minutes | 500 of 1,200 | 1,100 of 1,200 |
+
+Stale thresholds were not changed.
 
 Snapshot rules: money is a decimal string, times are UTC ISO-8601, unknown is `null`. `summary`, `positions`
 and `pending_orders` are `null` until their first successful fetch (`[]` means fetched and empty).
@@ -143,6 +189,9 @@ Additive only: 9 tables prefixed `mtapi_` plus indexes, created at startup **onl
 | `TALITRADE_MT_TOKEN_KEYS` | - | JSON `{"v1": "<base64 of 32 random bytes>"}`. Secret. Separate from `SECRET_KEY` |
 | `TALITRADE_MT_TOKEN_KEY_ACTIVE` | - | Key version used for new tokens, e.g. `v1` |
 | `TALITRADE_MT_API_GLOBAL_PER_MINUTE` | 30 | Account-wide request cap across all endpoints (the real ceiling is unpublished) |
+| `TALITRADE_MT_API_CONNECT_ENABLED` | off | Allows NEW connections and shows the token form. Needs the three above |
+| `TALITRADE_MT_API_HISTORY_PASS_SECONDS` | 12 | Time budget for history in one pass (min 2) |
+| `TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS` | 20 | History interval while ranges are still queued (min 5) |
 | `TALITRADE_MT_API_LIVE_INTERVAL_SECONDS` | 30 | Summary/positions/pending orders (min 10) |
 | `TALITRADE_MT_API_HISTORY_INTERVAL_SECONDS` | 120 | Closed positions/ledgers (min 30) |
 | `TALITRADE_MT_API_HISTORY_OVERLAP_SECONDS` | 900 | Re-read window on each history pass |
@@ -208,3 +257,43 @@ gap. Corrections older than the reconcile window are not detected. Ledger rows c
 6. Are webhooks, streaming or deal-level history available?
 
 Note: the brief says "FundedPips"; earlier project material says "FundingPips". Confirm which firm is meant.
+
+## Coordinated rollout (nothing here has been done; no production flag was changed)
+
+Five gates, opened in this order. Each can be verified before the next, and each has its own way back.
+
+| # | Gate | How it is opened | Ready when | Roll back |
+| --- | --- | --- | --- | --- |
+| 1 | Secrets | Set `TALITRADE_MT_TOKEN_KEYS` (new random 32-byte key, base64, JSON by version) and `TALITRADE_MT_TOKEN_KEY_ACTIVE` on the backend. Not `SECRET_KEY`, not reused from local testing | Value present in the deployment's secret store and backed up | Remove them (only before gate 5: afterwards stored tokens need the key) |
+| 2 | Schema + authenticated routes | `TALITRADE_MT_API_ENABLED=true`. Startup creates the ten `mtapi_*` tables (`CREATE TABLE IF NOT EXISTS`, additive, nothing existing is altered). Routes start answering | `GET /connectors/matchtrader-api/connections` is 401 without a session and, with one, returns `"connections": []` and `service.accepting_connections: false`; `POST .../connections` is 503 | Flag off: routes answer 404. Tables stay, unused |
+| 3 | Worker | `TALITRADE_MT_API_WORKER_ENABLED=true` (single backend process: `WEB_CONCURRENCY=1`) | Log line `Match-Trader API worker started`; `service.worker: true` | Flag off: polling stops, stored data stays readable |
+| 4 | Isolation and sign-in checks | No flag. Two real Telegram users, one test connection (see below) | Checks pass | - |
+| 5 | UI availability | `TALITRADE_MT_API_CONNECT_ENABLED=true`, with the frontend build that contains this branch already deployed | `service.accepting_connections: true`; the FundingPips card opens the token form | Flag off: the form closes at once; connected accounts keep syncing and stay visible |
+
+The dashboard offers the token form only when the server reports `accepting_connections` (secure storage +
+worker + connect gate). `POST /connections` enforces the same thing, so a stale page cannot create a
+connection either: a token submitted early is refused before it is used or stored.
+
+**FundingPips card while the form is closed.** On this branch the FundingPips card no longer falls back to
+the old FundingPips password login. Until gate 5 is open (or with the flag off, or on any server without the
+worker) the card is disabled and reads "API connection is unavailable on this server". So deploying this
+frontend before gate 5 means nobody can add a FundingPips account for that period. Accounts already linked
+through the extension are not affected. Deploy backend gates 1-3 first, then frontend and gate 5 together,
+or accept that window knowingly.
+
+**Rollback implications.**
+* Closing gate 5 only stops new connections. It does not stop syncing.
+* Turning the worker off freezes data at the last sync; the dashboard shows it as delayed/stale, not fresh.
+* Turning the API flag off hides everything (404). Nothing is deleted; turning it back on restores it.
+* Rolling the frontend back restores the previous FundingPips password path; API accounts disappear from that
+  page but remain stored.
+* Never remove or replace the active token key while connections exist: stored tokens become unreadable and
+  every user must reconnect. Rotate by adding a new version and changing `..._KEY_ACTIVE`.
+* The schema is additive. Dropping `mtapi_*` tables is the only destructive step and is not part of any rollback.
+
+**Still to be checked by people, not by the automated tests.**
+* Real Telegram sign-in on a deployed (non-localhost) host, then connecting with a real read-only token.
+* Two real Telegram users: B cannot see or operate A's connection (the automated two-user tests use signed
+  test sessions against a real PostgreSQL, not Telegram).
+* A real broker: first refresh time, live refresh interval during a real 7-day import (read the
+  `matchtrader pass` log lines), and behaviour on a real 429.

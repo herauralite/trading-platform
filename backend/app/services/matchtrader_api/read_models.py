@@ -229,11 +229,17 @@ class ReadModels:
                 } for r in rows]
 
             history = await self._history(conn, params, freshness)
+            request = (await conn.execute(text(f"""
+                SELECT r.request_id, r.state, r.detail, r.resources, r.requested_at, r.started_at, r.finished_at
+                FROM mtapi_sync_requests r JOIN mtapi_connections c ON c.id = r.connection_id WHERE {_OWNED}
+            """), params)).mappings().first()
         return {
+            "sync_request": public_sync_request(dict(request) if request else None),
             "connection": _connection_public(row, freshness), "summary": summary, "positions": positions, "pending_orders": pending,
             "freshness": freshness, "history": history, "server_time": _iso(now),
             "background_refresh": {"enabled": config.worker_enabled(), "live_interval_seconds": config.live_interval_seconds(),
                                    "history_interval_seconds": config.history_interval_seconds()},
+            "service": config.service_status(),
         }
 
     async def _history(self, conn, params: dict, freshness: dict) -> dict:
@@ -287,15 +293,15 @@ class ReadModels:
         limit = max(1, min(int(limit), MAX_TRADE_PAGE))
         params: dict[str, Any] = {"id": connection_id, "user": user_id, "n": limit + 1}
         keyset = ""
-        if cursor:
-            params["ct"], params["cu"] = decode_cursor(cursor)
-            keyset = "AND (t.close_time, t.uid) < (:ct, :cu)"
         engine = self._engine_getter()
         async with engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
-            owned = (await conn.execute(text(f"SELECT 1 FROM mtapi_connections c WHERE {_OWNED}"), params)).first()
+            owned = (await conn.execute(text(f"SELECT 1 FROM mtapi_connections c WHERE {_OWNED}"), {"id": connection_id, "user": user_id})).first()
             if not owned:
-                raise NotFound()
+                raise NotFound()   # decided before the cursor is even parsed: one answer for every non-owner request
+            if cursor:
+                params["ct"], params["cu"] = decode_cursor(cursor)
+                keyset = "AND (t.close_time, t.uid) < (:ct, :cu)"
             rows = (await conn.execute(text(f"""
                 SELECT t.uid, t.position_id, t.symbol, t.alias, t.side, t.volume, t.open_price, t.close_price, t.open_time, t.close_time,
                        t.profit, t.commission, t.swap, t.net_profit, t.close_reason
@@ -316,6 +322,22 @@ class ReadModels:
             "next_cursor": encode_cursor(page[-1]["close_time"], page[-1]["uid"]) if more and page else None,
             "has_more": more,
         }
+
+
+SYNC_REQUEST_PENDING = ("queued", "running")
+
+
+def public_sync_request(row: dict | None) -> dict | None:
+    """A "refresh now" request as shown to its owner. state: queued | running | completed |
+    partial | failed | cancelled. Only 'completed' means every live resource was refreshed."""
+    if not row:
+        return None
+    resources = row.get("resources") or {}
+    if isinstance(resources, str):
+        resources = json.loads(resources)
+    return {"id": int(row["request_id"]), "state": row["state"], "detail": row.get("detail"), "resources": resources,
+            "pending": row["state"] in SYNC_REQUEST_PENDING, "requested_at": _iso(row.get("requested_at")),
+            "started_at": _iso(row.get("started_at")), "finished_at": _iso(row.get("finished_at"))}
 
 
 def interpret_sync_outcome(outcome: dict) -> dict:

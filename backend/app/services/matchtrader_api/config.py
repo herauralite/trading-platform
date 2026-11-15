@@ -52,4 +52,32 @@ def backfill_intervals_per_cycle() -> int:
     return _int("TALITRADE_MT_API_BACKFILL_INTERVALS_PER_CYCLE", 2, 0)
 
 
+def history_pass_seconds() -> int:
+    """Wall-clock budget for history work in one pass. Remaining ranges stay queued for the next pass."""
+    return _int("TALITRADE_MT_API_HISTORY_PASS_SECONDS", 12, 2)
+
+
+def history_backlog_interval_seconds() -> int:
+    """How soon history runs again while queued ranges remain (instead of the normal history interval)."""
+    return _int("TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS", 20, 5)
+
+
+def connect_enabled() -> bool:
+    """Whether NEW connections may be created (and the dashboard may show the token form).
+
+    Deliberately separate from api_enabled(): schema, routes and the worker can be deployed and
+    verified first, with the form still closed."""
+    return api_enabled() and _flag("TALITRADE_MT_API_CONNECT_ENABLED")
+
+
+def service_status() -> dict:
+    """Readiness gates as the dashboard sees them. No secrets, only booleans."""
+    from app.services.matchtrader_api import crypto
+
+    status = {"secure_storage": crypto.is_configured(), "worker": worker_enabled(), "connect_enabled": connect_enabled()}
+    status["accepting_connections"] = all(status.values())
+    return status
+
+
 LEASE_SECONDS = 90
+SYNC_REQUEST_MAX_ATTEMPTS = 3

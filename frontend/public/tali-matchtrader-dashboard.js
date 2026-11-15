@@ -13,7 +13,7 @@
     var state = freshState();
 
     function freshState() {
-      return { available: null, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null };
+      return { available: null, service: null, syncWatch: {}, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null };
     }
     function now() { return deps.now ? deps.now() : Date.now(); }
     function controller() {
@@ -57,7 +57,9 @@
       if (!session) { state.cards = []; return Promise.resolve(false); }
       return api.listConnections({}).then(function (body) {
         if (session !== deps.getSessionToken()) return false;
-        state.available = true;
+        // The form is offered only when the server says every part is ready (storage, worker, gate).
+        state.service = body.service || null;
+        state.available = !!(body.service && body.service.accepting_connections === true);
         state.listError = null;
         var before = fingerprint();
         state.cards = (body.connections || []).map(function (c) { return c.card; }).filter(Boolean);
@@ -66,6 +68,7 @@
       }, function (err) {
         if (err && err.status === 404) {   // feature is off on this server: hide it, break nothing
           state.available = false;
+          state.service = null;
           if (state.cards.length) { state.cards = []; if (host) host.rehydrateAccounts(); }
           return false;
         }
@@ -169,8 +172,10 @@
         : h.coverage_status === 'complete_for_requested_range' ? 'Trade history imported' + (h.requested_from ? ' since ' + new Date(h.requested_from).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ' for the recent period') + ' · ' + (h.closed_entry_count || 0) + ' closed entries.'
         : h.coverage_status === 'not_permitted' ? 'Trade history is not permitted by this token.' : 'Trade history has not been imported yet.';
       panel.appendChild(el('div', note, 'font-size:11px;color:var(--t3);margin-top:10px'));
+      var pending = snapshot.sync_request && snapshot.sync_request.pending ? core.interpretSyncRequest(snapshot.sync_request) : null;
+      if (pending) panel.appendChild(el('div', 'Refresh ' + pending.label + '…', 'font-size:11px;color:var(--blue);margin-top:4px'));
       if (snapshot.background_refresh && snapshot.background_refresh.enabled === false) {
-        panel.appendChild(el('div', 'Background refresh is turned off on this server. Data updates only when you press Sync now.', 'font-size:11px;color:var(--orange);margin-top:4px'));
+        panel.appendChild(el('div', 'Background refresh is turned off on this server. Saved data is shown and cannot be refreshed until it is turned on.', 'font-size:11px;color:var(--orange);margin-top:4px'));
       }
     }
 
@@ -240,23 +245,56 @@
     }
 
     // ── sync ──
+    function delay(ms) { return deps.delay ? deps.delay(ms) : new Promise(function (resolve) { global.setTimeout(resolve, ms); }); }
+
+    // Follow one queued refresh until the server reports a final state. The POST only queued it.
+    function watchSync(accountKey, id, firstRequest) {
+      var session = deps.getSessionToken();
+      var generation = state.generation;
+      var token = (state.syncWatch[accountKey] || 0) + 1;
+      state.syncWatch[accountKey] = token;                       // a newer watch for the same account replaces this one
+      var polls = 0;
+      function alive() { return session === deps.getSessionToken() && state.syncWatch[accountKey] === token && !!card(accountKey); }
+      function show(view) { host.setManualSyncState(accountKey, { status: view.status, label: view.label, message: view.message, updatedAt: now() }); }
+      function settle(view) {
+        show(view);
+        // Always re-read what is actually stored; never assume the request changed anything.
+        return loadConnections().then(function () {
+          if (!alive() || host.getActiveAccount() !== accountKey) return view;
+          if (generation !== state.generation) return view;      // the user moved on; their next view loads its own data
+          return refreshSnapshot(accountKey, { force: true }).then(function () { host.reloadHistory(); return view; });
+        });
+      }
+      function step(request) {
+        if (!alive()) return Promise.resolve({ status: 'idle', pending: false, liveReady: false });
+        var view = core.interpretSyncRequest(request);
+        if (!view.pending) return settle(view);
+        show(view);
+        if (++polls > core.SYNC_POLL_MAX) {
+          return settle({ status: 'idle', label: view.label, pending: true, liveReady: false,
+                          message: 'Still ' + view.label + ' on the server. Saved data is shown; it will update when the sync runs.' });
+        }
+        return delay(core.SYNC_POLL_MS).then(function () {
+          if (!alive()) return { status: 'idle', pending: false, liveReady: false };
+          return api.getSyncStatus(id, {}).then(function (body) { return step(body && body.request); }, function (err) {
+            if (err && err.status === 404) return settle({ status: 'failed', label: 'failed', pending: false, liveReady: false, message: 'This connection is no longer available.' });
+            return step(request);                                 // a blip while polling is not a sync failure: keep waiting
+          });
+        });
+      }
+      return step(firstRequest);
+    }
+
     function manualSync(accountKey) {
       var id = connectionIdForAccount(accountKey);
       if (id === null) return Promise.resolve();
-      host.setManualSyncState(accountKey, { status: 'syncing', message: 'Asking the broker for fresh data…', updatedAt: now() });
+      host.setManualSyncState(accountKey, { status: 'syncing', label: 'queued', message: 'Requesting a refresh…', updatedAt: now() });
       return api.sync(id, {}).then(function (body) {
-        var verdict = core.interpretSync(body);
-        host.setManualSyncState(accountKey, { status: verdict.status, message: verdict.message, updatedAt: now() });
-        return verdict;
+        return watchSync(accountKey, id, body && body.request);
       }, function (err) {
-        host.setManualSyncState(accountKey, { status: 'failed', message: (err && err.message) || 'Sync failed.', updatedAt: now() });
-        return { status: 'failed', liveReady: false };
-      }).then(function (verdict) {
-        // Always re-read what is actually stored; never assume the POST changed anything.
-        return loadConnections().then(function () {
-          if (host.getActiveAccount() !== accountKey) return verdict;
-          return refreshSnapshot(accountKey, { force: true }).then(function () { host.reloadHistory(); return verdict; });
-        });
+        var view = { status: 'failed', label: 'failed', pending: false, liveReady: false, message: 'Failed. ' + ((err && err.message) || 'The refresh could not be requested.') };
+        host.setManualSyncState(accountKey, { status: view.status, label: view.label, message: view.message, updatedAt: now() });
+        return view;
       });
     }
 
@@ -307,18 +345,22 @@
               : 'The account was saved but is not active (' + connection.status + ').');
           });
         }
-        f.success = 'Account verified. Loading balances…';
+        f.success = 'Account verified. First sync queued…';
         host.renderAddAccountFlow();
-        return api.sync(connection.id, {}).then(core.interpretSync, function () { return { status: 'failed', liveReady: false, message: 'First sync could not start.' }; }).then(function (verdict) {
-          var fromMs = now() - core.RECENT_BACKFILL_DAYS * 86400000;
-          return api.startRecentBackfill(connection.id, { fromMs: fromMs }).then(null, function () { return null; }).then(function () {
-            return loadConnections();
-          }).then(function () {
-            f.loading = false;
-            host.closeAddAccountFlow();
-            host.activateAccount(key);
-            host.showAccountActionStatus(verdict.liveReady ? 'Match-Trader account connected. Recent trades are importing.' : 'Account connected, but the first sync did not finish: ' + verdict.message, verdict.liveReady ? 'success' : 'info');
-            startImportPolling(key);
+        // The server queued the first refresh when it stored the connection. Nothing here waits on the broker.
+        var firstRequest = body.sync_request || null;
+        var fromMs = now() - core.RECENT_BACKFILL_DAYS * 86400000;
+        return api.startRecentBackfill(connection.id, { fromMs: fromMs }).then(null, function () { return null; }).then(function () {
+          return loadConnections();
+        }).then(function () {
+          f.loading = false;
+          host.closeAddAccountFlow();
+          host.activateAccount(key);
+          host.showAccountActionStatus('Match-Trader account connected. The first sync is queued; balances appear when it completes.', 'success');
+          startImportPolling(key);
+          var started = firstRequest ? Promise.resolve({ request: firstRequest }) : api.sync(connection.id, {});
+          started.then(function (queued) { return watchSync(key, connection.id, queued && queued.request); }, function (err) {
+            host.setManualSyncState(key, { status: 'failed', label: 'failed', message: 'Failed. ' + ((err && err.message) || 'The first sync could not be requested.'), updatedAt: now() });
           });
         });
       }, function (err) {
@@ -368,6 +410,7 @@
       loadHistoryPage: loadHistoryPage, renderJournal: renderJournal, manualSync: manualSync, submitToken: submitToken,
       openReconnect: openReconnect, disconnect: disconnect, sheetSubtitle: sheetSubtitle, clearTokenInput: clearTokenInput,
       isAvailable: function () { return state.available === true; },
+      serviceStatus: function () { return state.service; },
       isDisconnectPending: function (accountKey) { return state.pendingDisconnect === accountKey; },
       needsReconnect: function (accountKey) { var c = card(accountKey); return !!c && (c.status === 'needs_reauth' || c.status === 'error' || c.status === 'forbidden'); },
       cardFor: card

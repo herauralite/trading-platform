@@ -51,6 +51,30 @@ def _raw(model) -> str:
     return json.dumps(model.raw, default=str, sort_keys=True)
 
 
+BULK_CHUNK = 500
+
+
+def _unique(rows: list[dict], key: str) -> list[dict]:
+    """Last occurrence wins, as with row-by-row upserts. (One INSERT .. ON CONFLICT statement may
+    not touch the same key twice.)"""
+    return list({row[key]: row for row in rows}.values())
+
+
+def _chunks(rows: list[dict]):
+    for start in range(0, len(rows), BULK_CHUNK):
+        yield rows[start:start + BULK_CHUNK]
+
+
+def _rows_json(rows: list[dict]) -> str:
+    """Rows as one JSON parameter. Decimals travel as strings so no precision is lost on the way
+    to NUMERIC; datetimes as ISO-8601."""
+    def encode(value):
+        if isinstance(value, datetime):
+            return value.isoformat()
+        return str(value)
+    return json.dumps(rows, default=encode)
+
+
 DDL = [
     """CREATE TABLE IF NOT EXISTS mtapi_connections (
         id SERIAL PRIMARY KEY,
@@ -156,9 +180,26 @@ DDL = [
         UNIQUE (connection_id, resource, range_from, range_to)
     )""",
     "CREATE INDEX IF NOT EXISTS idx_mtapi_intervals_queue ON mtapi_history_intervals (connection_id, status, kind)",
+    # One durable "refresh now" request per connection. state: queued | running | completed | partial | failed | cancelled.
+    # The worker runs it under the normal lease; ``generation`` ties it to the credential it was asked for.
+    """CREATE TABLE IF NOT EXISTS mtapi_sync_requests (
+        connection_id INTEGER PRIMARY KEY REFERENCES mtapi_connections(id) ON DELETE CASCADE,
+        request_id INTEGER NOT NULL DEFAULT 1,
+        generation INTEGER NOT NULL,
+        state TEXT NOT NULL DEFAULT 'queued',
+        detail TEXT,
+        resources JSONB NOT NULL DEFAULT '{}'::jsonb,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        started_at TIMESTAMPTZ,
+        finished_at TIMESTAMPTZ
+    )""",
 ]
 
-DROP_ORDER = ["mtapi_history_intervals", "mtapi_ledgers", "mtapi_closed_positions", "mtapi_pending_orders",
+_CANCEL_REQUESTS = """UPDATE mtapi_sync_requests SET state = 'cancelled', detail = :why, finished_at = NOW()
+                      WHERE connection_id = :id AND state IN ('queued', 'running')"""
+
+DROP_ORDER = ["mtapi_sync_requests", "mtapi_history_intervals", "mtapi_ledgers", "mtapi_closed_positions", "mtapi_pending_orders",
               "mtapi_positions", "mtapi_account_summary", "mtapi_sync_state", "mtapi_credentials", "mtapi_connections"]
 
 
@@ -210,8 +251,10 @@ class SqlStore:
             row = (await conn.execute(text("SELECT ciphertext, key_version, generation FROM mtapi_credentials WHERE connection_id = :id"), {"id": connection_id})).mappings().first()
         return dict(row) if row else None
 
-    async def set_status(self, connection_id: int, status: str, detail: str | None = None, *, bump_generation: bool = True, only_from: tuple[str, ...] | None = None) -> bool:
-        """Change status. Bumping the generation fences every in-flight writer."""
+    async def set_status(self, connection_id: int, status: str, detail: str | None = None, *, bump_generation: bool = True,
+                         only_from: tuple[str, ...] | None = None, cancel_requests: bool = True) -> bool:
+        """Change status. Bumping the generation fences every in-flight writer. A pending refresh
+        request is cancelled too, unless the caller is the sync pass that will report its own result."""
         clause = "AND status = ANY(CAST(:only_from AS text[]))" if only_from else "AND status <> 'disconnected'"
         async with self.engine.begin() as conn:
             result = await conn.execute(text(f"""
@@ -223,6 +266,8 @@ class SqlStore:
             """), {"id": connection_id, "s": status, "d": detail, "bump": 1 if bump_generation else 0, "only_from": list(only_from or ())})
             if result.rowcount and bump_generation:
                 await conn.execute(text("UPDATE mtapi_credentials SET generation = (SELECT generation FROM mtapi_connections WHERE id = :id) WHERE connection_id = :id"), {"id": connection_id})
+            if result.rowcount and cancel_requests:
+                await conn.execute(text(_CANCEL_REQUESTS), {"id": connection_id, "why": "connection_changed"})
         return bool(result.rowcount)
 
     async def rotate_credential(self, connection_id: int, *, encrypt: Callable[[int], str], key_version: Callable[[str], str], token_hint: str, capabilities: dict) -> dict:
@@ -242,6 +287,7 @@ class SqlStore:
                 ON CONFLICT (connection_id) DO UPDATE SET ciphertext = EXCLUDED.ciphertext, key_version = EXCLUDED.key_version,
                     generation = EXCLUDED.generation, created_at = NOW()
             """), {"id": connection_id, "c": blob, "k": key_version(blob), "g": row["generation"]})
+            await conn.execute(text(_CANCEL_REQUESTS), {"id": connection_id, "why": "token_replaced"})
             return dict(row)
 
     async def disconnect(self, connection_id: int) -> bool:
@@ -254,6 +300,7 @@ class SqlStore:
             """), {"id": connection_id})
             await conn.execute(text("DELETE FROM mtapi_credentials WHERE connection_id = :id"), {"id": connection_id})
             await conn.execute(text("UPDATE mtapi_history_intervals SET status = 'cancelled' WHERE connection_id = :id AND status = 'queued'"), {"id": connection_id})
+            await conn.execute(text(_CANCEL_REQUESTS), {"id": connection_id, "why": "disconnected"})
         return bool(result.rowcount)
 
     # ── leases ───────────────────────────────────────────────────────────────
@@ -314,15 +361,78 @@ class SqlStore:
             """), {"id": connection_id, "live": live_in, "hist": history_in})
 
     async def due_connections(self, limit: int = 20) -> list[dict]:
+        """Connections with work to do and no live lease. Requested refreshes come first."""
         async with self.engine.connect() as conn:
             rows = (await conn.execute(text("""
-                SELECT id, next_live_sync_at <= NOW() AS live_due, next_history_sync_at <= NOW() AS history_due
-                FROM mtapi_connections
-                WHERE status = 'active' AND (next_live_sync_at <= NOW() OR next_history_sync_at <= NOW())
-                  AND (lease_owner IS NULL OR lease_expires_at < NOW())
-                ORDER BY LEAST(next_live_sync_at, next_history_sync_at) LIMIT :n
+                SELECT c.id, c.next_live_sync_at <= NOW() AS live_due, c.next_history_sync_at <= NOW() AS history_due,
+                       COALESCE(r.state IN ('queued', 'running'), FALSE) AS sync_requested
+                FROM mtapi_connections c LEFT JOIN mtapi_sync_requests r ON r.connection_id = c.id
+                WHERE c.status = 'active'
+                  AND (c.next_live_sync_at <= NOW() OR c.next_history_sync_at <= NOW() OR COALESCE(r.state IN ('queued', 'running'), FALSE))
+                  AND (c.lease_owner IS NULL OR c.lease_expires_at < NOW())
+                ORDER BY COALESCE(r.state IN ('queued', 'running'), FALSE) DESC, LEAST(c.next_live_sync_at, c.next_history_sync_at) LIMIT :n
             """), {"n": limit})).mappings().all()
         return [dict(r) for r in rows]
+
+    async def seconds_until_next_due(self) -> float | None:
+        """Seconds until the earliest scheduled work on any active connection (None when there is none)."""
+        async with self.engine.connect() as conn:
+            value = (await conn.execute(text("""
+                SELECT EXTRACT(EPOCH FROM MIN(LEAST(next_live_sync_at, next_history_sync_at)) - NOW())
+                FROM mtapi_connections WHERE status = 'active'
+            """))).scalar()
+        return float(value) if value is not None else None
+
+    # ── refresh requests ─────────────────────────────────────────────────────
+    async def request_sync(self, connection_id: int) -> tuple[dict | None, bool]:
+        """Queue one refresh for an active connection. Returns (request, created).
+
+        Account-scoped and idempotent: while a request is queued or running, asking again returns
+        that same request (created=False) instead of adding a second job."""
+        async with self.engine.begin() as conn:
+            row = (await conn.execute(text("SELECT status, generation FROM mtapi_connections WHERE id = :id FOR UPDATE"), {"id": connection_id})).mappings().first()
+            if not row or row["status"] != "active":
+                return None, False
+            existing = (await conn.execute(text("SELECT * FROM mtapi_sync_requests WHERE connection_id = :id"), {"id": connection_id})).mappings().first()
+            if existing and existing["state"] in ("queued", "running"):
+                return dict(existing), False
+            request = (await conn.execute(text("""
+                INSERT INTO mtapi_sync_requests (connection_id, request_id, generation, state) VALUES (:id, 1, :g, 'queued')
+                ON CONFLICT (connection_id) DO UPDATE SET request_id = mtapi_sync_requests.request_id + 1, generation = EXCLUDED.generation,
+                    state = 'queued', detail = NULL, resources = '{}'::jsonb, attempts = 0, requested_at = NOW(), started_at = NULL, finished_at = NULL
+                RETURNING *
+            """), {"id": connection_id, "g": row["generation"]})).mappings().first()
+            return dict(request), True
+
+    async def get_sync_request(self, connection_id: int) -> dict | None:
+        async with self.engine.connect() as conn:
+            row = (await conn.execute(text("SELECT * FROM mtapi_sync_requests WHERE connection_id = :id"), {"id": connection_id})).mappings().first()
+        return dict(row) if row else None
+
+    async def claim_sync_request(self, connection_id: int, generation: int, owner: str) -> dict | None:
+        """Mark the pending request as running. Only the lease holder may do this, so a request
+        left 'running' by a crashed pass is simply picked up again by the next lease holder."""
+        async with self.engine.begin() as conn:
+            await self._guard(conn, connection_id, generation, owner)
+            row = (await conn.execute(text("""
+                UPDATE mtapi_sync_requests SET state = 'running', started_at = COALESCE(started_at, NOW()), attempts = attempts + 1
+                WHERE connection_id = :id AND state IN ('queued', 'running') RETURNING *
+            """), {"id": connection_id})).mappings().first()
+        return dict(row) if row else None
+
+    async def finish_sync_request(self, connection_id: int, request_id: int, state: str, detail: str | None, resources: dict) -> bool:
+        """Record the outcome. Fenced by request_id: a newer request is never overwritten."""
+        async with self.engine.begin() as conn:
+            result = await conn.execute(text("""
+                UPDATE mtapi_sync_requests SET state = :s, detail = :d, resources = CAST(:r AS jsonb), finished_at = NOW()
+                WHERE connection_id = :id AND request_id = :rid AND state = 'running'
+            """), {"id": connection_id, "rid": request_id, "s": state, "d": detail, "r": json.dumps(resources)})
+        return bool(result.rowcount)
+
+    async def has_queued_intervals(self, connection_id: int) -> bool:
+        async with self.engine.connect() as conn:
+            return bool((await conn.execute(text("SELECT 1 FROM mtapi_history_intervals WHERE connection_id = :id AND status = 'queued' LIMIT 1"),
+                                            {"id": connection_id})).first())
 
     # ── live state ───────────────────────────────────────────────────────────
     async def save_summary(self, connection_id: int, generation: int, owner: str, summary: schemas.AccountSummary, fetched_at: datetime) -> bool:
@@ -349,16 +459,20 @@ class SqlStore:
             if newer:
                 return False
             await conn.execute(text("DELETE FROM mtapi_positions WHERE connection_id = :id"), {"id": connection_id})
-            for p in positions:
+            rows = _unique([{"eid": p.id, "symbol": p.symbol, "alias": p.alias, "side": p.side, "volume": p.volume, "open_price": p.openPrice,
+                             "current_price": p.currentPrice, "commission": p.commission, "swap": p.swap, "profit": p.profit, "net_profit": p.netProfit,
+                             "margin": p.margin, "open_time": _dt(p.openTime), "tp": p.tpPrice, "sl": p.slPrice, "trail": p.trailingDistance,
+                             "comment": p.comment} for p in positions], "eid")
+            for chunk in _chunks(rows):   # one statement per chunk instead of one round trip per row
                 await conn.execute(text("""
                     INSERT INTO mtapi_positions (connection_id, external_id, symbol, alias, side, volume, open_price, current_price, commission, swap,
                         profit, net_profit, margin, open_time, tp_price, sl_price, trailing_distance, comment, fetched_at)
-                    VALUES (:id, :eid, :symbol, :alias, :side, :volume, :open_price, :current_price, :commission, :swap,
-                        :profit, :net_profit, :margin, :open_time, :tp, :sl, :trail, :comment, :at)
-                """), {"id": connection_id, "eid": p.id, "symbol": p.symbol, "alias": p.alias, "side": p.side, "volume": p.volume,
-                       "open_price": p.openPrice, "current_price": p.currentPrice, "commission": p.commission, "swap": p.swap, "profit": p.profit,
-                       "net_profit": p.netProfit, "margin": p.margin, "open_time": _dt(p.openTime), "tp": p.tpPrice, "sl": p.slPrice,
-                       "trail": p.trailingDistance, "comment": p.comment, "at": fetched_at})
+                    SELECT :id, x.eid, x.symbol, x.alias, x.side, x.volume, x.open_price, x.current_price, x.commission, x.swap,
+                        x.profit, x.net_profit, x.margin, x.open_time, x.tp, x.sl, x.trail, x.comment, :at
+                    FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(eid text, symbol text, alias text, side text, volume numeric, open_price numeric,
+                        current_price numeric, commission numeric, swap numeric, profit numeric, net_profit numeric, margin numeric,
+                        open_time timestamptz, tp numeric, sl numeric, trail numeric, comment text)
+                """), {"id": connection_id, "at": fetched_at, "rows": _rows_json(chunk)})
             await self._touch_state(conn, connection_id, "positions", ok=True, snapshot_at=fetched_at)
         return True
 
@@ -370,25 +484,37 @@ class SqlStore:
             if newer:
                 return False
             await conn.execute(text("DELETE FROM mtapi_pending_orders WHERE connection_id = :id"), {"id": connection_id})
-            for o in orders:
+            rows = _unique([{"eid": o.id, "symbol": o.symbol, "alias": o.alias, "side": o.side, "type": o.type, "volume": o.volume,
+                             "activation": o.activationPrice, "tp": o.tpPrice, "sl": o.slPrice, "created": _dt(o.createTime),
+                             "updated": _dt(o.lastUpdateTime), "comment": o.comment} for o in orders], "eid")
+            for chunk in _chunks(rows):
                 await conn.execute(text("""
                     INSERT INTO mtapi_pending_orders (connection_id, external_id, symbol, alias, side, order_type, volume, activation_price,
                         tp_price, sl_price, create_time, last_update_time, comment, fetched_at)
-                    VALUES (:id, :eid, :symbol, :alias, :side, :type, :volume, :activation, :tp, :sl, :created, :updated, :comment, :at)
-                """), {"id": connection_id, "eid": o.id, "symbol": o.symbol, "alias": o.alias, "side": o.side, "type": o.type, "volume": o.volume,
-                       "activation": o.activationPrice, "tp": o.tpPrice, "sl": o.slPrice, "created": _dt(o.createTime), "updated": _dt(o.lastUpdateTime),
-                       "comment": o.comment, "at": fetched_at})
+                    SELECT :id, x.eid, x.symbol, x.alias, x.side, x.type, x.volume, x.activation, x.tp, x.sl, x.created, x.updated, x.comment, :at
+                    FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(eid text, symbol text, alias text, side text, type text, volume numeric,
+                        activation numeric, tp numeric, sl numeric, created timestamptz, updated timestamptz, comment text)
+                """), {"id": connection_id, "at": fetched_at, "rows": _rows_json(chunk)})
             await self._touch_state(conn, connection_id, "pending_orders", ok=True, snapshot_at=fetched_at)
         return True
 
     # ── history ──────────────────────────────────────────────────────────────
     async def _upsert_closed(self, conn, connection_id: int, entries: list[schemas.ClosedPosition]) -> None:
-        for e in entries:
+        """Bulk upsert keyed by (connection, uid). Same per-row semantics as before (revision and
+        previous_raw only move when the payload really changed), but one statement per chunk."""
+        rows = _unique([{"uid": e.uid, "pid": e.id, "coid": e.closingOrderId, "symbol": e.symbol, "alias": e.alias, "side": e.side,
+                         "volume": e.volume, "open_price": e.openPrice, "close_price": e.closePrice, "commission": e.commission, "swap": e.swap,
+                         "profit": e.profit, "net_profit": e.netProfit, "open_time": _dt(e.openTime), "close_time": _dt(e.closeTime), "sl": e.slPrice,
+                         "tp": e.tpPrice, "reason": e.closeReason, "comment": e.comment, "raw": json.loads(_raw(e))} for e in entries], "uid")
+        for chunk in _chunks(rows):
             await conn.execute(text("""
                 INSERT INTO mtapi_closed_positions (connection_id, uid, position_id, closing_order_id, symbol, alias, side, volume, open_price,
                     close_price, commission, swap, profit, net_profit, open_time, close_time, sl_price, tp_price, close_reason, comment, raw)
-                VALUES (:id, :uid, :pid, :coid, :symbol, :alias, :side, :volume, :open_price, :close_price, :commission, :swap, :profit,
-                    :net_profit, :open_time, :close_time, :sl, :tp, :reason, :comment, CAST(:raw AS jsonb))
+                SELECT :id, x.uid, x.pid, x.coid, x.symbol, x.alias, x.side, x.volume, x.open_price, x.close_price, x.commission, x.swap, x.profit,
+                    x.net_profit, x.open_time, x.close_time, x.sl, x.tp, x.reason, x.comment, x.raw
+                FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(uid text, pid text, coid text, symbol text, alias text, side text, volume numeric,
+                    open_price numeric, close_price numeric, commission numeric, swap numeric, profit numeric, net_profit numeric,
+                    open_time timestamptz, close_time timestamptz, sl numeric, tp numeric, reason text, comment text, raw jsonb)
                 ON CONFLICT (connection_id, uid) DO UPDATE SET
                     previous_raw = CASE WHEN mtapi_closed_positions.raw IS DISTINCT FROM EXCLUDED.raw THEN mtapi_closed_positions.raw ELSE mtapi_closed_positions.previous_raw END,
                     revision = mtapi_closed_positions.revision + CASE WHEN mtapi_closed_positions.raw IS DISTINCT FROM EXCLUDED.raw THEN 1 ELSE 0 END,
@@ -397,22 +523,22 @@ class SqlStore:
                     commission = EXCLUDED.commission, swap = EXCLUDED.swap, profit = EXCLUDED.profit, net_profit = EXCLUDED.net_profit,
                     open_time = EXCLUDED.open_time, close_time = EXCLUDED.close_time, sl_price = EXCLUDED.sl_price, tp_price = EXCLUDED.tp_price,
                     close_reason = EXCLUDED.close_reason, comment = EXCLUDED.comment, raw = EXCLUDED.raw, last_seen_at = NOW()
-            """), {"id": connection_id, "uid": e.uid, "pid": e.id, "coid": e.closingOrderId, "symbol": e.symbol, "alias": e.alias, "side": e.side,
-                   "volume": e.volume, "open_price": e.openPrice, "close_price": e.closePrice, "commission": e.commission, "swap": e.swap,
-                   "profit": e.profit, "net_profit": e.netProfit, "open_time": _dt(e.openTime), "close_time": _dt(e.closeTime), "sl": e.slPrice,
-                   "tp": e.tpPrice, "reason": e.closeReason, "comment": e.comment, "raw": _raw(e)})
+            """), {"id": connection_id, "rows": _rows_json(chunk)})
 
     async def _upsert_ledgers(self, conn, connection_id: int, entries: list[schemas.LedgerEntry]) -> None:
-        for e in entries:
+        rows = _unique([{"eid": e.id, "type": e.type, "amount": e.amount, "at": _dt(e.timestamp), "comment": e.comment,
+                         "raw": json.loads(_raw(e))} for e in entries], "eid")
+        for chunk in _chunks(rows):
             await conn.execute(text("""
                 INSERT INTO mtapi_ledgers (connection_id, external_id, entry_type, amount, entry_time, comment, raw)
-                VALUES (:id, :eid, :type, :amount, :at, :comment, CAST(:raw AS jsonb))
+                SELECT :id, x.eid, x.type, x.amount, x.at, x.comment, x.raw
+                FROM jsonb_to_recordset(CAST(:rows AS jsonb)) AS x(eid text, type text, amount numeric, at timestamptz, comment text, raw jsonb)
                 ON CONFLICT (connection_id, external_id) DO UPDATE SET
                     previous_raw = CASE WHEN mtapi_ledgers.raw IS DISTINCT FROM EXCLUDED.raw THEN mtapi_ledgers.raw ELSE mtapi_ledgers.previous_raw END,
                     revision = mtapi_ledgers.revision + CASE WHEN mtapi_ledgers.raw IS DISTINCT FROM EXCLUDED.raw THEN 1 ELSE 0 END,
                     entry_type = EXCLUDED.entry_type, amount = EXCLUDED.amount, entry_time = EXCLUDED.entry_time,
                     comment = EXCLUDED.comment, raw = EXCLUDED.raw, last_seen_at = NOW()
-            """), {"id": connection_id, "eid": e.id, "type": e.type, "amount": e.amount, "at": _dt(e.timestamp), "comment": e.comment, "raw": _raw(e)})
+            """), {"id": connection_id, "rows": _rows_json(chunk)})
 
     async def enqueue_interval(self, connection_id: int, resource: str, range_from: int, range_to: int, kind: str = "backfill") -> bool:
         async with self.engine.begin() as conn:
@@ -450,6 +576,8 @@ class SqlStore:
                 INSERT INTO mtapi_history_intervals (connection_id, resource, range_from, range_to, kind)
                 VALUES (:id, :r, :f, :t, 'backfill') ON CONFLICT (connection_id, resource, range_from, range_to) DO NOTHING
             """), {"id": connection_id, "r": resource, "f": range_from, "t": range_to})
+            # Start on it at the next worker round instead of waiting out the normal history interval.
+            await conn.execute(text("UPDATE mtapi_connections SET next_history_sync_at = NOW() WHERE id = :id AND status = 'active'"), {"id": connection_id})
         return True
 
     async def enqueue_reconcile_if_due(self, connection_id: int, resource: str, range_from: int, range_to: int, every_seconds: int) -> bool:
