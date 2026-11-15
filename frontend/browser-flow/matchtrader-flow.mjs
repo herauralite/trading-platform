@@ -66,8 +66,9 @@ function makeBackend(options = {}) {
     const u = new URL(url); const method = init.method || 'GET'; const p = u.pathname
     db.requests.push({ method, path: p + u.search, auth: (init.headers || {}).Authorization, body: init.body || null })
     const json = (status, body) => ({ ok: status < 300, status, headers: { get: () => 'application/json' }, json: async () => body, text: async () => JSON.stringify(body) })
-    if (p === '/auth/me') return json(200, { user: { telegram_user_id: '1001', first_name: 'Tali' }, accounts: [] })
+    if (p === '/auth/me') return json(200, { user: { telegram_user_id: '1001', first_name: 'Tali' }, accounts: options.legacyAccounts || [] })
     if (p === '/extension/news') return json(200, { events: db.news })
+    if (options.legacyAccounts && p.startsWith('/extension/journal')) return json(200, { trades: [], entries: [], total: 0 })   // the older account's own (empty) data
     if (p === '/leaderboard') return json(200, { leaderboard: [], total: 0 })
     const base = '/connectors/matchtrader-api/connections'
     if (!p.startsWith(base)) return json(404, { detail: 'Not Found' })
@@ -150,8 +151,8 @@ section('startup, no account')
   p.w.close()
 }
 
-// ── 2. FundingPips onboarding ──
-section('FundingPips onboarding')
+// ── 2. onboarding through the one supported integration ──
+section('Match-Trader API onboarding')
 {
   const backend = makeBackend()
   let release
@@ -160,51 +161,52 @@ section('FundingPips onboarding')
   p.w.document.getElementById('btnAccounts').click()                  // the header Accounts button
   check('header Accounts button opens the account sheet', p.w.document.getElementById('acct-sheet') ? p.w.document.getElementById('acct-sheet').classList.contains('open') : p.w.eval("typeof openAcctSheet") === 'function')
   p.w.eval('openAddAccountFlow()')
-  let fp = p.cardButton('fundingpips')
-  check('while availability is being checked, FundingPips is disabled and says so', !!fp && fp.disabled && /Checking API availability/.test(fp.textContent), fp && fp.textContent)
-  fp.click()
+  const cards = () => [...p.w.document.querySelectorAll('#addAcctFlowBody [data-broker-card]')].map((b) => b.getAttribute('data-broker-card'))
+  let mt = p.cardButton('matchtraderApi')
+  check('the picker offers exactly one integration: Match-Trader API', JSON.stringify(cards()) === '["matchtraderApi"]' && !/FundingPips|FundedPips|TradeLocker|MetaTrader|MT5/i.test(p.text('addAcctFlowBody')), JSON.stringify(cards()) + ' ' + p.text('addAcctFlowBody').slice(0, 160))
+  check('while availability is being checked the card is disabled and says so', !!mt && mt.disabled && /Checking availability/.test(mt.textContent), mt && mt.textContent)
+  mt.click()
   check('a click during the check does nothing: no form, no password fallback', p.w.eval('addAcctFlowState.step') === 1 && !tokenInput(p) && noLegacyCredentialFields(p))
-  check('the generic Match-Trader card is not offered before the server confirms', !p.cardButton('matchtraderApi'))
+  for (const legacy of ['fundingpips', 'tradelocker', 'mt5', 'brokerApi']) p.w.eval(`setAddAccountPath('${legacy}')`)
+  check('other providers cannot be opened from this flow, even by calling the page function', p.w.eval('addAcctFlowState.step') === 1 && noLegacyCredentialFields(p) && !p.$('#addAcctIdInput'))
   release(); await sleep(400)
-  fp = p.cardButton('fundingpips')
-  check('once the server confirms, FundingPips is enabled as a read-only API connection', !!fp && !fp.disabled && /read-only API token/.test(fp.textContent) && /READ-ONLY/.test(fp.textContent), fp && fp.textContent)
-  fp.click()
+  mt = p.cardButton('matchtraderApi')
+  check('once the server confirms, the card is enabled as a read-only API connection', !!mt && !mt.disabled && /read-only API token/.test(mt.textContent) && /READ-ONLY/.test(mt.textContent), mt && mt.textContent)
+  check('compatibility is not overstated: Trader API must be enabled by the broker', /Trader API<\/b> enabled|have Trader API enabled/.test(p.w.document.getElementById('addAcctFlowBody').innerHTML) && /Not every Match-Trader broker does/.test(p.text('addAcctFlowBody')), p.text('addAcctFlowBody').slice(-200))
+  mt.click()
   const input = tokenInput(p)
   const label = p.$('label[for="mtApiTokenInput"]')
-  check('FundingPips opens the labelled read-only token form', p.w.eval('addAcctFlowState.step') === 2 && !!input && input.type === 'password' && input.getAttribute('autocomplete') === 'off' && !!label && /read-only API token/i.test(label.textContent), label && label.textContent)
-  check('the form has exactly one field and no FundingPips password or email', p.w.document.querySelectorAll('#addAcctFlowBody input').length === 1 && noLegacyCredentialFields(p))
+  check('the card opens the labelled read-only token form', p.w.eval('addAcctFlowState.step') === 2 && !!input && input.type === 'password' && input.getAttribute('autocomplete') === 'off' && !!label && /read-only API token/i.test(label.textContent), label && label.textContent)
+  check('the form has exactly one field, no broker password or email, and names no specific broker', p.w.document.querySelectorAll('#addAcctFlowBody input').length === 1 && noLegacyCredentialFields(p) && !/FundingPips|FundedPips/i.test(p.text('addAcctFlowBody')), p.text('addAcctFlowBody').slice(0, 200))
   const details = p.$('#addAcctFlowBody details')
   check('instructions start collapsed', !!details && details.open === false)
   details.querySelector('summary').click()
   if (!details.open) details.open = true                              // jsdom may not implement the summary toggle; the attribute is what the browser sets
   const steps = [...details.querySelectorAll('ol li')].map((li) => li.textContent)
-  check('instructions expand to the four token steps', details.open && steps.length === 4 && /API Access/.test(steps[1]) && /Read-only/.test(steps[2]) && /shown only once/.test(details.textContent), steps.join(' / '))
+  check('instructions expand to the four generic steps', details.open && steps.length === 4 && /broker or prop firm.*Match-Trader/.test(steps[0]) && /API Access/.test(steps[1]) && /TaliTrade.*expiry.*Read-only/.test(steps[2]) && /paste/i.test(steps[3]) && /shown only once/.test(details.textContent) && /Trader API/.test(details.textContent), steps.join(' / '))
 
-  // one highlighted card, although both cards open this same form
   p.w.eval('backAddAccountStep()')
   const selected = () => [...p.w.document.querySelectorAll('#addAcctFlowBody [data-broker-card].selected')].map((b) => b.getAttribute('data-broker-card'))
-  check('after choosing FundingPips only the FundingPips card is highlighted', JSON.stringify(selected()) === '["fundingpips"]' && p.cardButton('fundingpips').getAttribute('aria-pressed') === 'true' && p.cardButton('matchtraderApi').getAttribute('aria-pressed') === 'false', JSON.stringify(selected()))
-  p.cardButton('matchtraderApi').click(); p.w.eval('backAddAccountStep()')
-  check('after choosing the generic card only that card is highlighted', JSON.stringify(selected()) === '["matchtraderApi"]', JSON.stringify(selected()))
+  check('going back shows the chosen card highlighted', JSON.stringify(selected()) === '["matchtraderApi"]' && p.cardButton('matchtraderApi').getAttribute('aria-pressed') === 'true', JSON.stringify(selected()))
 
   // token field clears on dismissal and on logout
-  p.cardButton('fundingpips').click()
+  p.cardButton('matchtraderApi').click()
   tokenInput(p).value = TOKEN
   p.w.eval('closeAddAccountFlow()')
   check('dismissing the sheet clears the token field', tokenInput(p).value === '' && !p.w.document.getElementById('add-acct-sheet').classList.contains('open'))
-  p.w.eval('openAddAccountFlow()'); p.cardButton('fundingpips').click()
+  p.w.eval('openAddAccountFlow()'); p.cardButton('matchtraderApi').click()
   check('reopening shows an empty field', tokenInput(p).value === '')
   tokenInput(p).value = TOKEN
   p.w.eval('backAddAccountStep()')
   check('going back removes the field from the page', !tokenInput(p) && !p.w.document.documentElement.outerHTML.includes(TOKEN))
-  p.cardButton('fundingpips').click()
+  p.cardButton('matchtraderApi').click()
   tokenInput(p).value = TOKEN
   p.w.TaliMatchTrader.reset()                                         // what the sign-out handler calls
   check('logout clears the token field and the provider state', tokenInput(p).value === '' && p.w.TaliMatchTrader.isAvailable() === false)
   check('the sign-out handler really calls that reset', /localStorage\.removeItem\(TALI_SESSION_TOKEN_KEY\);\s*if \(window\.TaliMatchTrader\) TaliMatchTrader\.reset\(\)/.test(rawHtml))
   await p.w.TaliMatchTrader.loadConnections()
   p.w.eval('closeAddAccountFlow(); openAddAccountFlow()'); await sleep(200)
-  p.cardButton('fundingpips').click()
+  p.cardButton('matchtraderApi').click()
 
   // submission: field cleared at once, token sent once, first sync followed through its states
   backend.db.script = [{ state: 'queued' }, { state: 'running' }, { state: 'completed', resources: { summary: 'ok', positions: 'ok', pending_orders: 'ok' } }]
@@ -229,7 +231,7 @@ section('FundingPips onboarding')
   const since = backend.db.requests.slice(mark)
   check('token sent exactly once, only in the connect body', since.filter((r) => (r.body || '').includes(TOKEN)).length === 1 && !backend.db.requests.some((r) => r.path.includes(TOKEN)) && !JSON.stringify(Object.assign({}, p.w.localStorage)).includes(TOKEN) && !JSON.stringify(Object.assign({}, p.w.sessionStorage)).includes(TOKEN) && !p.w.document.documentElement.outerHTML.includes(TOKEN))
   check('no extra sync job was posted: the server queued the first one', backend.db.syncPosts === 0)
-  check('no legacy route was used: no link-account, no FundingPips password login, no extension status', !since.some((r) => /link-account|prop-firm|fundingpips|\/extension\/(status|journal|payout)/.test(r.path)), since.map((r) => r.path).join(' '))
+  check('no legacy route was used: no link-account, no broker password login, no extension status', !since.some((r) => /link-account|prop-firm|fundingpips|\/extension\/(status|journal|payout)/.test(r.path)), since.map((r) => r.path).join(' '))
 
   // the synced account on screen
   check('equity, positions, sync, period P&L and win rate cards', p.text('ovEquity') === '$50,100.00' && p.text('ovPositions') === '1 open' && p.text('ovSync') === 'Synced' && p.text('ovOverallPnl') === '+$31.25' && p.text('ovWinRate') === '67%', [p.text('ovEquity'), p.text('ovPositions'), p.text('ovSync'), p.text('ovOverallPnl'), p.text('ovWinRate')].join(' | '))
@@ -277,18 +279,18 @@ section('FundingPips onboarding')
 
 // ── 3. feature disabled ──
 section('feature disabled')
-for (const [name, options, expectCard] of [
-  ['flag off (routes answer 404)', { mode: 'off' }, false],
-  ['routes on, connect gate closed', { service: { ...READY, connect_enabled: false, accepting_connections: false } }, false],
-  ['routes on, worker off', { service: { ...READY, worker: false, accepting_connections: false } }, false],
+for (const [name, options] of [
+  ['flag off (routes answer 404)', { mode: 'off' }],
+  ['routes on, connect gate closed', { service: { ...READY, connect_enabled: false, accepting_connections: false } }],
+  ['routes on, worker off', { service: { ...READY, worker: false, accepting_connections: false } }],
 ]) {
   const backend = makeBackend(options)
   const p = await boot(backend, { wait: 900 })
   p.w.eval('openAddAccountFlow()'); await sleep(300)
-  const fp = p.cardButton('fundingpips')
-  check(`${name}: FundingPips is disabled with a clear reason`, !!fp && fp.disabled && /API connection is unavailable on this server/.test(fp.textContent), fp && fp.textContent)
-  fp.click()
-  check(`${name}: no token is requested and there is no password fallback`, p.w.eval('addAcctFlowState.step') === 1 && !tokenInput(p) && noLegacyCredentialFields(p) && !!p.cardButton('matchtraderApi') === expectCard)
+  const card = p.cardButton('matchtraderApi')
+  check(`${name}: the one card is disabled with a clear reason`, !!card && card.disabled && /Not available on this server right now/.test(card.textContent), card && card.textContent)
+  card.click(); p.w.eval("setAddAccountPath('matchtraderApi')")
+  check(`${name}: no token is requested and there is no password fallback`, p.w.eval('addAcctFlowState.step') === 1 && !tokenInput(p) && noLegacyCredentialFields(p))
   check(`${name}: nothing was posted`, !backend.db.requests.some((r) => r.method === 'POST'))
   check(`${name}: no page errors`, p.allErrors().length === 0, p.allErrors().join(' | '))
   p.w.close()
@@ -313,6 +315,32 @@ section('startup with a saved connection')
   check('no scraper route is polled for the API account', firstSnapshot >= 0 && !backend.db.requests.some((r) => /mtapi/.test(r.path)) && !backend.db.requests.slice(firstSnapshot).some((r) => /\/extension\/(status|journal|payout)/.test(r.path)), backend.db.requests.map((r) => r.path).join(' ').slice(0, 300))
   p.w.document.getElementById('btnBell').click()
   check('notification drawer opens with a saved connection too', p.w.document.getElementById('notif-drawer').classList.contains('open') && p.allErrors().length === 0, p.allErrors().join(' | '))
+  p.w.close()
+}
+
+// ── 5. existing accounts are kept; the picker change only affects new connections ──
+section('existing accounts with the simplified picker')
+{
+  const legacy = { account_id: '900100', accountId: '900100', label: 'Legacy 100K', account_type: 'evaluation', accountType: 'evaluation', account_size: 100000, accountSize: 100000,
+    connector_type: 'fundingpips_extension', connectorType: 'fundingpips_extension', broker: 'fundingpips', is_active: true, isActive: true }
+  const backend = makeBackend({ connected: true, synced: true, legacyAccounts: [legacy] })
+  const p = await boot(backend, { wait: 2500 })
+  const keys = JSON.parse(p.w.eval('JSON.stringify(Object.keys(ACCOUNTS))'))
+  check('an account linked before this change and an API account are both still listed', keys.includes('900100') && keys.includes('mtapi:7'), JSON.stringify(keys))
+  p.w.eval('renderAcctSheet()')
+  const sheet = p.text('acctSheetBody')
+  check('the API account card shows the broker name detected from the provider', sheet.includes('Fake Broker · API · DEMO') && sheet.includes('…0001') && sheet.includes('Legacy 100K'), sheet.slice(0, 260))
+  p.w.eval("switchAccount('mtapi:7')"); await sleep(700)
+  check('switching to the API account shows its data', p.w.eval('activeAcct') === 'mtapi:7' && p.text('ovBalance') === '$50,123.45', p.w.eval('activeAcct') + ' ' + p.text('ovBalance'))
+  const before = backend.db.requests.length
+  p.w.eval("switchAccount('900100')"); await sleep(700)
+  const afterLegacy = backend.db.requests.slice(before)
+  check('switching to the older account uses its own routes and hides the API panel', p.w.eval('activeAcct') === '900100' && afterLegacy.some((r) => r.path.startsWith('/extension/')) && !afterLegacy.some((r) => /\/7\/(snapshot|trades)/.test(r.path)) && (p.w.document.getElementById('mtApiPanel') || { style: { display: 'none' } }).style.display === 'none', afterLegacy.map((r) => r.path).join(' ').slice(0, 300))
+  p.w.eval("switchAccount('mtapi:7')"); await sleep(700)
+  check('switching back restores the API account without reconnecting', p.w.eval('activeAcct') === 'mtapi:7' && p.text('ovBalance') === '$50,123.45' && !backend.db.requests.some((r) => r.method === 'POST' || r.method === 'DELETE'))
+  p.w.eval('openAddAccountFlow()'); await sleep(300)
+  check('the picker still offers only Match-Trader API', [...p.w.document.querySelectorAll('#addAcctFlowBody [data-broker-card]')].map((b) => b.getAttribute('data-broker-card')).join() === 'matchtraderApi')
+  check('no page errors while switching between accounts', p.allErrors().length === 0, p.allErrors().join(' | '))
   p.w.close()
 }
 
