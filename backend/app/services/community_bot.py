@@ -5,7 +5,7 @@ import io
 import logging
 import os
 import textwrap
-from datetime import date, timedelta
+from datetime import date, timedelta, timezone
 
 import httpx
 from sqlalchemy import text
@@ -111,9 +111,22 @@ async def accounts(user_id):
         rows = (await conn.execute(text("""SELECT COALESCE(display_label,broker_name,connector_type)
             FROM trading_accounts WHERE user_id=:u AND is_active ORDER BY id"""), {"u":user_id})).scalars().all()
         if await conn.scalar(text("SELECT to_regclass('mtapi_connections') IS NOT NULL")):
-            rows += (await conn.execute(text("""SELECT COALESCE(broker_name,'Match-Trader') ||
-                ' · ending ' || right(external_login,4) FROM mtapi_connections
-                WHERE user_id=:u AND disconnected_at IS NULL ORDER BY id"""), {"u":user_id})).scalars().all()
+            summaries = await conn.scalar(text("SELECT to_regclass('mtapi_account_summary') IS NOT NULL"))
+            query = """SELECT COALESCE(c.broker_name,'Match-Trader') || ' · ending ' ||
+                right(c.external_login,4) AS label, c.account_currency AS currency, """
+            query += ("s.equity, s.fetched_at, NOW() - s.fetched_at AS age FROM mtapi_connections c "
+                      "LEFT JOIN mtapi_account_summary s ON s.connection_id=c.id " if summaries else
+                      "NULL AS equity, NULL AS fetched_at, NULL AS age FROM mtapi_connections c ")
+            query += "WHERE c.user_id=:u AND c.disconnected_at IS NULL ORDER BY c.id"
+            for row in (await conn.execute(text(query), {"u":user_id})).mappings():
+                label = row["label"]
+                if row["equity"] is None or not row["fetched_at"] or not row["currency"]:
+                    rows.append(label + " · Waiting for account data")
+                    continue
+                fresh = 0 <= row["age"].total_seconds() <= 90
+                stamp = row["fetched_at"].astimezone(timezone.utc).strftime("%d %b %H:%M UTC")
+                prefix = "Equity" if fresh else "Last recorded equity"
+                rows.append(f"{label}\n{prefix}: {row['equity']:,.2f} {row['currency']} · {stamp}")
     return ("Your connected accounts\n" + "\n".join(rows))[:4000] if rows else "Connect an account on talitrade.com/app using this Telegram login."
 
 
