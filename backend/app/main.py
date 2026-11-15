@@ -2301,6 +2301,21 @@ async def telegram_webhook(request: Request):
     tg_from  = message.get("from", {})
     tg_uid   = str(tg_from.get("id", "")) if tg_from else chat_id
 
+    command, _, payload = cmd.partition(" ")
+    if telegram_command_matches(command, "/start") and payload.strip() == "waitlist":
+        if message.get("chat", {}).get("type") == "private" and chat_id == tg_uid and tg_from.get("id"):
+            # Telegram executes this Bot API method as the webhook response.
+            return {
+                "method": "sendMessage",
+                "chat_id": chat_id,
+                "text": "Welcome to TaliTrade! Join our channel for beta updates and community announcements.",
+                "reply_markup": {"inline_keyboard": [[{
+                    "text": "Join the TaliTrade channel",
+                    "url": "https://t.me/talitrade",
+                }]]},
+            }
+        return {"ok": True}
+
     if telegram_command_matches(cmd, "/start"):
         user = await db_upsert_user({"id": tg_from.get("id"), "username": tg_from.get("username"), "first_name": tg_from.get("first_name"), "last_name": tg_from.get("last_name")})
         accounts = await db_get_user_accounts(tg_uid)
