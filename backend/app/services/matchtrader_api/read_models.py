@@ -139,6 +139,13 @@ def _connection_public(row, freshness: dict) -> dict:
     }
 
 
+def card_for_new_connection(row: dict) -> dict:
+    """The switcher card for a connection that was just created: nothing synced yet, so no query is needed."""
+    card = _connection_public(row, _freshness({}, row.get("capabilities") or {}, datetime.now(timezone.utc)))
+    card["balance"], card["last_synced_at"] = None, None
+    return card
+
+
 class ReadModels:
     def __init__(self, engine_getter: Callable[[], Any] = _default_engine):
         self._engine_getter = engine_getter
@@ -151,26 +158,33 @@ class ReadModels:
         return {r["resource"]: dict(r) for r in rows}
 
     async def list_owned(self, user_id: str) -> list[dict]:
-        """Cards for the account switcher. Restores connections after login/reload."""
+        """Cards for the account switcher. Restores connections after login/reload.
+        Two queries however many connections there are (the page loads this on every start)."""
         engine = self._engine_getter()
-        out = []
         async with engine.connect() as conn:
             await conn.execution_options(isolation_level="REPEATABLE READ")
             rows = (await conn.execute(text("""
                 SELECT c.id, c.external_login, c.broker_name, c.account_currency, c.account_type, c.status, c.status_detail,
-                       c.capabilities, c.ingestion_mode, c.created_at
-                FROM mtapi_connections c WHERE c.user_id = :user AND c.status <> 'disconnected' ORDER BY c.id
+                       c.capabilities, c.ingestion_mode, c.created_at, a.balance, NOW() AS server_now
+                FROM mtapi_connections c LEFT JOIN mtapi_account_summary a ON a.connection_id = c.id
+                WHERE c.user_id = :user AND c.status <> 'disconnected' ORDER BY c.id
             """), {"user": user_id})).mappings().all()
-            now = (await conn.execute(text("SELECT NOW()"))).scalar()
-            for row in rows:
-                freshness = _freshness(await self._states(conn, row["id"], user_id), row["capabilities"] or {}, now)
-                card = _connection_public(row, freshness)
-                balance = (await conn.execute(text(f"""
-                    SELECT a.balance FROM mtapi_account_summary a JOIN mtapi_connections c ON c.id = a.connection_id WHERE {_OWNED}
-                """), {"id": row["id"], "user": user_id})).first()
-                card["balance"] = _money(balance[0]) if balance and freshness["summary"]["last_success_at"] else None
-                card["last_synced_at"] = freshness["summary"]["last_success_at"]
-                out.append(card)
+            if not rows:
+                return []
+            states: dict[int, dict[str, dict]] = {}
+            for s in (await conn.execute(text("""
+                SELECT s.connection_id, s.resource, s.last_attempt_at, s.last_success_at, s.last_error_code
+                FROM mtapi_sync_state s JOIN mtapi_connections c ON c.id = s.connection_id
+                WHERE c.user_id = :user AND c.status <> 'disconnected'
+            """), {"user": user_id})).mappings().all():
+                states.setdefault(s["connection_id"], {})[s["resource"]] = dict(s)
+        out = []
+        for row in rows:
+            freshness = _freshness(states.get(row["id"], {}), row["capabilities"] or {}, row["server_now"])
+            card = _connection_public(row, freshness)
+            card["balance"] = _money(row["balance"]) if row["balance"] is not None and freshness["summary"]["last_success_at"] else None
+            card["last_synced_at"] = freshness["summary"]["last_success_at"]
+            out.append(card)
         return out
 
     async def read_owned_snapshot(self, connection_id: int, user_id: str) -> dict:
@@ -246,7 +260,7 @@ class ReadModels:
         """Coverage of imported closed positions plus an aggregate over the WHOLE imported set
         (computed in SQL, never from a page of rows)."""
         cov = (await conn.execute(text(f"""
-            SELECT COUNT(*) FILTER (WHERE i.status = 'queued') AS queued,
+            SELECT COUNT(*) FILTER (WHERE i.status = 'queued' AND i.kind = 'backfill') AS queued,   -- the requested import; routine recent windows are always in flight
                    COUNT(*) FILTER (WHERE i.status = 'gap') AS gaps,
                    MIN(i.range_from) FILTER (WHERE i.kind = 'backfill') AS requested_from_ms,
                    MAX(i.range_to) FILTER (WHERE i.kind = 'backfill') AS requested_to_ms,

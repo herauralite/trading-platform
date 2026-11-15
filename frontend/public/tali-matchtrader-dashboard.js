@@ -13,7 +13,7 @@
     var state = freshState();
 
     function freshState() {
-      return { available: null, service: null, syncWatch: {}, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null };
+      return { available: null, service: null, syncWatch: {}, lastConnectTimings: null, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null };
     }
     function now() { return deps.now ? deps.now() : Date.now(); }
     function controller() {
@@ -77,6 +77,12 @@
       });
     }
     function merge(accounts) { return core.mergeAccounts(accounts, state.cards); }
+    // A card the server just returned for a connection this session created.
+    function adoptCard(newCard) {
+      state.cards = state.cards.filter(function (c) { return c.account_key !== newCard.account_key; }).concat([newCard]);
+      if (host) host.rehydrateAccounts();
+      return true;
+    }
 
     // ── snapshot -> screen ──
     function refreshSnapshot(accountKey, options) {
@@ -333,6 +339,7 @@
       var rotateId = rotateKey ? connectionIdForAccount(rotateKey) : null;
       f.loading = true; f.error = ''; f.success = '';
       host.renderAddAccountFlow();
+      var submittedAt = now();
       var request = rotateId !== null ? api.rotate(rotateId, { token: token }) : api.connect({ token: token });
       token = '';                                        // not kept after the request is built
       return request.then(function (body) {
@@ -345,23 +352,30 @@
               : 'The account was saved but is not active (' + connection.status + ').');
           });
         }
-        f.success = 'Account verified. First sync queued…';
-        host.renderAddAccountFlow();
-        // The server queued the first refresh when it stored the connection. Nothing here waits on the broker.
+        // The account is bound. The server already queued the first refresh and the recent-history
+        // import in the same transaction, and returned the switcher card, so nothing else has to
+        // finish before the sheet closes: no further request is awaited here.
+        var timings = { verify_and_store_ms: Math.round(now() - submittedAt), server: body.timings || null };
         var firstRequest = body.sync_request || null;
-        var fromMs = now() - core.RECENT_BACKFILL_DAYS * 86400000;
-        return api.startRecentBackfill(connection.id, { fromMs: fromMs }).then(null, function () { return null; }).then(function () {
-          return loadConnections();
-        }).then(function () {
+        var ready = body.card && body.card.account_key === key
+          ? Promise.resolve(adoptCard(body.card))
+          : loadConnections();                           // older server without the card: one list read instead
+        return ready.then(function () {
           f.loading = false;
           host.closeAddAccountFlow();
           host.activateAccount(key);
+          timings.sheet_closed_ms = Math.round(now() - submittedAt);
+          state.lastConnectTimings = timings;            // durations only; readable via TaliMatchTrader.lastConnectTimings()
           host.showAccountActionStatus('Match-Trader account connected. The first sync is queued; balances appear when it completes.', 'success');
           startImportPolling(key);
+          // Everything below runs after the sheet is closed.
+          var imported = body.initial_backfill && body.initial_backfill.resources && body.initial_backfill.resources.length;
+          if (!imported) api.startRecentBackfill(connection.id, { fromMs: now() - core.RECENT_BACKFILL_DAYS * 86400000 }).then(null, function () { return null; });
           var started = firstRequest ? Promise.resolve({ request: firstRequest }) : api.sync(connection.id, {});
           started.then(function (queued) { return watchSync(key, connection.id, queued && queued.request); }, function (err) {
             host.setManualSyncState(key, { status: 'failed', label: 'failed', message: 'Failed. ' + ((err && err.message) || 'The first sync could not be requested.'), updatedAt: now() });
           });
+          loadConnections();                             // refresh readiness/cards in the background
         });
       }, function (err) {
         fail((err && err.message) || 'Could not connect this account.');
@@ -411,6 +425,7 @@
       openReconnect: openReconnect, disconnect: disconnect, sheetSubtitle: sheetSubtitle, clearTokenInput: clearTokenInput,
       isAvailable: function () { return state.available === true; },
       serviceStatus: function () { return state.service; },
+      lastConnectTimings: function () { return state.lastConnectTimings || null; },
       isDisconnectPending: function (accountKey) { return state.pendingDisconnect === accountKey; },
       needsReconnect: function (accountKey) { var c = card(accountKey); return !!c && (c.status === 'needs_reauth' || c.status === 'error' || c.status === 'forbidden'); },
       cardFor: card

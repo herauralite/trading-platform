@@ -6,6 +6,7 @@ run only when TALITRADE_TEST_DATABASE_URL points at a disposable database whose 
 """
 import asyncio
 import os
+import time
 from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
@@ -46,6 +47,8 @@ def ctx(monkeypatch):
     monkeypatch.setenv("TALITRADE_MT_API_ENABLED", "true")
     monkeypatch.setenv("TALITRADE_MT_API_WORKER_ENABLED", "true")    # flag only: no worker task runs in tests, rounds are driven explicitly
     monkeypatch.setenv("TALITRADE_MT_API_CONNECT_ENABLED", "true")
+    monkeypatch.setenv("TALITRADE_MT_API_INITIAL_BACKFILL_DAYS", "0")   # tests that want the automatic backfill turn it on
+    sync_engine._turn.clear()
     monkeypatch.setenv("TALITRADE_MT_API_GLOBAL_PER_MINUTE", "1000")   # tests that exercise the account cap set their own
     ratelimit._budgets.clear()
     routes._CONNECT_ATTEMPTS.clear()
@@ -355,7 +358,8 @@ def test_unauthorized_stops_the_connection_and_forbidden_disables_one_capability
         ctx.broker.fail.clear()
         del ctx.broker.accounts[TOKEN_A]                    # token revoked/expired at the broker
         out = await sync(ctx, cid)
-        assert out == {"summary": "unauthorized"}           # stops at the first 401
+        assert out == {"summary": "unauthorized", "positions": "unauthorized", "pending_orders": "unauthorized"}   # the three live reads go out together
+        assert not [r for r in ctx.broker.requests[-3:] if r[1] in ("/v1/closed-positions", "/v1/ledgers")]            # and nothing after the 401
         assert (await q(ctx, "SELECT status, status_detail FROM mtapi_connections"))[0] == ("needs_reauth", "unauthorized")
         before = len(ctx.broker.requests)
         assert await sync(ctx, cid) == {"skipped": "needs_reauth"}
@@ -455,17 +459,17 @@ def test_failed_history_transaction_is_replayed_not_skipped(ctx, monkeypatch):
     async def scenario():
         cid = (await connect(ctx)).json()["connection"]["id"]
         ctx.broker.accounts[TOKEN_A]["closed"] = [closed("u1", "P1", NOW - 1000)]
-        original = SqlStore._upsert_closed
+        original = SqlStore._closed_rows
         calls = {"n": 0}
 
-        async def flaky(self, conn, connection_id, entries):
+        def poisoned(entries):
             calls["n"] += 1
-            if calls["n"] == 1:
-                await original(self, conn, connection_id, entries)
-                raise RuntimeError("database went away mid-transaction")
-            return await original(self, conn, connection_id, entries)
+            rows = original(entries)
+            if calls["n"] == 1:          # one bad row among good ones: the single statement must keep none of it
+                rows.append({**rows[0], "uid": "broken", "close_time": None})
+            return rows
 
-        monkeypatch.setattr(SqlStore, "_upsert_closed", flaky)
+        monkeypatch.setattr(SqlStore, "_closed_rows", staticmethod(poisoned))
         out = await sync(ctx, cid, live=False)
         assert out["closed_positions"] == "internal"
         assert await q(ctx, "SELECT 1 FROM mtapi_closed_positions") == []                       # rolled back: nothing half-written
@@ -875,11 +879,11 @@ def test_history_is_bounded_per_pass_and_live_data_is_refreshed_between_ranges(c
         (due,), = await q(ctx, "SELECT next_history_sync_at <= NOW() FROM mtapi_connections")
         assert due is True                                                        # a backfill starts at the next round, not after the history interval
 
-        # 1) Out of time: one range per resource, the rest stays queued and nothing is lost.
+        # 1) Out of time: exactly one range in the whole pass, the rest stays queued and nothing is lost.
         monkeypatch.setattr(config, "history_pass_seconds", lambda: 0)
         metrics = {}
         outcome = await sync_engine.sync_connection(ctx.store, cid, client_factory=ctx.factory, live=False, history=True, metrics=metrics)
-        assert outcome["closed_positions"] == "ok" and metrics["history_intervals"] == 2 and metrics["history_backlog"] is True
+        assert outcome["closed_positions"] == "ok" and metrics["history_intervals"] == 1 and metrics["history_backlog"] is True
         assert "summary" not in outcome                                           # live was not due: no extra broker calls
         (queued,), = await q(ctx, "SELECT COUNT(*) FROM mtapi_history_intervals WHERE status = 'queued'")
         assert queued >= 2
@@ -1060,5 +1064,246 @@ def test_replacing_a_token_can_never_switch_the_connection_to_another_trading_ac
             crypto.decrypt_token(ciphertext, crypto.build_associated_data(user_id=BOB, connection_id=cid, platform_host="mtr.broker-one.example", external_login="700001"))
         with pytest.raises(crypto.TokenCryptoError):
             crypto.decrypt_token(ciphertext, crypto.build_associated_data(user_id=ALICE, connection_id=cid, platform_host="mtr.broker-one.example", external_login="800002"))
+
+    run_db(ctx, scenario)
+
+
+# ── slow links: fairness, cadence and round trips (from the real-token run) ───
+class SlowTransport(httpx.AsyncBaseTransport):
+    """The scripted broker behind a per-path delay."""
+
+    def __init__(self, broker, delays):
+        self.broker, self.delays, self.log = broker, delays, []
+
+    async def handle_async_request(self, request):
+        self.log.append(("start", request.url.path))
+        await asyncio.sleep(self.delays.get(request.url.path, 0))
+        response = self.broker.handler(request)
+        self.log.append(("end", request.url.path))
+        return response
+
+
+def test_one_unit_per_pass_with_new_windows_arriving_still_finishes_backfill_and_reconcile(ctx, monkeypatch):
+    """The real run's failure shape: the budget only lets one history range through per pass while a
+    new recent window arrives every pass. Older work must still get its turns."""
+    monkeypatch.setattr(config, "history_pass_seconds", lambda: 0)      # nothing but the guaranteed unit
+
+    async def scenario():
+        import time
+        base = int(time.time() * 1000) - 3_600_000
+        account = ctx.broker.accounts[TOKEN_A]
+        account["closed"] = [closed(f"u{i}", f"P{i}", base - 5 * 86_400_000 + i * 600_000) for i in range(600)]   # 600 > the 500 cap: must be split
+        account["ledgers"] = [{"id": f"L{i}", "type": "DEPOSIT", "amount": 5.0, "timestamp": base - 2 * 86_400_000 - i, "comment": ""} for i in range(3)]
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        for resource in ("closed_positions", "ledgers"):
+            await ctx.store.enqueue_backfill(cid, resource, base - 7 * 86_400_000, base)
+        served, queued_incremental = [], []
+        for i in range(40):
+            now = base + i * 60_000                                       # a minute passes: a new recent window every pass
+            ratelimit._budgets.clear()                                    # ...and with it the per-minute rate window
+            if i and i % 5 == 0:
+                account["closed"].append(closed(f"new{i}", f"N{i}", now - 5_000))   # trades keep closing meanwhile
+            before = {r[0]: r[1] for r in await q(ctx, "SELECT kind, COUNT(*) FROM mtapi_history_intervals WHERE status <> 'queued' GROUP BY kind")}
+            metrics = {}
+            await sync_engine.sync_connection(ctx.store, cid, client_factory=ctx.factory, live=False, history=True, now_ms=lambda now=now: now, metrics=metrics)
+            assert metrics["history_intervals"] == 1                      # the budget really allowed a single range
+            after = {r[0]: r[1] for r in await q(ctx, "SELECT kind, COUNT(*) FROM mtapi_history_intervals WHERE status <> 'queued' GROUP BY kind")}
+            served.append(next(kind for kind in after if after[kind] != before.get(kind, 0)))
+            queued_incremental.append(max([r[0] for r in await q(ctx, "SELECT COUNT(*) FROM mtapi_history_intervals WHERE status = 'queued' AND kind = 'incremental' GROUP BY resource")] or [0]))
+        assert "backfill" in served[:4] and "reconcile" in served[:8], served[:8]          # older work is reached within one rotation
+        assert served.count("backfill") >= 4 and served.count("reconcile") >= 2 and served.count("incremental") >= 10, served
+        assert max(queued_incremental) == 1                              # recent windows are extended, never piled up
+        coverage = await ctx.store.coverage(cid)
+        assert coverage["closed_positions"]["status"] == "complete_for_requested_range" and coverage["ledgers"]["status"] == "complete_for_requested_range"
+        (total, distinct), = await q(ctx, "SELECT COUNT(*), COUNT(DISTINCT uid) FROM mtapi_closed_positions")
+        assert total == distinct == 600 + 7                               # every backfilled row and every trade that closed meanwhile, once each
+        assert (await q(ctx, "SELECT COUNT(*) FROM mtapi_history_intervals WHERE status = 'queued' AND kind <> 'incremental'"))[0][0] == 0
+        assert (await q(ctx, "SELECT COUNT(*) FROM mtapi_ledgers"))[0][0] == 3
+
+    run_db(ctx, scenario)
+
+
+def test_recent_window_is_extended_while_unfetched_and_nothing_is_skipped(ctx):
+    async def scenario():
+        import time
+        base = int(time.time() * 1000) - 600_000
+        account = ctx.broker.accounts[TOKEN_A]
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        ctx.broker.fail["/v1/closed-positions"] = (503, {})
+        ctx.broker.fail["/v1/ledgers"] = (503, {})
+        account["closed"] = [closed("during-outage", "P1", base + 30_000)]
+        for i in range(4):                                                # four passes while the broker's history endpoints are down
+            out = await sync(ctx, cid, now=base + i * 60_000, live=False)
+            assert out["closed_positions"] == "transient"
+        rows = await q(ctx, "SELECT resource, range_from, range_to, status FROM mtapi_history_intervals WHERE kind = 'incremental' ORDER BY resource")
+        assert [(r[0], r[3]) for r in rows] == [("closed_positions", "queued"), ("ledgers", "queued")]      # one per resource, not four
+        first_start, last_cutoff = base - 86_400_000 - 1, base + 3 * 60_000 + 1
+        assert all(r[1] == first_start and r[2] == last_cutoff for r in rows)                                # covers everything since the first attempt
+        (cursor,), = await q(ctx, "SELECT cursor_ms FROM mtapi_sync_state WHERE resource = 'closed_positions'")
+        assert cursor == last_cutoff                                      # the cursor only ever points at durable, queued work
+        ctx.broker.fail.clear()
+        assert (await sync(ctx, cid, now=base + 4 * 60_000, live=False))["closed_positions"] == "ok"
+        assert [r[0] for r in await q(ctx, "SELECT uid FROM mtapi_closed_positions")] == ["during-outage"]   # the outage window was not skipped
+
+    run_db(ctx, scenario)
+
+
+def test_live_data_keeps_refreshing_while_a_slow_history_request_is_outstanding(ctx, monkeypatch):
+    monkeypatch.setattr(config, "live_interval_seconds", lambda: 0.15)
+
+    async def scenario():
+        import time
+        slow = SlowTransport(ctx.broker, {"/v1/closed-positions": 0.7})
+        factory = lambda token, budget=None: api.MatchTraderApiClient(token, budget=budget, transport=slow)   # noqa: E731
+        ctx.broker.accounts[TOKEN_A]["closed"] = [closed("u1", "P1", int(time.time() * 1000) - 60_000)]
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        async with ctx.db.begin() as conn:
+            await conn.execute(text("UPDATE mtapi_connections SET next_live_sync_at = NOW() + interval '1 hour'"))   # live is NOT due when the pass starts
+        metrics = {}
+        monkeypatch.setattr(config, "backfill_intervals_per_cycle", lambda: 0)
+        started = time.monotonic()
+        outcome = await sync_engine.sync_connection(ctx.store, cid, client_factory=factory, live=True, history=True, metrics=metrics)
+        assert outcome["closed_positions"] == "ok" and outcome["summary"] == "ok"
+        first = slow.log.index(("start", "/v1/closed-positions"))
+        last = slow.log.index(("end", "/v1/closed-positions"))
+        during = [path for kind, path in slow.log[first:last] if kind == "end" and path == "/v1/account-summary"]
+        assert len(during) >= 2, slow.log                                 # balances were refreshed while the broker was still answering
+        assert metrics["live_refreshes_during_history"] >= 2
+        assert metrics["history_seconds"] < 0.7 * 3 + 1.5 and time.monotonic() - started < 6
+        assert [r[0] for r in await q(ctx, "SELECT uid FROM mtapi_closed_positions")] == ["u1"]                # and the slow answer was still stored
+        assert metrics["broker_max_seconds"] >= 0.7 and metrics["broker_calls"] >= 5 and metrics["db_calls"] > 0
+
+    run_db(ctx, scenario)
+
+
+def test_worker_passes_use_few_database_round_trips_and_schedule_from_the_fetch_start(ctx, monkeypatch):
+    monkeypatch.setattr(config, "live_interval_seconds", lambda: 10)
+
+    async def scenario():
+        import time
+        slow = SlowTransport(ctx.broker, {"/v1/account-summary": 1.2, "/v1/positions": 1.2, "/v1/pending-orders": 1.2})
+        factory = lambda token, budget=None: api.MatchTraderApiClient(token, budget=budget, transport=slow)   # noqa: E731
+        ctx.broker.accounts[TOKEN_A]["positions"] = [position("1"), position("2")]
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        async with ctx.db.begin() as conn:
+            await conn.execute(text("UPDATE mtapi_connections SET next_history_sync_at = NOW() + interval '1 hour'"))
+
+        metrics = {}
+        started = time.monotonic()
+        outcome = await sync_engine.sync_connection(ctx.store, cid, client_factory=factory, live=True, history=False, metrics=metrics, schedule=True)
+        elapsed = time.monotonic() - started
+        assert outcome == {"summary": "ok", "positions": "ok", "pending_orders": "ok"}
+        assert metrics["db_calls"] == 2                                   # take the lease; store everything + report + release + schedule
+        assert elapsed < 1.2 * 2                                          # three reads side by side, not one after another
+        (wait, lease, request_state), = await q(ctx, """SELECT EXTRACT(EPOCH FROM c.next_live_sync_at - NOW()), c.lease_owner, r.state
+                                                        FROM mtapi_connections c JOIN mtapi_sync_requests r ON r.connection_id = c.id""")
+        assert lease is None and request_state == "completed"
+        assert 10 - elapsed - 0.5 <= float(wait) <= 10 + 3 - 1.2 + 0.3     # one interval after the fetch STARTED (plus jitter), not after it finished
+        assert (await q(ctx, "SELECT COUNT(*) FROM mtapi_positions"))[0][0] == 2
+        assert await worker.run_due_once(ctx.store, client_factory=factory) == 0   # nothing due again right away: no catch-up burst
+
+        # a scheduled history pass: plan, list, one statement per range, close
+        ctx.broker.accounts[TOKEN_A]["closed"] = [closed("u1", "P1", int(time.time() * 1000) - 60_000)]
+        metrics = {}
+        await sync_engine.sync_connection(ctx.store, cid, client_factory=factory, live=False, history=True, metrics=metrics, schedule=True)
+        assert metrics["history_intervals"] >= 2 and metrics["db_calls"] <= metrics["history_intervals"] + 5, metrics
+        (history_wait,), = await q(ctx, "SELECT EXTRACT(EPOCH FROM next_history_sync_at - NOW()) FROM mtapi_connections")
+        assert 0 < float(history_wait) <= config.history_interval_seconds() + 4
+
+        # a pass that cannot even take the lease is retried soon, never in a tight loop and never a full interval later
+        await ctx.store.acquire_lease(cid, "someone-else", 60)
+        async with ctx.db.begin() as conn:
+            await conn.execute(text("UPDATE mtapi_connections SET next_live_sync_at = NOW()"))
+        await worker._pass(ctx.store, "w-blocked", cid, factory, live=True, history=False)
+        (retry,), = await q(ctx, "SELECT EXTRACT(EPOCH FROM next_live_sync_at - NOW()) FROM mtapi_connections")
+        assert 0 < float(retry) <= worker.RETRY_AFTER_SKIP_SECONDS + 0.5
+
+    run_db(ctx, scenario)
+
+
+def test_connect_queues_the_first_sync_and_initial_backfill_and_returns_the_card(ctx, monkeypatch):
+    monkeypatch.setenv("TALITRADE_MT_API_INITIAL_BACKFILL_DAYS", "7")
+
+    async def scenario():
+        import time
+        real_now = int(time.time() * 1000)
+        ctx.broker.accounts[TOKEN_A]["closed"] = [closed("recent", "P1", real_now - 3_600_000), closed("older", "P2", real_now - 5 * 86_400_000)]
+        res = await connect(ctx)
+        body = res.json()
+        cid = body["connection"]["id"]
+        assert res.status_code == 200 and TOKEN_A not in res.text
+        assert body["card"]["account_key"] == f"mtapi:{cid}" and body["card"]["balance"] is None and body["card"]["last_synced_at"] is None
+        assert body["card"]["display_state"] == "first_sync_pending" and body["card"]["masked_login"] == "…0001"
+        assert body["sync_request"]["state"] == "queued" and body["initial_backfill"] == {"days": 7, "resources": ["closed_positions", "ledgers"]}
+        assert set(body["timings"]) == {"verify_seconds", "store_seconds"}
+        assert_no_internal_fields(body["card"])
+        rows = await q(ctx, "SELECT resource, kind, status, range_to - range_from FROM mtapi_history_intervals ORDER BY resource")
+        assert [(r[0], r[1], r[2]) for r in rows] == [("closed_positions", "backfill", "queued"), ("ledgers", "backfill", "queued")]
+        assert all(abs(r[3] - 7 * 86_400_000) < 10 for r in rows)
+        cards = (await ctx.http.get(f"{P}?view=cards", headers=auth(ALICE))).json()
+        assert cards["service"]["accepting_connections"] is True and cards["connections"] == [{"id": cid, "card": body["card"]}]
+        assert (await ctx.http.get(f"{P}?view=cards", headers=auth(BOB))).json()["connections"] == []
+        for _ in range(4):                                                # browser closed: the worker alone finishes it
+            async with ctx.db.begin() as conn:
+                await conn.execute(text("UPDATE mtapi_connections SET next_live_sync_at = NOW(), next_history_sync_at = NOW()"))
+            await worker.run_due_once(ctx.store, client_factory=ctx.factory)
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["sync_request"]["state"] == "completed" and snap["history"]["closed_entry_count"] == 2
+        assert snap["history"]["coverage_status"] == "complete_for_requested_range"
+
+        # a connection that is not active gets no queued work at all
+        ctx.broker.add_account(TOKEN_B, login="800002", platform_url="not a url")
+        pending = (await connect(ctx, BOB, TOKEN_B)).json()
+        assert pending["connection"]["status"] == "pending_review" and pending["sync_request"] is None and pending["initial_backfill"]["resources"] == []
+        assert (await q(ctx, "SELECT COUNT(*) FROM mtapi_history_intervals WHERE connection_id = :id", id=pending["connection"]["id"]))[0][0] == 0
+
+    run_db(ctx, scenario)
+
+
+def test_live_refresh_gap_stays_within_the_documented_bound_during_a_slow_import(ctx, monkeypatch):
+    """Scaled-down version of the real run: every database statement and every broker call is slow,
+    a 7-day import with splits is in progress, and the real worker round + idle wait drive it.
+
+    Documented bound for the gap between two live refreshes:
+        live interval + jitter (5% of it) + worker wake-up (<= 0.25 s + two statements)
+        + one statement that may be in flight + one live fetch.
+    With a 2 s interval, 50 ms statements and 0.1 s live reads that is about 2.8 s; 3.2 s is asserted."""
+    monkeypatch.setenv("TALITRADE_MT_API_INITIAL_BACKFILL_DAYS", "7")
+    monkeypatch.setattr(config, "live_interval_seconds", lambda: 2)
+    monkeypatch.setattr(config, "history_backlog_interval_seconds", lambda: 1)
+    monkeypatch.setattr(config, "history_pass_seconds", lambda: 1)
+    original = SqlStore._one
+
+    async def slow_statement(self, sql, params):
+        await asyncio.sleep(0.05)
+        return await original(self, sql, params)
+
+    monkeypatch.setattr(SqlStore, "_one", slow_statement)
+
+    times = []
+
+    class TimedTransport(SlowTransport):
+        async def handle_async_request(self, request):
+            if request.url.path == "/v1/account-summary":
+                times.append(time.monotonic())
+            return await super().handle_async_request(request)
+
+    async def scenario():
+        real_now = int(time.time() * 1000)
+        slow = TimedTransport(ctx.broker, {"/v1/closed-positions": 0.45, "/v1/ledgers": 0.45, "/v1/account-summary": 0.1, "/v1/positions": 0.1, "/v1/pending-orders": 0.1})
+        factory = lambda token, budget=None: api.MatchTraderApiClient(token, budget=budget, transport=slow)   # noqa: E731
+        ctx.broker.accounts[TOKEN_A]["closed"] = [closed(f"u{i}", f"P{i}", real_now - 6 * 86_400_000 + i * 700_000) for i in range(600)]
+        await connect(ctx)                                                # (the connect probe goes through the plain transport)
+        ratelimit._budgets.clear()
+        deadline = time.monotonic() + 9
+        while time.monotonic() < deadline:                                # exactly what worker_loop does: a round, then the idle wait
+            await worker.run_due_once(ctx.store, client_factory=factory)
+            await asyncio.sleep(await worker._idle_seconds(ctx.store))
+        gaps = [b - a for a, b in zip(times, times[1:])]
+        assert len(gaps) >= 2 and max(gaps) <= 3.2, gaps
+        (done,), = await q(ctx, "SELECT COUNT(*) FROM mtapi_history_intervals WHERE status <> 'queued' AND kind = 'backfill'")
+        (errors,), = await q(ctx, "SELECT COUNT(*) FROM mtapi_sync_state WHERE last_error_code IS NOT NULL")
+        assert done >= 2 and errors == 0, (done, errors)                  # the import moved forward meanwhile, with no failures recorded
+        print("live gaps", [round(g, 2) for g in gaps], "backfill ranges done", done)
 
     run_db(ctx, scenario)

@@ -11,6 +11,7 @@ Hard guarantees enforced here, independent of what the token is permitted to do:
 from __future__ import annotations
 
 import json
+import time
 import logging
 from typing import Any
 
@@ -92,6 +93,7 @@ class MatchTraderApiClient:
             raise ValueError("a bearer token is required")
         self.__token = _Secret(token)
         self._budget = budget
+        self.timings: list[tuple[str, float]] = []   # (path, seconds) per request: durations only, for pass metrics
         self._http = httpx.AsyncClient(
             base_url=BASE_URL, timeout=TIMEOUT, follow_redirects=False, verify=True, transport=transport,
             headers={"Accept": "application/json", "User-Agent": "TaliTrade-ReadOnly/1.0"},
@@ -115,9 +117,11 @@ class MatchTraderApiClient:
         if self._budget is not None:
             self._budget.reserve(path, low_priority=low_priority)  # counts failures too
         request = self._http.build_request("GET", path, params=params, headers={"Authorization": f"Bearer {self.__token.reveal()}"})
+        started = time.monotonic()
         try:
             response = await self._http.send(request, stream=True)
         except httpx.HTTPError as exc:
+            self.timings.append((path, time.monotonic() - started))
             raise TransientError(path, None, type(exc).__name__) from None
         try:
             if self._budget is not None:
@@ -131,6 +135,7 @@ class MatchTraderApiClient:
             raise TransientError(path, None, type(exc).__name__) from None
         finally:
             await response.aclose()
+            self.timings.append((path, time.monotonic() - started))
 
         status = response.status_code
         if status == 200:

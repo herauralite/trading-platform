@@ -62,6 +62,11 @@ def history_backlog_interval_seconds() -> int:
     return _int("TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS", 20, 5)
 
 
+def initial_backfill_days() -> int:
+    """History queued automatically when an account is connected (0 = none)."""
+    return _int("TALITRADE_MT_API_INITIAL_BACKFILL_DAYS", 7, 0)
+
+
 def connect_enabled() -> bool:
     """Whether NEW connections may be created (and the dashboard may show the token form).
 

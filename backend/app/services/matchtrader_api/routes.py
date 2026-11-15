@@ -6,6 +6,7 @@ The whole router answers 404 unless TALITRADE_MT_API_ENABLED is on.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections import defaultdict, deque
@@ -92,8 +93,7 @@ async def _probe(token: str) -> dict:
     capabilities: dict[str, bool] = {}
     async with make_client(token) as client:
         try:
-            details = await client.platform_details()
-            account = await client.account()
+            details, account = await asyncio.gather(client.platform_details(), client.account())
         except api.Unauthorized:
             raise HTTPException(status_code=422, detail="Match-Trader rejected this token. Create a new read-only token and try again.") from None
         except api.Forbidden:
@@ -111,16 +111,19 @@ async def _probe(token: str) -> dict:
             "closed_positions": lambda: client.closed_positions(now_ms - 60_000, now_ms, limit=1),
             "ledgers": lambda: client.ledgers(now_ms - 60_000, now_ms, limit=1),
         }
-        for name, call in probes.items():
-            try:
-                await call()
+        # Side by side: on a slow link the verification time is one round trip, not five.
+        answers = await asyncio.gather(*(call() for call in probes.values()), return_exceptions=True)
+        for name, answer in zip(probes, answers):
+            if not isinstance(answer, BaseException):
                 capabilities[name] = True
-            except api.Forbidden:
+            elif isinstance(answer, api.Forbidden):
                 capabilities[name] = False
-            except api.Unauthorized:
+            elif isinstance(answer, api.Unauthorized):
                 raise HTTPException(status_code=422, detail="Match-Trader rejected this token. Create a new read-only token and try again.") from None
-            except api.MatchTraderApiError:
+            elif isinstance(answer, api.MatchTraderApiError):
                 raise HTTPException(status_code=502, detail="Could not verify the token with Match-Trader right now.") from None
+            else:
+                raise answer
     return {
         "identity": {
             "platform_host": _platform_host(details.platformUrl) or "unverified",
@@ -173,7 +176,9 @@ async def connect(body: TokenBody, principal: Principal = Depends(ingest_auth.re
         # Schema, routes and worker can be live before the form is opened; until then nothing is stored.
         raise HTTPException(status_code=503, detail="New Match-Trader connections are not open on this server yet")
     _throttle(principal.user_id)
+    started = time.monotonic()
     probe = await _probe(token)
+    verified = time.monotonic()
     identity, capabilities = probe["identity"], probe["capabilities"]
     missing = [name for name in REQUIRED_CAPABILITIES if not capabilities.get(name)]
     status, detail = "active", None
@@ -187,28 +192,43 @@ async def connect(body: TokenBody, principal: Principal = Depends(ingest_auth.re
     if status == "active" and principal.user_id in await ingest_auth.get_account_owners(identity["external_login"]):
         linked = identity["external_login"]
     store = get_store()
+    cutoff = int(time.time() * 1000)
+    days = config.initial_backfill_days()
     try:
+        # One transaction: the connection, its encrypted credential, the first refresh and the
+        # initial history backfill. Nothing else has to be set up by the browser afterwards.
         connection = await store.create_connection(
             user_id=principal.user_id, identity=identity, capabilities=capabilities, status=status, status_detail=detail,
             linked_external_account_id=linked, token_hint=crypto.mask_token(token),
-            encrypt=_encryptor(token, principal.user_id, identity), key_version=crypto.key_version_of)
+            encrypt=_encryptor(token, principal.user_id, identity), key_version=crypto.key_version_of,
+            queue_first_sync=True, backfill_range=(cutoff - days * 86_400_000 - 1, cutoff + 1) if days else None)
     except IdentityConflict:
         logger.warning("matchtrader connect conflict user=%s", principal.user_id)
         raise HTTPException(status_code=409, detail="This trading account is already connected. If it is yours, replace its token instead.") from None
-    logger.info("matchtrader connection created id=%s user=%s status=%s", connection["id"], principal.user_id, status)
-    request = None
-    if status == "active":   # the first refresh is queued for the worker; the browser never waits on the broker
-        request, _ = await store.request_sync(connection["id"])
+    stored = time.monotonic()
+    timings = {"verify_seconds": round(verified - started, 3), "store_seconds": round(stored - verified, 3)}
+    logger.info("matchtrader connection created id=%s user=%s status=%s verify_seconds=%s store_seconds=%s",
+                connection["id"], principal.user_id, status, timings["verify_seconds"], timings["store_seconds"])
+    if status == "active":
         worker.nudge()
-    return {"ok": True, "connection": _public(connection), "sync_request": read_models.public_sync_request(request)}
+    return {"ok": True, "connection": _public(connection), "card": read_models.card_for_new_connection(connection),
+            "sync_request": read_models.public_sync_request(connection.get("sync_request")),
+            "initial_backfill": {"days": days if connection.get("initial_backfill_resources") else 0,
+                                 "resources": connection.get("initial_backfill_resources") or []},
+            "timings": timings}
 
 
 @router.get("/connections")
-async def list_connections(response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
+async def list_connections(response: Response, view: str = "full", principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """``view=cards`` is what the dashboard loads on every start: readiness + switcher cards, in
+    two queries. The default view adds per-connection sync state and history coverage."""
+    _private(response)
+    cards = await get_read_models().list_owned(principal.user_id)
+    if view == "cards":
+        return {"service": config.service_status(), "connections": [{"id": card["id"], "card": card} for card in cards]}
     store = get_store()
     connections = await store.list_connections(principal.user_id)
-    cards = {card["id"]: card for card in await get_read_models().list_owned(principal.user_id)}
-    _private(response)
+    cards = {card["id"]: card for card in cards}
     return {"service": config.service_status(),
             "connections": [{**_public(c, await store.get_sync_state(c["id"]), await store.coverage(c["id"])), "card": cards.get(c["id"])} for c in connections]}
 
@@ -280,17 +300,18 @@ async def request_sync(connection_id: int, response: Response, principal: Princi
     A 202 means "accepted", never "synchronized": poll ``GET .../sync`` (or the snapshot) and read
     ``request.state``: queued -> running -> completed | partial | failed."""
     store = get_store()
-    connection = await _owned(store, connection_id, principal)
-    if connection["status"] != "active":
-        raise HTTPException(status_code=409, detail="This connection is not active")
     if not config.worker_enabled():
+        # Checked first, without touching the database. Says nothing about whether the id exists.
         raise HTTPException(status_code=503, detail="Background sync is not running on this server")
-    request, created = await store.request_sync(connection_id)
-    if request is None:
+    # One statement: ownership check, "is it active", de-duplication and the insert.
+    row = await store.request_sync_owned(connection_id, principal.user_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Connection not found")  # same answer whether it exists or not
+    if row["connection_status"] != "active":
         raise HTTPException(status_code=409, detail="This connection is not active")
     worker.nudge()
     _private(response)
-    return {"accepted": True, "already_pending": not created, "request": read_models.public_sync_request(request)}
+    return {"accepted": True, "already_pending": not row["created"], "request": read_models.public_sync_request(row)}
 
 
 @router.get("/connections/{connection_id}/sync")
