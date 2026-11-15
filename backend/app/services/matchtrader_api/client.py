@@ -158,7 +158,13 @@ class MatchTraderApiClient:
             except ValueError:
                 pass
             if self._budget is not None:
-                self._budget.penalize(path, retry_after, global_scope=_int_header(response, "X-RateLimit-Remaining-Global") == 0)
+                # Scope of the 429: the endpoint only when the headers prove the account budget still
+                # has room and this endpoint is the one exhausted. Anything ambiguous pauses the whole
+                # account, because guessing "endpoint" would keep hammering an exhausted account.
+                remaining_global = _int_header(response, "X-RateLimit-Remaining-Global")
+                remaining_endpoint = _int_header(response, "X-RateLimit-Remaining-Endpoint")
+                endpoint_only = remaining_endpoint == 0 and remaining_global is not None and remaining_global > 0
+                self._budget.penalize(path, retry_after, global_scope=not endpoint_only)
             raise RateLimited(path, status, problem_type, retry_after)
         if status >= 500:
             raise TransientError(path, status, problem_type)

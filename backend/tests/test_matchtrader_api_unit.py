@@ -354,9 +354,9 @@ def test_rate_budget_headroom_priorities_headers_and_retry_after():
     assert ratelimit.budget_for("h|1") is ratelimit.budget_for("h|1") and ratelimit.budget_for("h|1") is not ratelimit.budget_for("h|2")
 
 
-def test_client_stops_sending_after_429_until_retry_after():
+def test_endpoint_scoped_429_pauses_only_that_endpoint():
     broker = FakeBroker()
-    broker.fail["/v1/positions"] = (429, {"Retry-After": "30"})
+    broker.fail["/v1/positions"] = (429, {"Retry-After": "30", "X-RateLimit-Remaining-Endpoint": "0", "X-RateLimit-Remaining-Global": "25"})
     budget = ratelimit.AccountRateBudget()
 
     async def go():
@@ -366,10 +366,84 @@ def test_client_stops_sending_after_429_until_retry_after():
             for _ in range(5):
                 with pytest.raises(ratelimit.BudgetExhausted):
                     await c.positions()
-            await c.account_summary()   # other endpoints unaffected
+            await c.account_summary()   # headers proved the account still has budget: other endpoints continue
 
     run(go())
     assert len(broker.calls("/v1/positions")) == 1   # no retry storm
+
+
+@pytest.mark.parametrize("headers", [{"Retry-After": "30"}, {"Retry-After": "30", "X-RateLimit-Remaining-Global": "0"},
+                                     {"Retry-After": "30", "X-RateLimit-Remaining-Endpoint": "3", "X-RateLimit-Remaining-Global": "0"}])
+def test_account_wide_or_ambiguous_429_pauses_every_endpoint(headers):
+    broker = FakeBroker()
+    broker.fail["/v1/positions"] = (429, headers)
+    budget = ratelimit.AccountRateBudget()
+
+    async def go():
+        async with make_client(broker, budget=budget) as c:
+            with pytest.raises(api.RateLimited):
+                await c.positions()
+            for call in (c.positions, c.account_summary, c.pending_orders, c.account):
+                with pytest.raises(ratelimit.BudgetExhausted):
+                    await call()
+
+    run(go())
+    assert len(broker.requests) == 1   # nothing else was sent to an exhausted account
+
+
+def test_account_wide_budget_caps_total_requests_across_endpoints(monkeypatch):
+    monkeypatch.setenv("TALITRADE_MT_API_GLOBAL_PER_MINUTE", "12")
+    now = [0.0]
+    budget = ratelimit.AccountRateBudget(clock=lambda: now[0])
+    paths = ["/v1/account-summary", "/v1/positions", "/v1/pending-orders", "/v1/closed-positions"]
+    sent = 0
+    for i in range(40):
+        try:
+            budget.reserve(paths[i % 4])
+            sent += 1
+        except ratelimit.BudgetExhausted:
+            pass
+    assert sent == 12                                   # no endpoint hit its own limit, the account cap did
+    with pytest.raises(ratelimit.BudgetExhausted):
+        budget.reserve("/v1/ledgers", low_priority=True)
+    now[0] = 61.0
+    for _ in range(6):
+        budget.reserve("/v1/ledgers", low_priority=True)   # backfill may use half of the account budget
+    with pytest.raises(ratelimit.BudgetExhausted):
+        budget.reserve("/v1/ledgers", low_priority=True)
+    budget.reserve("/v1/positions")                        # live sync still has the other half
+
+
+def test_sync_outcome_is_interpreted_honestly():
+    from app.services.matchtrader_api.read_models import interpret_sync_outcome as verdict
+    ok = {"summary": "ok", "positions": "ok", "pending_orders": "ok", "closed_positions": "ok", "ledgers": "ok"}
+    assert verdict(ok)["state"] == "ok" and verdict(ok)["live_ready"] is True
+    assert verdict({**ok, "ledgers": "not_permitted"})["state"] == "ok"
+    partial = verdict({**ok, "ledgers": "forbidden", "closed_positions": "transient"})
+    assert partial["state"] == "partial" and partial["live_ready"] is True
+    assert verdict({"skipped": "busy"}) == {"state": "busy", "live_ready": False, "resources": {}, "detail": "busy"}
+    assert verdict({"skipped": "needs_reauth"})["state"] == "needs_reauth"
+    assert verdict({"skipped": "paused"})["state"] == "not_active"
+    assert verdict({"summary": "unauthorized"})["state"] == "needs_reauth"
+    limited = verdict({"summary": "rate_limited", "positions": "rate_limited"})
+    assert limited["state"] == "rate_limited" and limited["live_ready"] is False
+    failed = verdict({"summary": "ok", "positions": "transient", "pending_orders": "ok"})
+    assert failed["state"] == "failed" and failed["live_ready"] is False     # positions did not persist: not "synced"
+    assert verdict({"summary": "fenced"})["state"] == "busy"
+    assert verdict({})["live_ready"] is False
+
+
+def test_trade_cursor_round_trips_and_rejects_tampering():
+    from app.services.matchtrader_api import read_models as rm
+    when = datetime(2026, 11, 14, 22, 0, 0, 123000, tzinfo=timezone.utc)
+    cursor = rm.encode_cursor(when, "uid-9")
+    assert rm.decode_cursor(cursor) == (when, "uid-9") and "=" not in cursor
+    for bad in ("", "x", "not base64 !!", cursor[:-3], "W10", "eyJhIjoxfQ", "A" * 500,
+                "WyIyMDI2LTExLTE0VDIyOjAwOjAwIiwgInUiXQ",                      # naive timestamp
+                "WyIxOyBEUk9QIFRBQkxFIHRyYWRlcyIsICJ1Il0"):                     # SQL in the timestamp slot
+        with pytest.raises(rm.BadCursor):
+            rm.decode_cursor(bad)
+    assert rm.mask_login("12340001") == "…0001" and rm.mask_login("123") == "…" and rm.account_key(12) == "mtapi:12"
 
 
 # ── reconciliation proposal ─────────────────────────────────────────────────

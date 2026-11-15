@@ -22,7 +22,7 @@ os.environ.setdefault("SECRET_KEY", "test-secret-key")
 from app.core import ingest_auth  # noqa: E402
 from app.core.auth_session import create_session_token  # noqa: E402
 from app.main import app  # noqa: E402
-from app.services.matchtrader_api import client as api, config, crypto, engine as sync_engine, ratelimit, routes, worker  # noqa: E402
+from app.services.matchtrader_api import client as api, config, crypto, engine as sync_engine, ratelimit, read_models, routes, worker  # noqa: E402
 from app.services.matchtrader_api.store import DROP_ORDER, IdentityConflict, SqlStore, StaleWriter, now_utc  # noqa: E402
 from tests.mt_fakes import TOKEN_A, TOKEN_B, FakeBroker, closed, configure_keys, position  # noqa: E402
 
@@ -44,6 +44,7 @@ def auth(user):
 def ctx(monkeypatch):
     configure_keys(monkeypatch)
     monkeypatch.setenv("TALITRADE_MT_API_ENABLED", "true")
+    monkeypatch.setenv("TALITRADE_MT_API_GLOBAL_PER_MINUTE", "1000")   # tests that exercise the account cap set their own
     ratelimit._budgets.clear()
     routes._CONNECT_ATTEMPTS.clear()
     c = SimpleNamespace(broker=FakeBroker(), owners={}, store=None, db=None, http=None)
@@ -54,6 +55,7 @@ def ctx(monkeypatch):
 
     monkeypatch.setattr(ingest_auth, "get_account_owners", owners)
     monkeypatch.setattr(routes, "get_store", lambda: c.store)
+    monkeypatch.setattr(routes, "get_read_models", lambda: read_models.ReadModels(lambda: c.db))
     monkeypatch.setattr(routes, "make_client", c.factory)
     return c
 
@@ -512,7 +514,9 @@ def test_worker_isolates_failures_between_accounts_and_reschedules(ctx):
     run_db(ctx, scenario)
 
 
-def test_manual_sync_shares_the_rate_budget_and_reconciliation_is_read_only(ctx):
+def test_manual_sync_shares_the_rate_budget_and_reconciliation_is_read_only(ctx, monkeypatch):
+    monkeypatch.setenv("TALITRADE_MT_API_GLOBAL_PER_MINUTE", "30")
+
     async def scenario():
         ctx.owners["700001"] = {ALICE}
         cid = (await connect(ctx)).json()["connection"]["id"]
@@ -521,12 +525,221 @@ def test_manual_sync_shares_the_rate_budget_and_reconciliation_is_read_only(ctx)
         ctx.broker.accounts[TOKEN_A]["closed"] = [closed("u1", "P1", t, "24.5")]
         async with ctx.db.begin() as conn:
             await conn.execute(text("INSERT INTO trades (account_id, symbol, direction, volume, close_price, pnl, closed_at, source) VALUES ('700001','US30','buy',0.1,39050.5,25,to_timestamp(:t),'scraper')"), {"t": t // 1000})
-        codes = [(await ctx.http.post(f"{P}/{cid}/sync", headers=auth(ALICE))).json()["outcome"]["positions"] for _ in range(16)]
-        assert codes[:14] == ["ok"] * 14 and codes[14:] == ["rate_limited"] * 2          # 70% of the documented 20/min, enforced locally
-        assert len(ctx.broker.calls("/v1/positions")) == 15                               # 1 connect probe + 14; throttled calls were never sent
+        probes = len(ctx.broker.requests)
+        bodies = [(await ctx.http.post(f"{P}/{cid}/sync", headers=auth(ALICE))).json() for _ in range(12)]
+        assert bodies[0]["ok"] is True and bodies[0]["result"]["state"] == "ok" and bodies[0]["result"]["live_ready"] is True
+        assert bodies[-1]["ok"] is False and bodies[-1]["result"]["state"] == "rate_limited"   # HTTP 200, but honestly not a refresh
+        assert len(ctx.broker.requests) - probes <= 30                                         # account-wide cap; throttled calls were never sent
         rec = (await ctx.http.get(f"{P}/{cid}/reconciliation", headers=auth(ALICE))).json()
         assert rec["linked_account_id"] == "700001" and rec["report"]["matched"] == 1 and rec["report"]["writes_performed"] == 0
         assert rec["report"]["matched_detail"][0]["pnl_difference"] == "-0.5"
         assert (await q(ctx, "SELECT COUNT(*), SUM(pnl) FROM trades"))[0] == (1, 25.0)   # legacy data untouched
+
+    run_db(ctx, scenario)
+
+
+# ── dashboard read models ─────────────────────────────────────────────────────
+FORBIDDEN_KEYS = ("ciphertext", "key_version", "generation", "lease", "raw", "revision", "token", "email", "external_login", "user_id")
+
+
+def assert_no_internal_fields(payload):
+    text_form = str(payload).lower()
+    for key in FORBIDDEN_KEYS:
+        assert f"'{key}" not in text_form, key
+    assert TOKEN_A.lower() not in text_form and "700001" not in text_form   # full login is masked
+
+
+def test_snapshot_separates_unknown_from_zero_and_empty(ctx):
+    async def scenario():
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        res = await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))
+        assert res.status_code == 200 and res.headers["cache-control"] == "no-store"
+        first = res.json()
+        assert first["connection"]["display_state"] == "first_sync_pending" and first["connection"]["account_key"] == f"mtapi:{cid}"
+        assert first["connection"]["masked_login"] == "…0001" and first["connection"]["display_label"] == "Broker One · …0001"
+        assert first["summary"] is None and first["positions"] is None and first["pending_orders"] is None   # never fetched != zero/empty
+        assert first["freshness"]["summary"]["status"] == "never_synced" and first["history"]["closed_entry_count"] is None
+        assert first["history"]["period_stats"] is None and first["history"]["coverage_status"] == "pending"
+        assert_no_internal_fields(first)
+        before = len(ctx.broker.requests)
+        for _ in range(5):
+            await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))
+            await ctx.http.get(f"{P}/{cid}/trades", headers=auth(ALICE))
+            await ctx.http.get(P, headers=auth(ALICE))
+        assert len(ctx.broker.requests) == before            # reads never contact the broker
+
+        account = ctx.broker.accounts[TOKEN_A]
+        account["summary"] = {"balance": 98000.5, "credit": 0, "equity": 97990.25, "margin": 0, "freeFunds": 97990.25, "marginLevel": 0, "profit": -10.25}
+        await sync(ctx, cid)
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["connection"]["display_state"] == "ready"
+        assert snap["summary"]["balance"] == "98000.5" and snap["summary"]["margin"] == "0" and snap["summary"]["profit"] == "-10.25"   # strings, sign kept, zero is a value
+        assert snap["positions"] == [] and snap["pending_orders"] == []                                                        # fetched and empty
+        assert snap["freshness"]["positions"]["status"] == "fresh" and snap["freshness"]["positions"]["is_stale"] is False
+        assert snap["history"]["closed_entry_count"] == 0 and snap["history"]["period_stats"]["net_profit"] == "0"
+        assert snap["background_refresh"]["enabled"] is False     # worker flag is off in this test: the UI can say so
+        card = (await ctx.http.get(P, headers=auth(ALICE))).json()["connections"][0]["card"]
+        assert card["balance"] == "98000.5" and card["account_key"] == f"mtapi:{cid}"
+        assert_no_internal_fields(snap)
+
+        account["positions"] = [position("1", symbol="<img src=x onerror=alert(1)>", side=None, slPrice=None)]
+        await sync(ctx, cid, now=NOW + 1000, history=False)
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["positions"][0]["side"] is None and snap["positions"][0]["sl_price"] is None and snap["positions"][0]["volume"] == "0.1"
+        assert snap["positions"][0]["symbol"] == "<img src=x onerror=alert(1)>"   # returned verbatim as JSON data; the page must escape it
+
+    run_db(ctx, scenario)
+
+
+def test_snapshot_reports_stale_failed_and_forbidden_states(ctx):
+    async def scenario():
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        ctx.broker.fail["/v1/ledgers"] = (403, {})
+        await sync(ctx, cid)
+        ctx.broker.fail["/v1/positions"] = (500, {})
+        ratelimit._budgets.clear()
+        await sync(ctx, cid, now=NOW + 1000, history=False)
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["freshness"]["positions"]["status"] == "degraded" and snap["freshness"]["positions"]["last_error"] == "transient"
+        assert snap["positions"] == []                                 # last good value is kept
+        assert snap["freshness"]["ledgers"]["last_error"] == "forbidden"
+        async with ctx.db.begin() as conn:                             # time passes with no successful refresh
+            await conn.execute(text("UPDATE mtapi_sync_state SET last_success_at = NOW() - INTERVAL '10 minutes' WHERE resource IN ('summary','positions')"))
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["freshness"]["summary"]["status"] == "stale" and snap["freshness"]["summary"]["is_stale"] is True
+        assert snap["connection"]["display_state"] == "delayed" and snap["summary"] is not None   # shown, but marked stale
+        del ctx.broker.accounts[TOKEN_A]
+        ctx.broker.fail.clear()
+        ratelimit._budgets.clear()
+        await sync(ctx, cid, now=NOW + 2000)
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["connection"]["status"] == "needs_reauth" and snap["connection"]["display_state"] == "needs_reauth"
+
+    run_db(ctx, scenario)
+
+
+def test_read_models_are_owner_scoped_and_hide_disconnected(ctx):
+    async def scenario():
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        ctx.broker.accounts[TOKEN_A]["closed"] = [closed(f"u{i}", "P1", NOW - 1000 - i) for i in range(5)]
+        await sync(ctx, cid)
+        mine = (await ctx.http.get(f"{P}/{cid}/trades?limit=2", headers=auth(ALICE))).json()
+        assert len(mine["trades"]) == 2 and mine["next_cursor"]
+        bob = auth(BOB)
+        for path in (f"{P}/{cid}/snapshot", f"{P}/{cid}/trades", f"{P}/{cid}/trades?cursor={mine['next_cursor']}", f"{P}/999999/snapshot", f"{P}/999999/trades"):
+            res = await ctx.http.get(path, headers=bob)
+            assert res.status_code == 404 and res.json() == {"detail": "Connection not found"}, path   # a stolen cursor does not help
+            assert "u0" not in res.text
+        for path in (f"{P}/{cid}/snapshot", f"{P}/{cid}/trades"):
+            assert (await ctx.http.get(path)).status_code == 401
+            assert (await ctx.http.get(path, headers={"Authorization": "Bearer tti_extension"})).status_code == 401
+        from app.services.matchtrader_api.read_models import NotFound, ReadModels
+        rm = ReadModels(lambda: ctx.db)
+        with pytest.raises(NotFound):
+            await rm.read_owned_snapshot(cid, BOB)             # enforced in SQL, not only in the route
+        with pytest.raises(NotFound):
+            await rm.read_owned_closed_trades(cid, BOB, limit=10, cursor=None)
+        assert await rm.list_owned(BOB) == []
+        await ctx.http.delete(f"{P}/{cid}", headers=auth(ALICE))
+        for path in (f"{P}/{cid}/snapshot", f"{P}/{cid}/trades"):
+            assert (await ctx.http.get(path, headers=auth(ALICE))).status_code == 404   # disconnected: gone, even for the owner
+        with pytest.raises(NotFound):
+            await rm.read_owned_snapshot(cid, ALICE)
+
+    run_db(ctx, scenario)
+
+
+def test_trade_pages_are_stable_complete_and_aggregates_use_the_whole_set(ctx):
+    async def scenario():
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        t = NOW - 3_600_000
+        rows = [closed(f"u{i:03d}", f"P{i // 2}", t + (i // 3) * 1000, net=str(5 if i % 4 else -7)) for i in range(57)]   # ties on close time; partial closes share P ids
+        ctx.broker.accounts[TOKEN_A]["closed"] = list(rows)
+        await sync(ctx, cid)
+        seen, cursor, pages = [], None, 0
+        while True:
+            url = f"{P}/{cid}/trades?limit=10" + (f"&cursor={cursor}" if cursor else "")
+            page = (await ctx.http.get(url, headers=auth(ALICE))).json()
+            seen += [r["uid"] for r in page["trades"]]
+            pages += 1
+            if pages == 2:      # a refresh / new trade arriving mid-pagination must not shift later pages
+                ctx.broker.accounts[TOKEN_A]["closed"].append(closed("newest", "PX", NOW - 10, net="1"))
+                await sync(ctx, cid, now=NOW + 5000)
+            cursor = page["next_cursor"]
+            if not page["has_more"]:
+                break
+        assert len(seen) == 57 and len(set(seen)) == 57 and "newest" not in seen   # no duplicates, no gaps
+        times = [r["closeTime"] for r in sorted(rows, key=lambda r: (r["closeTime"], r["uid"]), reverse=True)]
+        assert seen == [r["uid"] for r in sorted(rows, key=lambda r: (r["closeTime"], r["uid"]), reverse=True)] and times == sorted(times, reverse=True)
+        first = (await ctx.http.get(f"{P}/{cid}/trades?limit=3", headers=auth(ALICE))).json()["trades"][0]
+        assert first["uid"] == "newest" and first["entry_key"] == f"mtapi:{cid}:newest" and first["net_profit"] == "1" and first["close_time"].endswith("Z")
+        assert set(first) == {"entry_key", "uid", "position_id", "symbol", "alias", "side", "volume", "open_price", "close_price", "open_time", "close_time",
+                              "profit", "commission", "swap", "net_profit", "close_reason"}
+        assert (await ctx.http.get(f"{P}/{cid}/trades?limit=100000", headers=auth(ALICE))).status_code == 200
+        assert len((await ctx.http.get(f"{P}/{cid}/trades?limit=100000", headers=auth(ALICE))).json()["trades"]) == 58   # capped at 100, all 58 fit
+        for bad in ("garbage", "W10", "%27%3B+DROP+TABLE"):
+            assert (await ctx.http.get(f"{P}/{cid}/trades?cursor={bad}", headers=auth(ALICE))).status_code == 400
+        stats = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()["history"]
+        expected_net = sum(5 if i % 4 else -7 for i in range(57)) + 1
+        assert stats["closed_entry_count"] == 58 and stats["period_stats"]["net_profit"] == str(expected_net)     # whole set, not one page
+        assert stats["period_stats"]["winning_entries"] == 43 and stats["period_stats"]["losing_entries"] == 15
+        assert stats["period_stats"]["positions"] == 30                                                             # 57 entries over 29 positions + 1
+
+    run_db(ctx, scenario)
+
+
+def test_first_sync_flow_connect_sync_backfill_then_worker_keeps_refreshing(ctx, monkeypatch):
+    monkeypatch.setenv("TALITRADE_MT_API_WORKER_ENABLED", "true")
+
+    async def scenario():
+        import time
+        real_now = int(time.time() * 1000)
+        account = ctx.broker.accounts[TOKEN_A]
+        account["closed"] = [closed("recent", "P1", real_now - 3_600_000, net="12.5"), closed("older", "P2", real_now - 5 * 86_400_000, net="-4")]
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        first = (await ctx.http.post(f"{P}/{cid}/sync", headers=auth(ALICE))).json()
+        assert first["ok"] is True and first["result"]["live_ready"] is True
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["summary"]["balance"] == "10000.12" and snap["history"]["closed_entry_count"] == 1     # only the last 24h so far
+        week = real_now - 7 * 86_400_000
+        queued = (await ctx.http.post(f"{P}/{cid}/backfill", headers=auth(ALICE), json={"from_ms": week})).json()
+        assert queued["queued"] == ["closed_positions", "ledgers"] and queued["requested_to"] and queued["background_refresh_enabled"] is True
+        again = (await ctx.http.post(f"{P}/{cid}/backfill", headers=auth(ALICE), json={"from_ms": week})).json()
+        assert again["queued"] == []                                                                       # idempotent
+        assert (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()["history"]["coverage_status"] == "in_progress"
+
+        # Browser closed: only the worker runs from here.
+        async with ctx.db.begin() as conn:
+            await conn.execute(text("UPDATE mtapi_connections SET next_live_sync_at = NOW(), next_history_sync_at = NOW()"))
+        before = (await ctx.store.get_sync_state(cid))["summary"]["last_success_at"]
+        account["summary"]["balance"] = 10111.0
+        assert await worker.run_due_once(ctx.store, client_factory=ctx.factory) == 1
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["summary"]["balance"] == "10111" and (await ctx.store.get_sync_state(cid))["summary"]["last_success_at"] > before
+        assert snap["history"]["closed_entry_count"] == 2 and snap["history"]["coverage_status"] == "complete_for_requested_range"
+        assert snap["history"]["period_stats"]["net_profit"] == "8.5" and snap["background_refresh"]["enabled"] is True
+        trades = (await ctx.http.get(f"{P}/{cid}/trades", headers=auth(ALICE))).json()["trades"]
+        assert [t["uid"] for t in trades] == ["recent", "older"]
+        # Reopening the app needs no token: the connection is restored from the server.
+        restored = (await ctx.http.get(P, headers=auth(ALICE))).json()["connections"]
+        assert len(restored) == 1 and restored[0]["card"]["balance"] == "10111" and TOKEN_A not in str(restored)
+
+    run_db(ctx, scenario)
+
+
+def test_connect_can_succeed_while_the_first_sync_fails(ctx):
+    async def scenario():
+        cid = (await connect(ctx)).json()["connection"]["id"]
+        for path in ("/v1/account-summary", "/v1/positions", "/v1/pending-orders", "/v1/closed-positions", "/v1/ledgers"):
+            ctx.broker.fail[path] = (503, {})
+        body = (await ctx.http.post(f"{P}/{cid}/sync", headers=auth(ALICE))).json()
+        assert body["ok"] is False and body["result"]["state"] == "failed" and body["result"]["live_ready"] is False
+        snap = (await ctx.http.get(f"{P}/{cid}/snapshot", headers=auth(ALICE))).json()
+        assert snap["connection"]["status"] == "active" and snap["connection"]["display_state"] == "first_sync_pending"
+        assert snap["summary"] is None and snap["freshness"]["summary"]["status"] == "failed" and snap["freshness"]["summary"]["last_error"] == "transient"
+        gen = await ctx.store.acquire_lease(cid, "worker-mid-pass", 60)   # the worker is busy with this account
+        assert gen is not None
+        busy = (await ctx.http.post(f"{P}/{cid}/sync", headers=auth(ALICE))).json()
+        assert busy["ok"] is False and busy["result"]["state"] == "busy"   # not reported as a successful refresh
 
     run_db(ctx, scenario)

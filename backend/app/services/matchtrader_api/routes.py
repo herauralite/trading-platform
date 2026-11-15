@@ -12,12 +12,12 @@ from collections import defaultdict, deque
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field, SecretStr
 
 from app.core import ingest_auth
 from app.core.ingest_auth import Principal
-from app.services.matchtrader_api import client as api, config, crypto, engine, ratelimit, reconcile
+from app.services.matchtrader_api import client as api, config, crypto, engine, ratelimit, read_models, reconcile
 from app.services.matchtrader_api.store import IdentityConflict, SqlStore, StaleWriter
 
 logger = logging.getLogger("app.matchtrader_api")
@@ -37,6 +37,14 @@ CONNECT_ATTEMPT_LIMIT, CONNECT_ATTEMPT_WINDOW = 5, 600.0
 
 def get_store() -> SqlStore:
     return SqlStore()
+
+
+def get_read_models() -> read_models.ReadModels:
+    return read_models.ReadModels()
+
+
+def _private(response: Response) -> None:
+    response.headers["Cache-Control"] = "no-store"
 
 
 def make_client(token: str, budget: ratelimit.AccountRateBudget | None = None):
@@ -189,10 +197,36 @@ async def connect(body: TokenBody, principal: Principal = Depends(ingest_auth.re
 
 
 @router.get("/connections")
-async def list_connections(principal: Principal = Depends(ingest_auth.require_session_principal)):
+async def list_connections(response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
     store = get_store()
     connections = await store.list_connections(principal.user_id)
-    return {"connections": [_public(c, await store.get_sync_state(c["id"]), await store.coverage(c["id"])) for c in connections]}
+    cards = {card["id"]: card for card in await get_read_models().list_owned(principal.user_id)}
+    _private(response)
+    return {"connections": [{**_public(c, await store.get_sync_state(c["id"]), await store.coverage(c["id"])), "card": cards.get(c["id"])} for c in connections]}
+
+
+@router.get("/connections/{connection_id}/snapshot")
+async def get_snapshot(connection_id: int, response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Everything persisted for one connection. Reads the database only; never contacts the broker."""
+    try:
+        snapshot = await get_read_models().read_owned_snapshot(connection_id, principal.user_id)
+    except read_models.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+    _private(response)
+    return snapshot
+
+
+@router.get("/connections/{connection_id}/trades")
+async def get_trades(connection_id: int, response: Response, limit: int = 50, cursor: str | None = None,
+                     principal: Principal = Depends(ingest_auth.require_session_principal)):
+    try:
+        page = await get_read_models().read_owned_closed_trades(connection_id, principal.user_id, limit=limit, cursor=cursor)
+    except read_models.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+    except read_models.BadCursor:
+        raise HTTPException(status_code=400, detail="Invalid cursor") from None
+    _private(response)
+    return page
 
 
 @router.post("/connections/{connection_id}/rotate")
@@ -238,7 +272,9 @@ async def manual_sync(connection_id: int, principal: Principal = Depends(ingest_
     if connection["status"] != "active":
         raise HTTPException(status_code=409, detail="This connection is not active")
     outcome = await engine.sync_connection(store, connection_id, client_factory=lambda token, budget: make_client(token, budget))
-    return {"ok": True, "outcome": outcome}  # shares the lease and rate budget with the worker
+    result = read_models.interpret_sync_outcome(outcome)   # shares the lease and rate budget with the worker
+    # ``ok`` means fresh live data was persisted by THIS request - not merely that the request ran.
+    return {"ok": result["state"] in ("ok", "partial"), "result": result, "outcome": outcome}
 
 
 @router.post("/connections/{connection_id}/backfill")
@@ -257,6 +293,7 @@ async def start_backfill(connection_id: int, body: BackfillBody, principal: Prin
         if await store.enqueue_backfill(connection_id, resource, body.from_ms - 1, cutoff + 1):
             queued.append(resource)
     return {"ok": True, "queued": queued, "requested_from": datetime.fromtimestamp(body.from_ms / 1000, tz=timezone.utc).isoformat(),
+            "requested_to": datetime.fromtimestamp(cutoff / 1000, tz=timezone.utc).isoformat(), "background_refresh_enabled": config.worker_enabled(),
             "note": "History is imported in the background. Coverage is reported per resource; it is only 'complete' for the range you requested."}
 
 
