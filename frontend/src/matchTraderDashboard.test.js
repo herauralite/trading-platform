@@ -519,6 +519,19 @@ test('served dashboard loads the provider scripts once and dispatches before any
   for (const fn of ['fetchJournal', 'fetchAnalytics', 'fetchChallenges', 'setPrimaryAccount', 'deactivateAccount']) assert.ok(body(fn).includes('TaliMatchTrader.isApiAccount('), fn)
   const input = appHtml.match(/<input[^>]*id="mtApiTokenInput"[^>]*>/)[0]
   assert.ok(input.includes('type="password"') && input.includes('autocomplete="off"') && !input.includes('value='))
-  assert.ok(appHtml.includes("TaliMatchTrader.isAvailable())?brokerCard('matchtraderApi'):''"))   // hidden when the feature is off
+  assert.ok(appHtml.includes("const ready=!!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable());"))   // card is disabled unless the server reports ready
+  assert.ok(appHtml.includes("if(!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable())) return;"))       // and the form cannot be opened either
   assert.ok(appHtml.includes('TaliMatchTrader.merge(ACCOUNTS)') && appHtml.includes('TaliMatchTrader.reset()'))
+})
+
+test('the Add Account picker offers one supported integration; other providers are not offered or reachable from it', () => {
+  const picker = appHtml.slice(appHtml.indexOf("stepEl.textContent='Step 1"), appHtml.indexOf("footer.innerHTML=`<button class=\"btn btn-ghost rip\" onclick=\"closeAddAccountFlow()\">Cancel</button>`"))
+  assert.ok(picker.includes("SUPPORTED_ADD_PATHS.map(brokerCard)"))
+  assert.ok(!/brokerCard\('(fundingpips|tradelocker|mt5)'\)/.test(appHtml))                 // no card for another provider anywhere
+  assert.match(appHtml, /const SUPPORTED_ADD_PATHS=\['matchtraderApi'\];/)
+  assert.match(appHtml, /if\(!SUPPORTED_ADD_PATHS\.includes\(path\)\) return;/)           // the page function itself refuses other paths
+  assert.ok(!/Connect FundingPips, TradeLocker, or MetaTrader/.test(appHtml))                // onboarding text no longer advertises them
+  const form = appHtml.slice(appHtml.indexOf("addAcctFlowState.path==='matchtraderApi'"), appHtml.indexOf("addAcctFlowState.path==='brokerApi'"))
+  assert.ok(!/FundingPips|FundedPips/i.test(form))                                           // generic instructions
+  assert.match(form, /Trader API<\/b> enabled/)
 })

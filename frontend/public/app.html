@@ -1464,7 +1464,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div style="display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">1</div>
-        <div><div style="font-size:12px;font-weight:600;color:var(--text)">Connect your first account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect FundingPips, TradeLocker, or MetaTrader 5 to start tracking your funded accounts.</div></div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--text)">Connect your first account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect a Match-Trader account with a read-only API token to start tracking it.</div></div>
       </div>
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">2</div>
@@ -2315,7 +2315,7 @@ function renderAcctSheet(){
 }
 
 const ADD_ACCOUNT_PATHS={
-  matchtraderApi:{title:'Match-Trader API',tagline:'Read-only token · syncs with the browser closed',badge:'READ-ONLY',badgeColor:'#2AABEE',accent:'#2AABEE',portalBg:'#0d1520',portalBorder:'rgba(42,171,238,0.2)',logoText:'MT',logoColor:'#2AABEE',logoBg:'#0a1220',desc:'Connect with a read-only API token from Match-Trader.'},
+  matchtraderApi:{title:'Match-Trader API',tagline:'Broker or prop firm account · read-only API token',badge:'READ-ONLY',badgeColor:'#2AABEE',accent:'#2AABEE',portalBg:'#0d1520',portalBorder:'rgba(42,171,238,0.2)',logoText:'MT',logoColor:'#2AABEE',logoBg:'#0a1220',desc:'Connect with a read-only API token from Match-Trader.'},
   fundingpips:{title:'FundingPips',tagline:'Prop Firm',badge:'PROP FIRM',badgeColor:'#22c55e',accent:'#22c55e',portalBg:'#0d1a11',portalBorder:'rgba(34,197,94,0.2)',logoText:'FP',logoColor:'#22c55e',logoBg:'#0a1a0d',desc:'Connect with your FundingPips login. Accounts are discovered automatically.'},
   tradelocker:{title:'TradeLocker',tagline:'API Connection',badge:'LIVE',badgeColor:'#2AABEE',accent:'#2AABEE',portalBg:'#0d1520',portalBorder:'rgba(42,171,238,0.2)',logoText:'TL',logoColor:'#2AABEE',logoBg:'#0a1220',desc:'Connect your TradeLocker account via secure API credentials.'},
   mt5:{title:'MetaTrader 5',tagline:'MT5 Bridge',badge:'BRIDGE',badgeColor:'#a78bfa',accent:'#a78bfa',portalBg:'#110d1a',portalBorder:'rgba(167,139,250,0.2)',logoText:'MT5',logoColor:'#a78bfa',logoBg:'#0e0a18',desc:'Connect your MT5 account through the TaliTrade bridge pairing flow.'}
@@ -2346,7 +2346,10 @@ function closeAddAccountFlow(){
   document.body.style.overflow='';
 }
 
+const SUPPORTED_ADD_PATHS=['matchtraderApi'];
 function setAddAccountPath(path,cardKey){
+  if(!SUPPORTED_ADD_PATHS.includes(path)) return;   // only supported integrations can be opened, whatever calls this
+  if(!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable())) return;
   addAcctFlowState.path=path;
   addAcctFlowState.selectedCard=cardKey||path;
   addAcctFlowState.step=2;
@@ -2372,15 +2375,16 @@ function renderAddAccountFlow(){
   if(!body||!footer||!stepEl)return;
 
   if(addAcctFlowState.step===1){
-    stepEl.textContent='Step 1 · Select broker';
+    stepEl.textContent='Step 1 · Select connection';
     const BROKER_FAVICONS={matchtraderApi:'https://www.google.com/s2/favicons?domain=match-trade.com&sz=64',fundingpips:'https://www.google.com/s2/favicons?domain=fundingpips.com&sz=64',tradelocker:'https://www.google.com/s2/favicons?domain=tradelocker.com&sz=64',mt5:'https://www.google.com/s2/favicons?domain=metatrader5.com&sz=64'};
     function brokerCard(key){
-      const apiRecommended=key==='fundingpips';
-      const apiBlocked=apiRecommended&&!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable());
-      const targetPath=apiRecommended?'matchtraderApi':key;
-      const p=apiRecommended?{...ADD_ACCOUNT_PATHS[key],tagline:apiBlocked?(addAcctFlowState.checkingApi?'Checking API availability…':'API connection is unavailable on this server'):'Match-Trader account · connect with a read-only API token',badge:'READ-ONLY'}:ADD_ACCOUNT_PATHS[key];
+      // The card is offered only when the server reports the integration ready; until then it is
+      // shown disabled with the reason, never replaced by another sign-in method.
+      const ready=!!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable());
+      const base=ADD_ACCOUNT_PATHS[key];
+      const p=ready?base:{...base,tagline:addAcctFlowState.checkingApi?'Checking availability…':'Not available on this server right now'};
       const isSelected=addAcctFlowState.selectedCard===key;
-      return `<button ${apiBlocked?'disabled':''} data-broker-card="${key}" aria-pressed="${isSelected?'true':'false'}" class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${targetPath}','${key}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer;text-align:left;transition:all 0.15s;">
+      return `<button ${ready?'':'disabled'} data-broker-card="${key}" aria-pressed="${isSelected?'true':'false'}" class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${key}','${key}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:${ready?'pointer':'default'};opacity:${ready?'1':'0.6'};text-align:left;transition:all 0.15s;">
         <div style="width:40px;height:40px;border-radius:10px;background:${p.logoBg};display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid ${p.portalBorder};overflow:hidden">
           <img src="${BROKER_FAVICONS[key]}" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none';this.nextSibling.style.display='flex'" alt="${p.title}">
           <span style="display:none;font-size:11px;font-weight:800;color:${p.logoColor};font-family:Inter,sans-serif">${p.logoText}</span>
@@ -2395,7 +2399,10 @@ function renderAddAccountFlow(){
         ${isSelected?`<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8" stroke="${p.accent}" stroke-width="1.5"/><path d="M5.5 9l2.5 2.5L12.5 6" stroke="${p.accent}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`:''}
       </button>`;
     }
-    body.innerHTML=((window.TaliMatchTrader&&TaliMatchTrader.isAvailable())?brokerCard('matchtraderApi'):'')+brokerCard('fundingpips')+brokerCard('tradelocker')+brokerCard('mt5');
+    // One supported integration for now. Other providers' code and existing accounts are untouched;
+    // they are simply not offered for new connections here.
+    body.innerHTML=SUPPORTED_ADD_PATHS.map(brokerCard).join('')
+      +'<div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6;padding:4px 2px">Works with brokers and prop firms that run Match-Trader <b>and</b> have Trader API enabled for your account. Not every Match-Trader broker does.</div>';
     footer.innerHTML=`<button class="btn btn-ghost rip" onclick="closeAddAccountFlow()">Cancel</button>`;
     return;
   }
@@ -2449,16 +2456,16 @@ function renderAddAccountFlow(){
       <div style="display:flex;flex-direction:column;gap:10px">
         <label for="mtApiTokenInput" style="font-size:12px;color:#e8f0ff;font-weight:600">Your Match-Trader read-only API token</label>
         <input class="aaf-input" id="mtApiTokenInput" type="password" placeholder="Paste your token here" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" style="border-color:rgba(42,171,238,0.2)" ${addAcctFlowState.loading?'disabled':''}>
-        <div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6">Your trading account is detected automatically and linked to your signed-in TaliTrade account. You do not need to enter a FundingPips password or account number.</div>
+        <div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6">Your trading account is detected automatically and linked to your signed-in TaliTrade account. The broker name and account are read from the broker’s own response. No broker password or account number is needed.</div>
         <details style="font-size:12px;color:rgba(148,163,184,0.85);line-height:1.7">
           <summary style="cursor:pointer;color:#2aabee;font-weight:600">Where do I get my token?</summary>
           <ol style="padding-left:20px;margin:10px 0">
-            <li>Open your FundingPips dashboard and launch the account in Match-Trader.</li>
-            <li>In Match-Trader, open <b>API Access</b> and choose <b>Generate API token</b>.</li>
-            <li>Name it <b>TaliTrade</b>, choose an expiry date, and select <b>Read-only</b>.</li>
-            <li>Generate the token, copy it, then return here and paste it above.</li>
+            <li>Open your broker or prop firm’s <b>Match-Trader</b> platform.</li>
+            <li>Open <b>API Access</b> and generate a token.</li>
+            <li>Name it <b>TaliTrade</b>, select an expiry and <b>Read-only</b>.</li>
+            <li>Copy the token and paste it above.</li>
           </ol>
-          <div>The token is shown only once. If API Access is missing, ask your broker whether Trader API is enabled for that account. For another Match-Trader broker, open that broker’s platform instead.</div>
+          <div>The token is shown only once. Your broker must have <b>Trader API</b> enabled for your account: if API Access is missing or the token is refused, ask the broker to enable it.</div>
         </details>
         <div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6">TaliTrade uses this connection only to read balances, positions and trade history. Generate a read-only token; trading access is not needed.</div>
         <div style="font-size:11px;color:rgba(148,163,184,0.5)">The token is sent once, encrypted on the server and never shown again. You can disconnect at any time.</div>
@@ -3167,7 +3174,7 @@ function renderNoAccountState(kind='default'){
 
   const payoutChecks=document.getElementById('payoutChecks');
   if(payoutChecks){
-    payoutChecks.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid var(--border);border-radius:var(--rs)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg><span style="font-size:12px;color:var(--t3)">Connect a FundingPips account to unlock payout tracking.</span></div>`;
+    payoutChecks.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid var(--border);border-radius:var(--rs)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg><span style="font-size:12px;color:var(--t3)">Connect an account to see payout tracking where it is available.</span></div>`;
   }
   const payoutHero=document.getElementById('payoutHero');
   const skelPayout=document.getElementById('skelPayout');
