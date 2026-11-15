@@ -21,7 +21,7 @@ main{overflow:hidden}
 #homepageAuthGate.open{display:flex;}
 #homepageAuthGate.open #homepageAuthCard{animation:modalIn .24s cubic-bezier(.22,1,.36,1) forwards;}
 @keyframes modalIn{from{opacity:0;transform:scale(.96) translateY(14px)}to{opacity:1;transform:scale(1) translateY(0)}}
-.ui-icon{display:inline-block;width:1em;height:1em;vertical-align:-.13em;flex:none}</style>
+.ui-icon{display:inline-block;width:1em;height:1em;vertical-align:-.13em;flex:none}.community-footer{display:grid;grid-template-columns:2fr 1fr 1fr;align-items:start;gap:32px}.community-footer h2{font-size:15px;margin:16px 0}.community-footer p,.community-footer section>a:not(.brand),.community-footer summary{font-size:13px;color:#aebfcb;line-height:1.7}.community-footer section>a{display:block;margin-bottom:8px}.community-footer .brand{display:flex}.community-footer p{max-width:350px}.community-footer summary{cursor:pointer}.community-footer small{grid-column:1/-1}@media(max-width:650px){.community-footer{grid-template-columns:1fr;gap:12px}}</style>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
 <meta property="og:url" content="https://www.talitrade.com"/>
 <meta property="og:type" content="website"/>
@@ -121,7 +121,12 @@ main{overflow:hidden}
 </div>
 
 <!-- FOOTER -->
-<footer class="wrap"><a class="brand" href="#"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M3 7h21v6h-7v18h-6V13H3z" fill="currentColor"/><path d="M16 7h17v6h-5v18h-6V13h-6z" fill="currentColor" opacity=".35"/></svg><span>Tali<span class="blue">Trade</span></span></a><span>Built for the trader behind the account.</span><a href="https://t.me/talitrade" target="_blank" rel="noopener noreferrer">Telegram <svg class="ui-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5 M5 5h14v14"/></svg></a><a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Dashboard</a><a href="mailto:support@talitrade.com">Support</a><small>© 2026 TaliTrade</small></footer>
+<footer class="community-footer wrap">
+  <section aria-label="About TaliTrade"><a class="brand" href="#"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M3 7h21v6h-7v18h-6V13H3z" fill="currentColor"/><path d="M16 7h17v6h-5v18h-6V13h-6z" fill="currentColor" opacity=".35"/></svg><span>Tali<span class="blue">Trade</span></span></a><h2>About TaliTrade</h2><p>We build tools for prop traders to review their connected accounts and trade history in one place.</p></section>
+  <section><h2>Community</h2><a href="https://www.instagram.com/talitrade/">Instagram · @talitrade</a><a href="https://x.com/talitrade">X · @talitrade</a><a href="https://t.me/talitrade">Channel · @talitrade</a><a href="https://t.me/TaliTradeBot?start=waitlist">Bot · @TaliTradeBot</a></section>
+  <section><h2>Get in touch</h2><a href="mailto:support@talitrade.com">support@talitrade.com</a><a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Dashboard</a><details><summary>Privacy</summary><p>The waitlist stores your Telegram username. Signing in associates your Telegram ID with your trading accounts. Send /alerts in the bot to receive private updates, or /stop to turn those updates off. Email support with questions about your data.</p></details></section>
+  <small>© 2026 TaliTrade</small>
+</footer>
   
   <script src="/tali-api-base.js"></script><script>
 const AUTH_DIAGNOSTICS = [];

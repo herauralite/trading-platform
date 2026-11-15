@@ -1291,9 +1291,12 @@ async def lifespan(app: FastAPI):
     await backfill_legacy_prop_accounts_to_trading_accounts()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
+    from app.services import community_bot
+    await community_bot.setup()
     await setup_telegram_webhook()
     stop_event = asyncio.Event()
     tasks = [
+        asyncio.create_task(community_bot.run()),
         asyncio.create_task(news_scheduler()),
         asyncio.create_task(weekend_scheduler()),
         asyncio.create_task(daily_summary_scheduler()),
@@ -2017,6 +2020,7 @@ def telegram_command_matches(raw_cmd: str, base_cmd: str) -> bool:
 
 
 async def setup_telegram_webhook():
+    from app.services import community_bot
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         logger.warning("Telegram webhook setup skipped: TELEGRAM_BOT_TOKEN is not configured")
@@ -2025,7 +2029,7 @@ async def setup_telegram_webhook():
         async with httpx.AsyncClient() as client:
             res = await client.post(
                 f"https://api.telegram.org/bot{token}/setWebhook",
-                json={"url": f"{APP_BASE_URL}/telegram/webhook"},
+                json={"url": f"{APP_BASE_URL}/telegram/webhook", "secret_token": community_bot.webhook_secret(token)},
             )
             # Never log request URLs or raw HTTPX responses here: the URL contains the bot token.
             if res.is_success:
@@ -2200,6 +2204,9 @@ async def fetch_news_calendar() -> list:
 def parse_event_time(event: dict):
     try:
         date_str = event.get("date", ""); time_str = event.get("time", "")
+        if "T" in date_str:
+            event_time = datetime.fromisoformat(date_str.replace("Z", "+00:00"))
+            return event_time.astimezone(timezone.utc) if event_time.tzinfo else None
         if not date_str or not time_str or time_str.lower() in ["", "all day", "tentative"]:
             return None
         dt_date  = datetime.strptime(date_str, "%m-%d-%Y").date()
@@ -2236,6 +2243,9 @@ async def news_scheduler():
         await asyncio.sleep(60)
 
 async def send_news_alert(event: dict, event_time: datetime, minutes: int):
+    from app.services import community_bot
+    await community_bot.market_alert(f"calendar:{event.get('title')}:{event_time.isoformat()}",
+        event.get("title", "Market event"), f"{event_time:%Y-%m-%d %H:%M} UTC | Scheduled economic release")
     title    = event.get("title", "Unknown")
     currency = (event.get("country") or "").upper()
     forecast = event.get("forecast", ""); previous = event.get("previous", "")
@@ -2288,12 +2298,22 @@ async def get_user_primary_account(telegram_user_id: str) -> str:
             if get_live_account(a["account_id"]):
                 return a["account_id"]
         return accounts[0]["account_id"]
-    return get_primary_account_id()
+    return ""
 
 
 # ─── Telegram bot commands ────────────────────────────────────────────────────
+@app.get("/telegram/profile-status")
+async def telegram_profile_status():
+    from app.services import community_bot
+    return {"default_and_english_verified": community_bot.profile_verified}
+
+
 @app.post("/telegram/webhook")
 async def telegram_webhook(request: Request):
+    from app.services import community_bot
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token or not hmac.compare_digest(request.headers.get("X-Telegram-Bot-Api-Secret-Token", ""), community_bot.webhook_secret(token)):
+        raise HTTPException(status_code=403, detail="Invalid Telegram webhook")
     body     = await request.json()
     message  = body.get("message", {})
     cmd      = message.get("text", "").strip().lower()
@@ -2301,14 +2321,27 @@ async def telegram_webhook(request: Request):
     tg_from  = message.get("from", {})
     tg_uid   = str(tg_from.get("id", "")) if tg_from else chat_id
 
+    if message.get("chat", {}).get("type") != "private" or not tg_from.get("id") or tg_uid != chat_id:
+        return {"ok": True}
     command, _, payload = cmd.partition(" ")
+    if telegram_command_matches(command, "/accounts"):
+        return {"method": "sendMessage", "chat_id": chat_id, "text": await community_bot.accounts(tg_uid)}
+    if any(telegram_command_matches(command, c) for c in ("/status", "/today", "/journal", "/week", "/summary", "/payout")):
+        if not await get_user_primary_account(tg_uid):
+            return {"method": "sendMessage", "chat_id": chat_id, "text": "Use /accounts for your connected accounts and /alerts for private updates."}
+    if any(telegram_command_matches(command, c) for c in ("/alerts", "/stop")):
+        enabled = telegram_command_matches(command, "/alerts")
+        await community_bot.subscribe(tg_uid, enabled)
+        return {"method": "sendMessage", "chat_id": chat_id, "text": (
+            "Account and market alerts enabled. Connect your accounts at talitrade.com/app with this Telegram login. Send /stop to turn these alerts off."
+            if enabled else "Your community account and market alerts are off.")}
     if telegram_command_matches(command, "/start") and payload.strip() == "waitlist":
         if message.get("chat", {}).get("type") == "private" and chat_id == tg_uid and tg_from.get("id"):
             # Telegram executes this Bot API method as the webhook response.
             return {
                 "method": "sendMessage",
                 "chat_id": chat_id,
-                "text": "Welcome to TaliTrade! Join our channel for beta updates and community announcements.",
+                "text": "Welcome to TaliTrade! Send /alerts for private account and market notifications. Join our channel for beta updates and maintenance notices.",
                 "reply_markup": {"inline_keyboard": [[{
                     "text": "Join the TaliTrade channel",
                     "url": "https://t.me/talitrade",
@@ -2324,7 +2357,7 @@ async def telegram_webhook(request: Request):
             acct_lines = "\n".join(f"  • {a['account_id']} ({a['account_type'] or a['broker']}, ${(a['account_size'] or 0):,})" for a in accounts)
             await send_telegram(f"👋 Welcome back, <b>{name}</b>!\n\nYour linked accounts:\n{acct_lines}\n\nUse /status to check your live risk.", chat_id=chat_id)
         else:
-            await send_telegram(f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\nYour Telegram account is registered. To get started:\n\n1️⃣ Open the platform at www.talitrade.com/app\n2️⃣ Log in with Telegram\n3️⃣ Install the Chrome extension on FundingPips\n\nYour trading data will automatically link to this account.\n\n/help — see all commands", chat_id=chat_id)
+            await send_telegram(f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\nYour Telegram account is registered. To get started:\n\n1️⃣ Open the platform at www.talitrade.com/app\n2️⃣ Log in with Telegram\n3️⃣ Connect your supported trading account and send /alerts here\n\nYour trading data will automatically link to this account.\n\n/help — see all commands", chat_id=chat_id)
         return {"ok": True}
 
     dispatch = {"/status": handle_status, "/today": handle_today, "/journal": handle_journal, "/news": handle_news}
