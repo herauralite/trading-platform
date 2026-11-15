@@ -79,8 +79,9 @@ function makeBackend(options = {}) {
     if (p === base && method === 'POST') {
       if (!db.service.accepting_connections) return json(503, { detail: 'New Match-Trader connections are not open on this server yet' })
       if (JSON.parse(init.body).token !== TOKEN) return json(422, { detail: 'Match-Trader rejected this token.' })
-      db.connected = true; db.request = req('queued')
-      return json(200, { ok: true, connection: { id: 7, status: 'active' }, sync_request: db.request })
+      db.connected = true; db.request = req('queued'); db.backfilled = true      // the server queues the first refresh and the 7-day import itself
+      return json(200, { ok: true, connection: { id: 7, status: 'active' }, card: card(), sync_request: db.request,
+        initial_backfill: { days: 7, resources: ['closed_positions', 'ledgers'] }, timings: { verify_seconds: 1.1, store_seconds: 0.2 } })
     }
     if (!db.connected) return json(404, { detail: 'Connection not found' })
     if (p === base + '/7/sync' && method === 'POST') {
@@ -209,10 +210,17 @@ section('FundingPips onboarding')
   backend.db.script = [{ state: 'queued' }, { state: 'running' }, { state: 'completed', resources: { summary: 'ok', positions: 'ok', pending_orders: 'ok' } }]
   tokenInput(p).value = TOKEN
   const mark = backend.db.requests.length
+  let releaseLists
+  backend.db.holdList = new Promise((r) => { releaseLists = r })       // every list read hangs: closing the sheet must not depend on one
   p.$('#addAcctFooter .btn-blue').click()                             // the real Connect button
   check('token cleared from the page the moment Connect is pressed', (tokenInput(p) || { value: '' }).value === '')
-  await sleep(600)
-  check('connected: the sheet closes and the account is selected before any balance exists', p.w.eval('activeAcct') === 'mtapi:7' && !p.w.document.getElementById('add-acct-sheet').classList.contains('open'), p.w.eval('activeAcct'))
+  await sleep(300)
+  check('connected: the sheet closes and the account is selected before any balance exists, with the list read still pending', p.w.eval('activeAcct') === 'mtapi:7' && !p.w.document.getElementById('add-acct-sheet').classList.contains('open'), p.w.eval('activeAcct'))
+  check('only the connect request was needed to close the sheet (no import request from the browser)', !backend.db.requests.slice(mark).some((r) => r.path.endsWith('/backfill')) && backend.db.requests.slice(mark)[0].method === 'POST')
+  const timings = p.w.TaliMatchTrader.lastConnectTimings()
+  check('connect phases are measured as durations only', !!timings && typeof timings.verify_and_store_ms === 'number' && typeof timings.sheet_closed_ms === 'number' && timings.sheet_closed_ms - timings.verify_and_store_ms < 250 && !JSON.stringify(timings).includes(TOKEN), JSON.stringify(timings))
+  releaseLists(); backend.db.holdList = null
+  await sleep(300)
   const early = syncState(p)
   check('first sync is shown as queued or running, never as synced', early.status === 'syncing' && ['queued', 'running'].includes(early.label) && p.text('ovSync') !== 'Synced', JSON.stringify(early) + ' ' + p.text('ovSync'))
   await sleep(5200)

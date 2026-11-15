@@ -67,7 +67,8 @@
       return String(n);
     }
     return {
-      listConnections: function (o) { return request('GET', '/connections', o); },
+      // view=cards: readiness + switcher cards only (two queries on the server), loaded on every page start.
+      listConnections: function (o) { return request('GET', '/connections?view=cards', o); },
       connect: function (o) { return request('POST', '/connections', { body: { token: o.token }, signal: o.signal }); },
       // Queues a refresh (HTTP 202). It has NOT synchronized anything yet: follow up with getSyncStatus().
       sync: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/sync', o); },

@@ -29,25 +29,32 @@ def nudge() -> None:
         _wake.set()
 
 
-async def _live_pass(store: SqlStore, owner: str, connection_id: int, client_factory) -> None:
+RETRY_AFTER_SKIP_SECONDS = 5
+
+
+async def _pass(store: SqlStore, owner: str, connection_id: int, client_factory, *, live: bool, history: bool) -> None:
+    """One scheduled pass. The pass itself sets the next due times in its last statement; this
+    only steps in when it could not (lease busy, or it failed before reaching that statement),
+    so a connection is never retried in a tight loop."""
+    metrics: dict = {}
     try:
-        await engine.sync_connection(store, connection_id, owner=owner, client_factory=client_factory, live=True, history=False)
+        await engine.sync_connection(store, connection_id, owner=owner, client_factory=client_factory, live=live, history=history,
+                                     metrics=metrics, schedule=True)
     except Exception as exc:
-        logger.error("matchtrader worker live pass failed connection=%s error_type=%s", connection_id, type(exc).__name__)
-    finally:
-        await store.schedule(connection_id, live_in=config.live_interval_seconds() + random.randint(0, 3))
+        logger.error("matchtrader worker pass failed connection=%s live=%s history=%s error_type=%s", connection_id, live, history, type(exc).__name__)
+    if not metrics.get("scheduled"):
+        try:
+            await store.schedule(connection_id, live_in=RETRY_AFTER_SKIP_SECONDS if live else None, history_in=RETRY_AFTER_SKIP_SECONDS if history else None)
+        except Exception as exc:
+            logger.error("matchtrader worker reschedule failed connection=%s error_type=%s", connection_id, type(exc).__name__)
+
+
+async def _live_pass(store: SqlStore, owner: str, connection_id: int, client_factory) -> None:
+    await _pass(store, owner, connection_id, client_factory, live=True, history=False)
 
 
 async def _history_pass(store: SqlStore, owner: str, connection_id: int, client_factory) -> None:
-    metrics: dict = {}
-    try:
-        await engine.sync_connection(store, connection_id, owner=owner, client_factory=client_factory, live=False, history=True, metrics=metrics)
-    except Exception as exc:
-        logger.error("matchtrader worker history pass failed connection=%s error_type=%s", connection_id, type(exc).__name__)
-    finally:
-        # While ranges are still queued, come back soon; otherwise at the normal history interval.
-        wait = config.history_backlog_interval_seconds() if metrics.get("history_backlog") else config.history_interval_seconds()
-        await store.schedule(connection_id, history_in=wait + random.randint(0, 3))
+    await _pass(store, owner, connection_id, client_factory, live=False, history=True)
 
 
 async def run_due_once(store: SqlStore, *, client_factory=engine.default_client_factory) -> int:
@@ -69,7 +76,7 @@ async def run_due_once(store: SqlStore, *, client_factory=engine.default_client_
     return len(handled)
 
 
-IDLE_MAX_SECONDS, IDLE_MIN_SECONDS = 6.0, 1.0
+IDLE_MAX_SECONDS, IDLE_MIN_SECONDS = 6.0, 0.25
 
 
 async def _idle_seconds(store: SqlStore) -> float:
@@ -81,7 +88,7 @@ async def _idle_seconds(store: SqlStore) -> float:
         upcoming = None
     if upcoming is None:
         return IDLE_MAX_SECONDS + random.random()
-    return min(IDLE_MAX_SECONDS, max(IDLE_MIN_SECONDS, upcoming + 0.25)) + random.random() * 0.5
+    return min(IDLE_MAX_SECONDS, max(IDLE_MIN_SECONDS, upcoming + 0.1)) + random.random() * 0.2
 
 
 async def worker_loop(stop_event: asyncio.Event, store: SqlStore | None = None) -> None:

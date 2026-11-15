@@ -98,29 +98,81 @@ worker off, `POST /{id}/sync` answers 503 and queues nothing. A 202 never means 
 
 ### Keeping live data fresh during imports
 
-* Rows are written in bulk: one `INSERT .. SELECT FROM jsonb_to_recordset(..) ON CONFLICT` per 500 rows
-  instead of one round trip per row. Same per-row rules (uid de-duplication, revision and `previous_raw` only
-  move when the payload changed), same single transaction per history range.
-* A worker round does all due live work (and queued refreshes) first, then history.
-* History is bounded per pass by range count and by `TALITRADE_MT_API_HISTORY_PASS_SECONDS` (12). Between
-  ranges the pass refreshes live data if it has fallen due. Ranges not reached stay queued.
-* While ranges are queued, history runs again after `TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS` (20)
-  instead of the 120 s history interval. A new backfill starts at the next round.
-* Backfill that runs out of rate budget stops quietly and continues next pass (it is not a failure).
-* The worker sleeps until the next scheduled work (1-6 s) rather than a fixed 5-7 s.
-* Each pass logs timings only: `matchtrader pass connection=.. seconds=.. live_seconds=.. history_seconds=..`.
+What makes a pass slow is the number of database round trips, not the amount of data. On the local test
+machine (Windows -> Railway's public database proxy) one round trip cost roughly 0.3-1 s, and a pass made
+40-90 of them. Inside Railway the same round trip is about a millisecond, so production is the fast path and
+local testing is the slow path; the design has to hold on both.
 
-Measured in the sandbox (simulated broker at 400 ms per call, PostgreSQL behind a 60 ms round-trip link,
-1,200 closed entries + 150 ledger rows over 7 days, default intervals; not a real broker or the real network):
+* **One connection, one statement per step.** A pass holds one database connection (autocommit) and uses
+  single-statement operations (`store.FastOps`): take the lease + read credential + claim the refresh request
+  (1); store summary + full position set + full pending-order set + sync state + request result + release +
+  next due times (1). A live pass is 2 statements. A history range is 1 statement (rows, range outcome,
+  sub-ranges, sync state, lease renewal). Each statement is atomic and fenced by the `g` CTE (status,
+  generation, lease), so the guarantees are the ones the multi-statement transactions gave.
+* **Live reads go out side by side** (summary, positions, pending orders), then one statement stores whatever
+  succeeded. A failed read leaves that stored set untouched.
+* **Live data does not wait for a slow history answer.** While a history request is outstanding the pass keeps
+  refreshing live data whenever it falls due, under the same lease.
+* **Cadence from the fetch start.** Live data is due one interval after the previous fetch *started* (plus up
+  to 5% jitter), not one interval after a slow pass finished. One pass at a time per connection, so there is
+  no catch-up burst.
+* **Fair history turns** (`engine.HISTORY_TURNS`): recent windows get every other turn; backfill and reconcile
+  ranges of both resources get the turns in between. A class with nothing queued does not use a turn.
+* **Recent windows are extended, not piled up.** If the previous recent window has not been fetched yet, it is
+  widened to the new cutoff in the same statement that moves the cursor. The range is a superset, so nothing
+  is skipped.
+* **The history budget is soft.** `TALITRADE_MT_API_HISTORY_PASS_SECONDS` (12) covers planning, database work
+  and nested live refreshes. No new range starts after it; a range that has started (one broker request, up
+  to the 15 s read timeout, plus one statement) finishes. One range always runs, so every pass makes
+  progress. It is not a hard cap.
+* While ranges are queued, history runs again after `TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS` (20).
+  Backfill that runs out of rate budget stops quietly and continues next pass.
+* Each pass logs timings only: `matchtrader pass connection=.. seconds=.. live_seconds=.. history_seconds=..
+  intervals=.. db_calls=.. db_seconds=.. broker_calls=.. broker_seconds=.. broker_max_seconds=..`.
 
-| | Before (`7fa9e30`) | After |
-| --- | --- | --- |
-| First refresh after connect, until a result is reported | 48.6 s inside one web request | 5.4 s, queued; the web request returns at once |
-| Database round trips for that first refresh | 695 | 63 |
-| Longest history transaction (500 rows) | 33.5 s | 0.9 s |
-| Longest worker pass | 52.8 s | 10.6 s |
-| Live refreshes while importing | 2 in 112 s, worst gap 84 s | 3 in 123 s, worst gap 37 s (typical 32 s) |
-| 7-day import progress after 2 minutes | 500 of 1,200 | 1,100 of 1,200 |
+**Gap between two live refreshes (bound).** live interval + jitter (<= 1.5 s) + worker wake-up (<= 0.25 s and
+two statements) + one statement that may be in flight + one live fetch. With a round trip of `r` seconds and a
+broker read of `b` seconds: about `30 + 1.5 + 0.25 + 4r + b`. That is ~32 s in-network and ~35 s on a 0.5 s
+link. The stale threshold (90 s) is unchanged. If a link cannot sustain this, raise
+`TALITRADE_MT_API_LIVE_INTERVAL_SECONDS` rather than the stale threshold.
+
+**Real-token baseline, commit `c72693b`** (local Windows machine, real broker, Nov 14 2026; timings only):
+
+| | Real run on `c72693b` |
+| --- | --- |
+| `POST /{id}/sync` acknowledged | 4.0 s |
+| Refresh request, queued to completed | 37.8 s and 31.7 s |
+| Live passes | 6-17 s for three reads |
+| History passes | 82-93 s for 2 ranges |
+| Largest gap between live refreshes | 62 s |
+| 7-day closed-trade import | 4 min 41 s; ledger import still queued after 5 min |
+
+**Sandbox reproduction and result of this change** (simulated broker; PostgreSQL behind a delayed link; same
+small account shape; the app's pool settings). The slow path uses a 0.5 s round trip and 0.8 s broker reads,
+chosen because it reproduces the real `c72693b` numbers; the fast path uses 2 ms and 0.3 s.
+
+| | `c72693b`, slow path | This change, slow path | This change, fast path |
+| --- | --- | --- | --- |
+| Refresh request acknowledged (database part) | 6.1 s | 1.0 s | 0.02 s |
+| First refresh, queued to completed | 40.9 s | 11.3 s | 0.5 s |
+| Live pass | 14.6 s | 1.8 s | 0.3 s |
+| History pass | 59.9 s for 2 ranges | 13.6 s for 6 ranges | 2.0 s for 6 ranges |
+| Largest gap between live refreshes | 56 s | 33.5 s | 30.4 s |
+| 7-day backfill + reconcile, both resources | not finished in 135 s | 28 s | 9 s |
+| Database round trips per minute | 122 | 63 | 86 |
+
+These are sandbox numbers. They have to be re-measured with the real token on the Windows machine; the pass
+log line above gives the same figures there.
+
+### Connecting an account
+
+`POST /connections` verifies the token (identity first, then the five capability reads side by side), and in
+one transaction stores the connection, its encrypted credential, the first refresh request and the initial
+history backfill (`TALITRADE_MT_API_INITIAL_BACKFILL_DAYS`, default 7). The response carries the switcher
+card and `timings` (`verify_seconds`, `store_seconds`; also logged). The dashboard closes the sheet as soon as
+that one response arrives: it does not wait for a list read or a backfill request. Browser-side durations are
+available as `TaliMatchTrader.lastConnectTimings()` (`verify_and_store_ms`, `sheet_closed_ms`).
+The dashboard loads `GET /connections?view=cards` (readiness + cards, two queries).
 
 Stale thresholds were not changed.
 
@@ -190,7 +242,8 @@ Additive only: 9 tables prefixed `mtapi_` plus indexes, created at startup **onl
 | `TALITRADE_MT_TOKEN_KEY_ACTIVE` | - | Key version used for new tokens, e.g. `v1` |
 | `TALITRADE_MT_API_GLOBAL_PER_MINUTE` | 30 | Account-wide request cap across all endpoints (the real ceiling is unpublished) |
 | `TALITRADE_MT_API_CONNECT_ENABLED` | off | Allows NEW connections and shows the token form. Needs the three above |
-| `TALITRADE_MT_API_HISTORY_PASS_SECONDS` | 12 | Time budget for history in one pass (min 2) |
+| `TALITRADE_MT_API_INITIAL_BACKFILL_DAYS` | 7 | History queued automatically at connect (0 = none) |
+| `TALITRADE_MT_API_HISTORY_PASS_SECONDS` | 12 | Soft time budget for history in one pass (min 2) |
 | `TALITRADE_MT_API_HISTORY_BACKLOG_INTERVAL_SECONDS` | 20 | History interval while ranges are still queued (min 5) |
 | `TALITRADE_MT_API_LIVE_INTERVAL_SECONDS` | 30 | Summary/positions/pending orders (min 10) |
 | `TALITRADE_MT_API_HISTORY_INTERVAL_SECONDS` | 120 | Closed positions/ledgers (min 30) |
@@ -290,6 +343,17 @@ or accept that window knowingly.
 * Never remove or replace the active token key while connections exist: stored tokens become unreadable and
   every user must reconnect. Rotate by adding a new version and changing `..._KEY_ACTIVE`.
 * The schema is additive. Dropping `mtapi_*` tables is the only destructive step and is not part of any rollback.
+
+**Database TLS (existing finding, separate from this feature).** `backend/app/core/database.py` connects with
+TLS but, as it always has, without checking the server certificate (`TALITRADE_DB_SSL_MODE=require`). The
+connection is encrypted; the database server is not authenticated. Encrypting broker tokens at rest does not
+change that. The setting is now explicit and logged at startup, and two verified modes exist:
+`verify-ca` and `verify-full` with `TALITRADE_DB_SSL_ROOT_CERT` (PEM file). The default was not changed,
+because turning verification on without the right CA would stop the app from starting. Before go-live:
+obtain the database server's CA certificate from the provider, set `verify-full` + the root certificate on a
+non-production deployment, confirm startup and `/health/db`, then apply to production. An unknown mode or an
+unreadable certificate stops startup; it never falls back to unverified. Whether the provider's certificate
+can be validated by host name has not been checked here.
 
 **Still to be checked by people, not by the automated tests.**
 * Real Telegram sign-in on a deployed (non-localhost) host, then connecting with a real read-only token.

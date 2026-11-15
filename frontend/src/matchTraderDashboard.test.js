@@ -93,7 +93,8 @@ function load({ session = 'session-1' } = {}) {
     setTopStatus: (text) => { env.top = text }, activateAccount: (key) => { env.active = key; env.log.push(['activate', key]) },
     afterDisconnect: (key) => env.log.push(['afterDisconnect', key]), applyApiState: (view) => applied.push(view),
   })
-  const on = (method, suffix, handler) => routes.push([(c) => c.method === method && c.url.endsWith(suffix), handler])
+  // a route written without a query also matches the same path with one (the list is requested as ?view=cards)
+  const on = (method, suffix, handler) => routes.push([(c) => c.method === method && (c.url.endsWith(suffix) || (!suffix.includes('?') && c.url.split('?')[0].endsWith(suffix))), handler])
   return { core: window.TaliMatchTraderCore, api: window.TaliMatchTraderApi, bridge, env, calls, on, respond, applied, document, deps }
 }
 
@@ -251,38 +252,63 @@ test('the token form is offered only when the server reports every part ready; e
   }
 })
 
-test('token submit: clears the field first, connects, backfills 7 days, shows the account, then follows the queued first sync', async () => {
+test('token submit: clears the field, binds the account, closes the sheet without waiting for anything else, then follows the queued first sync', async () => {
   const t = load()
   const states = [req('running'), req('completed', { resources: { summary: 'ok', positions: 'ok', pending_orders: 'ok' } })]
-  t.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' }, sync_request: req('queued') }))
+  const newCard = card(7, { balance: null, last_synced_at: null, display_state: 'first_sync_pending' })
+  let releaseList
+  const listGate = new Promise((r) => { releaseList = r })
+  t.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' }, card: newCard, sync_request: req('queued'),
+    initial_backfill: { days: 7, resources: ['closed_positions', 'ledgers'] }, timings: { verify_seconds: 1.2, store_seconds: 0.4 } }))
   t.on('GET', '/connections/7/sync', (c, r) => r(200, { request: states.shift() || req('completed') }))
-  t.on('POST', '/connections/7/backfill', (c, r) => r(200, { ok: true, queued: ['closed_positions', 'ledgers'] }))
   t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
-  t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
+  t.on('GET', '/connections', async (c, r) => { await listGate; return r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }) })   // deliberately slow
   const input = t.document.getElementById('mtApiTokenInput')
   input.value = `  ${BROKER_TOKEN}  `
   const pending = t.bridge.submitToken()
   assert.equal(input.value, '')                                           // gone from the page before the request resolves
   await pending
   const paths = () => t.calls.map((c) => `${c.method} ${c.url.replace('http://localhost:8000/connectors/matchtrader-api', '')}`)
-  assert.deepEqual(paths().slice(0, 3), ['POST /connections', 'POST /connections/7/backfill', 'GET /connections'])
-  assert.deepEqual(t.calls[0].body, { token: BROKER_TOKEN })
-  assert.equal(t.calls[1].body.from_ms, NOW - 7 * 86400000)                // seven days, not all-time
+  // The sheet is closed and the account selected after ONE request; the slow list read has not even answered yet.
+  assert.ok(t.env.log.includes('closeFlow'))
   assert.equal(t.env.active, 'mtapi:7')
-  assert.ok(t.env.log.includes('closeFlow'))                               // the form closes without waiting for the broker
+  assert.equal(paths()[0], 'POST /connections')
+  assert.deepEqual(t.calls[0].body, { token: BROKER_TOKEN })
+  assert.deepEqual(Object.keys(t.env.accounts), ['mtapi:7'])               // card came with the connect response
+  assert.ok(!paths().some((x) => x.endsWith('/backfill')))                  // the server queued the 7-day import itself
+  assert.equal(t.bridge.sheetSubtitle('mtapi:7'), 'Connected · first sync pending')
   const status = t.env.log.find((l) => Array.isArray(l) && l[0] === 'status')
   assert.match(status[2], /first sync is queued/)                          // connected is not announced as synced
+  const timings = t.bridge.lastConnectTimings()
+  assert.deepEqual(Object.keys(timings).sort(), ['server', 'sheet_closed_ms', 'verify_and_store_ms'])
+  assert.deepEqual(Array.from(Object.keys(timings.server)), ['verify_seconds', 'store_seconds'])   // durations only
   assert.equal(t.env.timers.length, 1)                                     // import polling started...
   assert.equal(t.env.timers[0].ms, 10000)
+  releaseList()
   await settle()
   assert.equal(paths().filter((x) => x === 'POST /connections/7/sync').length, 0)   // the server already queued it: no second job
   assert.deepEqual(t.env.syncStates, ['syncing/queued', 'syncing/running', 'success/completed'])
   assert.ok(paths().includes('GET /connections/7/snapshot'))               // saved data re-read once it completed
+  assert.ok(paths().includes('GET /connections?view=cards'))               // the light list view
   // ...and nothing anywhere still holds the token
-  const everything = JSON.stringify([t.env.flow, t.env.log, t.env.accounts, t.env.sync, t.calls.slice(1)])
+  const everything = JSON.stringify([t.env.flow, t.env.log, t.env.accounts, t.env.sync, t.calls.slice(1), timings])
   assert.ok(!everything.includes(BROKER_TOKEN))
   for (const src of [apiSrc, bridgeSrc]) assert.ok(!/(local|session)Storage\.(setItem|\w+\s*=)/.test(src) && !/document\.cookie/.test(src))   // nothing is persisted in the browser
   assert.ok(!bridgeSrc.includes('console.') && !apiSrc.includes('console.'))
+
+  // An older server (no card, no automatic import): the page falls back to one list read and requests the import itself, after closing.
+  const old = load()
+  old.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' }, sync_request: req('queued') }))
+  old.on('POST', '/connections/7/backfill', (c, r) => r(200, { ok: true }))
+  old.on('GET', '/connections/7/sync', (c, r) => r(200, { request: req('completed') }))
+  old.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
+  old.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
+  old.document.getElementById('mtApiTokenInput').value = BROKER_TOKEN
+  await old.bridge.submitToken()
+  await settle()
+  const backfill = old.calls.find((c) => c.url.endsWith('/backfill'))
+  assert.equal(backfill.body.from_ms, NOW - 7 * 86400000)                  // seven days, not all-time
+  assert.equal(old.env.active, 'mtapi:7')
 })
 
 test('connect that fails or saves a non-active connection is reported accurately', async () => {
