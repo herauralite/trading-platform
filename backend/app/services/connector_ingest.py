@@ -60,6 +60,10 @@ class ConnectorSyncError(RuntimeError):
         }
 
 
+class AccountOwnershipError(PermissionError):
+    """Raised when a write targets a trading account that belongs to a different user."""
+
+
 def _normalize_connector(value: str | None) -> str:
     return (value or "manual").strip().lower().replace("-", "_")
 
@@ -507,7 +511,7 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
             )
             ON CONFLICT (account_key)
             DO UPDATE SET
-                user_id = COALESCE(EXCLUDED.user_id, trading_accounts.user_id),
+                user_id = COALESCE(trading_accounts.user_id, EXCLUDED.user_id),
                 broker_name = COALESCE(EXCLUDED.broker_name, trading_accounts.broker_name),
                 display_label = COALESCE(EXCLUDED.display_label, trading_accounts.display_label),
                 account_type = COALESCE(EXCLUDED.account_type, trading_accounts.account_type),
@@ -517,6 +521,10 @@ async def upsert_trading_account(account: dict[str, Any]) -> dict[str, Any]:
                 updated_at = NOW()
             RETURNING *
         """), params)).mappings().first()
+        # Defense in depth: ownership is immutable once set. If the row belongs to someone
+        # else, abort so the whole upsert rolls back and nothing downstream is written.
+        if user_id and row["user_id"] and str(row["user_id"]) != user_id:
+            raise AccountOwnershipError("trading account belongs to a different user")
     if user_id:
         await upsert_connector_lifecycle(
             user_id=user_id,

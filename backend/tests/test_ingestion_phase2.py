@@ -35,6 +35,19 @@ from app.services.connector_ingest import compute_account_key
 from app.services import connector_ingest as ci
 
 
+@pytest.fixture(autouse=True)
+def _accounts_are_unclaimed(monkeypatch):
+    """These tests fake the database, so ownership lookups report every account as unclaimed."""
+    async def no_owners(_account_id):
+        return set()
+
+    async def no_history(_account_id):
+        return False
+
+    monkeypatch.setattr("app.core.ingest_auth.get_account_owners", no_owners)
+    monkeypatch.setattr("app.core.ingest_auth.account_has_trades", no_history)
+
+
 def post_json(path: str, payload: dict):
     async def _run():
         transport = httpx.ASGITransport(app=app)
@@ -129,7 +142,7 @@ def test_extension_trade_compatibility(monkeypatch):
 
     monkeypatch.setattr("app.main.ingest_trade", fake_ingest_trade)
 
-    resp = post_json("/extension/trade", {
+    resp = post_json_auth("/extension/trade", {
         "accountId": "1917136",
         "accountType": "2_step_master",
         "accountSize": 10000,
@@ -180,7 +193,7 @@ def test_extension_data_compatibility_and_stale_cleanup(monkeypatch):
     monkeypatch.setattr("app.main.deactivate_missing_positions", fake_deactivate)
     monkeypatch.setattr("app.main.db_link_account", fake_link)
 
-    resp = post_json("/extension/data", {
+    resp = post_json_auth("/extension/data", {
         "accountId": "1917136",
         "accountType": "2_step_master",
         "accountSize": 10000,
@@ -195,7 +208,7 @@ def test_extension_data_compatibility_and_stale_cleanup(monkeypatch):
     })
     assert resp.status_code == 200
 
-    resp2 = post_json("/extension/data", {
+    resp2 = post_json_auth("/extension/data", {
         "accountId": "1917136",
         "accountType": "2_step_master",
         "accountSize": 10000,
@@ -884,8 +897,18 @@ def test_auth_me_requires_authenticated_session(monkeypatch):
         def connect(self):
             return FakeConnect()
 
+    hydrated = []
+
+    async def fake_hydrate(uid, *, trigger):
+        # /auth/me also runs the FundingPips canonical backfill (added after this test was written).
+        # That module holds its own reference to the database engine, so without this stub the test
+        # tried to open a real PostgreSQL connection. The identity it is called with is asserted below.
+        hydrated.append((uid, trigger))
+        return {}
+
     monkeypatch.setattr("app.core.database.engine", FakeEngine())
     monkeypatch.setattr(main_mod, "db_get_user_accounts", fake_accounts)
+    monkeypatch.setattr(main_mod, "hydrate_fundingpips_canonical_state", fake_hydrate)
 
     async def _run(path: str, headers=None):
         transport = httpx.ASGITransport(app=app)
@@ -894,11 +917,13 @@ def test_auth_me_requires_authenticated_session(monkeypatch):
 
     unauth = asyncio.run(_run("/auth/me?telegram_user_id=123"))
     assert unauth.status_code == 401
+    assert hydrated == []          # nothing runs for an unauthenticated caller, whatever the query string claims
 
     token = create_session_token("123")
     auth = asyncio.run(_run("/auth/me", headers={"Authorization": f"Bearer {token}"}))
     assert auth.status_code == 200
     assert auth.json()["user"]["telegram_user_id"] == "123"
+    assert hydrated == [("123", "auth_me")]   # the backfill runs for the session's user, not a client-supplied id
 
 
 def test_authenticated_ingest_manual_routes_use_session_user(monkeypatch):
