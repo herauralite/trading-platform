@@ -39,6 +39,7 @@ from app.services.connector_ingest import (
     upsert_connector_config,
     upsert_connector_lifecycle,
     upsert_trading_account,
+    AccountOwnershipError,
 )
 from app.services.connector_catalog import (
     CONNECTOR_CATALOG,
@@ -77,6 +78,10 @@ from app.services.provider_onboarding import (
 from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
+from app.core import ingest_auth
+from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
+from app.services.matchtrader_api.store import SqlStore as MtApiStore
+from app.core.ingest_auth import Principal
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -989,7 +994,7 @@ async def db_insert_trade(trade_dict: dict):
 
 async def db_get_trades(
     account_id: str = None, limit: int = 50, offset: int = 0,
-    order: str = "desc", source: str = "scraper"
+    order: str = "desc", source: str = "scraper", account_ids: list | None = None
 ) -> list:
     from app.core.database import engine
     order_sql     = "ASC" if order.lower() == "asc" else "DESC"
@@ -999,9 +1004,13 @@ async def db_get_trades(
     if source and source != "all":
         params["src"] = source
     async with engine.connect() as conn:
-        where = f"account_id=:a{source_clause}" if account_id else f"1=1{source_clause}"
-        if account_id:
-            params["a"] = account_id
+        if account_ids is not None:
+            where = f"account_id = ANY(CAST(:ids AS text[])){source_clause}"
+            params["ids"] = [str(a) for a in account_ids]
+        else:
+            where = f"account_id=:a{source_clause}" if account_id else f"1=1{source_clause}"
+            if account_id:
+                params["a"] = account_id
         result = await conn.execute(
             text(f"SELECT * FROM trades WHERE {where} "
                  f"ORDER BY COALESCE(closed_at, logged_at) {order_sql} LIMIT :l OFFSET :o"),
@@ -1010,10 +1019,13 @@ async def db_get_trades(
         return [dict(r) for r in result.mappings().all()]
 
 
-async def db_get_trade_stats(account_id: str = None) -> dict:
+async def db_get_trade_stats(account_id: str = None, account_ids: list | None = None) -> dict:
     from app.core.database import engine
     where  = "account_id=:a" if account_id else "1=1"
     params = {"a": account_id} if account_id else {}
+    if account_ids is not None:
+        where  = "account_id = ANY(CAST(:ids AS text[]))"
+        params = {"ids": [str(a) for a in account_ids]}
     async with engine.connect() as conn:
         result = await conn.execute(
             text(f"SELECT COUNT(*) as total, MIN(closed_at) as oldest FROM trades WHERE {where}"),
@@ -1288,6 +1300,10 @@ async def lifespan(app: FastAPI):
     await ensure_trades_table()
     await ensure_users_tables()
     await ensure_connector_tables()
+    await ingest_auth.ensure_integration_tokens_table()
+    if mt_api_config.api_enabled():
+        # Match-Trader API integration is opt-in: its tables are created only when enabled.
+        await MtApiStore().ensure_schema()
     await backfill_legacy_prop_accounts_to_trading_accounts()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
@@ -1302,6 +1318,8 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(daily_summary_scheduler()),
         asyncio.create_task(connector_sync_worker_loop(stop_event, worker_id=SYNC_WORKER_ID)),
     ]
+    if mt_api_config.worker_enabled():
+        tasks.append(asyncio.create_task(mt_api_worker.worker_loop(stop_event)))
     yield
     stop_event.set()
     for t in tasks:
@@ -1319,10 +1337,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ingestion payloads are small JSON documents; refuse anything far beyond that up front.
+MAX_INGEST_BODY_BYTES = 512 * 1024
+MAX_CSV_INGEST_BODY_BYTES = 5 * 1024 * 1024
+_INGEST_BODY_PREFIXES = ("/extension/", "/journal/", "/ingest/")
+
+
+@app.middleware("http")
+async def limit_ingest_body_size(request: Request, call_next):
+    path = request.url.path
+    if request.method in ("POST", "PUT", "PATCH") and path.startswith(_INGEST_BODY_PREFIXES):
+        limit = MAX_CSV_INGEST_BODY_BYTES if path.startswith("/ingest/csv/") else MAX_INGEST_BODY_BYTES
+        declared = request.headers.get("content-length")
+        if declared is not None:
+            try:
+                oversized = int(declared) > limit
+            except ValueError:
+                return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+            if oversized:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+    return await call_next(request)
+
+
+@app.exception_handler(AccountOwnershipError)
+async def account_ownership_error_handler(request: Request, exc: AccountOwnershipError):
+    logger.warning("ownership denied at storage layer: %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=403, content={"detail": "This account is linked to a different user"})
+
+
 from app.routers import accounts
 app.include_router(accounts.router)
 from app.routers import ingest
 app.include_router(ingest.router)
+app.include_router(mt_api_routes.router)
 from app.core.database import engine
 
 logger.info(
@@ -1527,6 +1574,21 @@ async def get_me(session_user_id: str = Depends(get_required_telegram_user_id)):
     return {"user": user, "accounts": accounts}
 
 
+@app.post("/auth/extension-token")
+async def create_extension_token(principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Mint a revocable, ingest-only credential for the browser extension. The token is shown once."""
+    minted = await ingest_auth.mint_extension_token(principal.user_id)
+    logger.info("Extension token issued user=%s", principal.user_id)
+    return {"ok": True, "token": minted["token"], "token_type": "extension_ingest", "expires_at": minted["expires_at"]}
+
+
+@app.delete("/auth/extension-token")
+async def revoke_extension_token(principal: Principal = Depends(ingest_auth.require_session_principal)):
+    revoked = await ingest_auth.revoke_extension_tokens(principal.user_id)
+    logger.info("Extension tokens revoked user=%s count=%s", principal.user_id, revoked)
+    return {"ok": True, "revoked": revoked}
+
+
 @app.post("/auth/session/bridge")
 async def create_bridge_session_retired():
     return JSONResponse(status_code=410, content={"detail": "Bridge compatibility route has been retired. Use /auth/telegram or /auth/telegram/oidc.", "retired": True, "replacement": "/auth/telegram"})
@@ -1544,6 +1606,8 @@ async def link_account(
     resolved_uid = str(session_user_id).strip()
     if not str(account_id or "").strip():
         return JSONResponse(status_code=400, content={"detail": "account_id is required"})
+    # An account id can be claimed only if nobody else already owns it.
+    account_id = await ingest_auth.authorize_account_write(resolved_uid, account_id)
     await db_link_account(resolved_uid, account_id, account_type, account_size, label, broker)
     accounts = await db_get_user_accounts(resolved_uid)
     logger.info("Account linked via /auth/link-account user=%s account=%s", resolved_uid, account_id)
@@ -2492,26 +2556,26 @@ class ExtensionData(BaseModel):
     profit: float | None = None
     balance: float | None = None
     equity: float | None = None
-    accountId: str | None = None
+    accountId: str | None = Field(default=None, max_length=64)
     accountType: str | None = None
     accountSize: int | None = None
     accountLabel: str | None = None
     isMaster: bool = False
     hasPositions: bool = False
     openPositionCount: int = 0
-    positions: list = []
+    positions: list = Field(default_factory=list, max_length=500)
     riskPerTradeIdea: dict | None = None
     dailyLoss: dict | None = None
     overallLoss: dict | None = None
-    alerts: list = []
-    closedTrades: list = []
+    alerts: list = Field(default_factory=list, max_length=50)
+    closedTrades: list = Field(default_factory=list, max_length=200)
     timestamp: str | None = None
     url: str | None = None
     telegramUserId: str | None = None
 
 
 class TradeData(BaseModel):
-    accountId: str | None = None
+    accountId: str | None = Field(default=None, max_length=64)
     accountType: str | None = None
     accountSize: int | None = None
     symbol: str | None = None
@@ -2530,14 +2594,22 @@ class TradeData(BaseModel):
     source: str | None = "realtime"
 
 
+ALLOWED_EXTENSION_TRADE_SOURCES = {"scraper", "realtime"}
+
+
 @app.post("/extension/data")
-async def receive_extension_data(data: ExtensionData):
-    account_id  = data.accountId or "unknown"
-    tg_uid      = str(data.telegramUserId or "").strip() or None
+async def receive_extension_data(data: ExtensionData, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
+    account_id  = str(data.accountId or "").strip() or "unknown"
+    # Identity comes from the authenticated principal only. data.telegramUserId is ignored.
+    tg_uid      = principal.user_id
+    if account_id != "unknown":
+        account_id = await ingest_auth.authorize_account_write(tg_uid, account_id)
     notify_chat = resolve_telegram_chat_target(tg_uid)
     prev        = account_data_store.get(account_id, {})
+    if prev.get("_owner") not in (None, tg_uid):
+        prev = {}
     prev_alerts = {a.get("type"): a.get("level") for a in (prev.get("alerts") or [])}
-    account_data_store[account_id] = {**data.dict(), "last_updated": datetime.utcnow().isoformat()}
+    account_data_store[account_id] = {**data.dict(), "telegramUserId": tg_uid, "_owner": tg_uid, "last_updated": datetime.utcnow().isoformat()}
 
     if account_id != "unknown":
         connector_account_payload = {"user_id": tg_uid, "connector_type": "fundingpips_extension", "broker_name": "fundingpips", "external_account_id": account_id, "display_label": data.accountLabel, "account_type": data.accountType, "account_size": data.accountSize, "metadata": {"source": "legacy_extension"}}
@@ -2581,31 +2653,49 @@ async def receive_extension_data(data: ExtensionData):
 
 
 @app.post("/extension/trade")
-async def log_trade(trade: TradeData):
+async def log_trade(trade: TradeData, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
     payload = trade.dict()
-    persisted = await ingest_trade({"user_id": payload.get("telegramUserId"), "connector_type": "fundingpips_extension", "external_account_id": payload.get("accountId"), "account_type": payload.get("accountType"), "account_size": payload.get("accountSize"), "symbol": payload.get("symbol"), "side": payload.get("direction"), "size": payload.get("volume"), "entry_price": payload.get("openPrice"), "exit_price": payload.get("closePrice"), "close_time": payload.get("closedAt"), "pnl": payload.get("pnl"), "balance_after": payload.get("balanceAfter"), "equity_after": payload.get("equityAfter"), "daily_loss_used": payload.get("dailyLossUsed"), "daily_loss_limit": payload.get("dailyLossLimit"), "overall_loss_used": payload.get("overallLossUsed"), "overall_loss_limit": payload.get("overallLossLimit"), "source": payload.get("source") or "scraper", "source_metadata": {"legacy_route": "/extension/trade"}})
+    payload["accountId"] = await ingest_auth.authorize_account_write(principal.user_id, payload.get("accountId"))
+    persisted = await ingest_trade({"user_id": principal.user_id, "connector_type": "fundingpips_extension", "external_account_id": payload.get("accountId"), "account_type": payload.get("accountType"), "account_size": payload.get("accountSize"), "symbol": payload.get("symbol"), "side": payload.get("direction"), "size": payload.get("volume"), "entry_price": payload.get("openPrice"), "exit_price": payload.get("closePrice"), "close_time": payload.get("closedAt"), "pnl": payload.get("pnl"), "balance_after": payload.get("balanceAfter"), "equity_after": payload.get("equityAfter"), "daily_loss_used": payload.get("dailyLossUsed"), "daily_loss_limit": payload.get("dailyLossLimit"), "overall_loss_used": payload.get("overallLossUsed"), "overall_loss_limit": payload.get("overallLossLimit"), "source": payload.get("source") if payload.get("source") in ALLOWED_EXTENSION_TRADE_SOURCES else "scraper", "source_metadata": {"legacy_route": "/extension/trade"}})
     return {"status": "ok", "persisted": persisted}
 
 
 @app.post("/journal/trade")
-async def log_trade_alias(trade: TradeData):
-    return await log_trade(trade)
+async def log_trade_alias(trade: TradeData, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
+    return await log_trade(trade, principal)
+
+
+async def _readable_account_ids(principal: Principal, account_id: str | None) -> list[str]:
+    """Accounts this principal may read: the requested one if they own it, else all they own."""
+    if account_id is not None and str(account_id).strip():
+        return [await ingest_auth.authorize_account_read(principal.user_id, account_id)]
+    return await ingest_auth.get_owned_account_ids(principal.user_id)
 
 
 @app.get("/extension/journal")
-async def get_journal(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc", source: str = "scraper"):
-    rows = await db_get_trades(account_id=account_id, limit=limit, offset=offset, order=order, source=source)
+async def get_journal(account_id: str = None, limit: int = 50, offset: int = 0, order: str = "desc", source: str = "scraper", principal: Principal = Depends(ingest_auth.require_ingest_principal)):
+    limit = max(1, min(int(limit), 500))
+    offset = max(0, int(offset))
+    account_ids = await _readable_account_ids(principal, account_id)
+    rows = await db_get_trades(account_ids=account_ids, limit=limit, offset=offset, order=order, source=source) if account_ids else []
     return {"trades": [row_to_trade(r) for r in rows], "total": len(rows), "offset": offset, "limit": limit}
 
 
 @app.get("/extension/journal/stats")
-async def get_journal_stats(account_id: str = None):
-    return await db_get_trade_stats(account_id=account_id)
+async def get_journal_stats(account_id: str = None, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
+    account_ids = await _readable_account_ids(principal, account_id)
+    if not account_ids:
+        return {"total": 0, "oldest_trade_date": None}
+    return await db_get_trade_stats(account_ids=account_ids)
 
 
 @app.get("/extension/status")
-async def extension_status():
-    live = {aid: acct for aid, acct in account_data_store.items() if get_live_account(aid)}
+async def extension_status(principal: Principal = Depends(ingest_auth.require_ingest_principal)):
+    live = {
+        aid: {k: v for k, v in acct.items() if k != "_owner"}
+        for aid, acct in account_data_store.items()
+        if acct.get("_owner") == principal.user_id and get_live_account(aid)
+    }
     return {"accounts": live, "count": len(live)}
 
 
@@ -2628,9 +2718,14 @@ async def get_news():
 
 
 @app.get("/extension/payout")
-async def get_payout(account_id: str = None):
-    acct_id = account_id or get_primary_account_id()
+async def get_payout(account_id: str = None, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
+    account_ids = await _readable_account_ids(principal, account_id)
+    if not account_ids:
+        raise HTTPException(status_code=404, detail="No linked trading account")
+    acct_id = next((a for a in account_ids if get_live_account(a)), account_ids[0])
     acct    = get_live_account(acct_id)
+    if acct.get("_owner") not in (None, principal.user_id):
+        acct = {}
     return await evaluate_payout_eligibility(acct_id, acct)
 
 
@@ -2687,7 +2782,9 @@ async def test_db():
 
 # ─── Leaderboard ──────────────────────────────────────────────────────────────
 @app.get("/leaderboard")
-async def get_leaderboard(limit: int = 10):
+async def get_leaderboard(limit: int = 10, viewer: Principal | None = Depends(ingest_auth.optional_session_principal)):
+    # Public by design. Returns display name and aggregate performance only: no account ids.
+    limit = max(1, min(int(limit), 50))
     from app.core.database import engine
     async with engine.connect() as conn:
         result = await conn.execute(text("""
@@ -2717,5 +2814,5 @@ async def get_leaderboard(limit: int = 10):
         sz = row.get("account_size") or 10000; total_pnl = float(row.get("total_pnl") or 0)
         trades = int(row.get("trade_count") or 0); wins = int(row.get("wins") or 0)
         win_rate = round(wins / trades * 100) if trades else 0
-        leaderboard.append({"rank": i + 1, "displayName": row.get("display_name") or "Trader", "accountId": row.get("account_id"), "accountType": row.get("account_type"), "accountSize": sz, "totalPnl": round(total_pnl, 2), "pnlPct": round(total_pnl / sz * 100, 2) if sz else 0, "tradeCount": trades, "winRate": win_rate})
+        leaderboard.append({"rank": i + 1, "displayName": row.get("display_name") or "Trader", "isYou": bool(viewer and str(row.get("telegram_user_id")) == viewer.user_id), "accountType": row.get("account_type"), "accountSize": sz, "totalPnl": round(total_pnl, 2), "pnlPct": round(total_pnl / sz * 100, 2) if sz else 0, "tradeCount": trades, "winRate": win_rate})
     return {"leaderboard": leaderboard, "total": len(leaderboard)}

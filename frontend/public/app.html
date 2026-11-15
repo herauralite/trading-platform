@@ -599,6 +599,8 @@ body.compact-mode .sec-head{margin:8px 0 6px;}
 </style>
 
 <script src="/tali-api-base.js"></script>
+<script src="/tali-matchtrader-api.js"></script>
+<script src="/tali-matchtrader-dashboard.js"></script>
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = String((window.__TALI_CONFIG__ && window.__TALI_CONFIG__.devGatePassword) || '').trim();
@@ -1134,16 +1136,22 @@ async function finishTelegramLogin(data, widgetUser = null) {
   try {
     const TALI_EXTENSION_ID = 'aigdpcmfcnnjkbdikpnblooomhjlkcao';
     if (TALI_EXTENSION_ID && typeof chrome !== 'undefined' && chrome?.runtime?.sendMessage) {
+      // The extension ingests with its own revocable, ingest-only token rather than the session.
+      let ingestToken = '';
+      try {
+        const tokenRes = await fetch(getBaseApiUrl() + '/auth/extension-token', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+        if (tokenRes.ok) ingestToken = String((await tokenRes.json()).token || '');
+      } catch (_) {}
       chrome.runtime.sendMessage(
         TALI_EXTENSION_ID,
-        { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token },
+        { type: 'TALI_SET_SESSION', telegramUserId: user.telegramUserId, sessionToken: token, ingestToken },
         () => {}
       );
     }
   } catch (_) {}
 
   try {
-    const statusRes = await fetch(getBaseApiUrl() + '/extension/status');
+    const statusRes = await fetch(getBaseApiUrl() + '/extension/status', { headers: { Authorization: 'Bearer ' + token } });
     if (statusRes.ok) {
       const statusData = await statusRes.json();
       const liveAccounts = statusData.accounts || {};
@@ -1202,8 +1210,18 @@ function getTaliUser() {
   } catch(e) { localStorage.removeItem(TALI_USER_KEY); return null; }
 }
 
+// Last legacy account list from /auth/me, kept so API connections can be re-merged at any time
+// without another /auth/me call and without either source erasing the other.
+let lastLegacyLinkedAccounts = [];
+function rehydrateAccountsMap() {
+  const hadAccounts = hasLinkedAccounts();
+  hydrateAccountsMap(lastLegacyLinkedAccounts, true);
+  if (!hadAccounts && hasLinkedAccounts()) { fetchStatus(); fetchAnalytics(); fetchJournal(); fetchPayout(); }
+}
+
 function hydrateAccountsMap(linkedAccounts, keepActive=true) {
   const prevActive = activeAcct;
+  lastLegacyLinkedAccounts = Array.isArray(linkedAccounts) ? linkedAccounts : [];
   Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]);
   const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
   const deduped=[];
@@ -1231,14 +1249,17 @@ function hydrateAccountsMap(linkedAccounts, keepActive=true) {
       deactivated: Boolean(acct.deactivated || acct.is_deactivated)
     };
   });
+  // Match-Trader API connections (keys "mtapi:<id>") are added from their own server list.
+  if (window.TaliMatchTrader) TaliMatchTrader.merge(ACCOUNTS);
+  const allAccountIds = Object.keys(ACCOUNTS);
   Object.keys(manualSyncStateByAccount).forEach(acctId=>{
     if(!ACCOUNTS[acctId]) clearManualSyncState(acctId);
   });
-  if (deduped.length > 0) {
+  if (allAccountIds.length > 0) {
     const hasPrev = keepActive && prevActive && ACCOUNTS[prevActive];
     const primaryId = deduped.find(a => a.is_primary || a.isPrimary)?.accountId;
     const preferred = localStorage.getItem(ACCOUNT_PREF_KEYS.activeAccount) || '';
-    activeAcct = hasPrev ? prevActive : (ACCOUNTS[preferred] ? preferred : (primaryId || deduped[0].accountId));
+    activeAcct = hasPrev ? prevActive : (ACCOUNTS[preferred] ? preferred : (primaryId || allAccountIds[0]));
     rememberActiveAccountPreference();
     showOnboardingCard(false);
     renderAcctSheet();
@@ -1254,6 +1275,12 @@ function getSessionToken(){
   return localStorage.getItem(TALI_SESSION_TOKEN_KEY) || '';
 }
 
+// Private trading data is served only to the signed-in owner.
+function taliAuthHeaders(){
+  const token=getSessionToken();
+  return token?{Authorization:'Bearer '+token}:{};
+}
+
 async function authFetch(path, options={}){
   const token=getSessionToken();
   if(!token) throw new Error('missing_session');
@@ -1265,6 +1292,7 @@ async function syncLinkedAccountsFromBackend(telegramUserId) {
   if (!telegramUserId) return false;
   const token = localStorage.getItem(TALI_SESSION_TOKEN_KEY) || '';
   if (!token) return false;
+  if (window.TaliMatchTrader) TaliMatchTrader.loadConnections();   // independent of /auth/me: one failing never hides the other
   try {
     const res = await fetch(getBaseApiUrl() + '/auth/me', {
       headers: { Authorization: 'Bearer ' + token },
@@ -1325,6 +1353,7 @@ function applyUserToTopbar(user) {
       e.stopPropagation();
       localStorage.removeItem(TALI_USER_KEY);
       localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
+      if (window.TaliMatchTrader) TaliMatchTrader.reset();   // drop API account data, timers and in-flight requests
       sessionStorage.removeItem(TALI_PW_KEY);
       sessionStorage.removeItem(TALI_TG_DONE_KEY);
       sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
@@ -1420,6 +1449,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div class="tb-info"><div class="tb-name">TaliTrade</div><div class="tb-status" id="tb-status">connecting...</div></div>
   </a>
   <div style="display:flex;gap:4px;">
+    <button type="button" class="tb-btn rip" id="btnAccounts" onclick="openAcctSheet()" aria-label="Switch or add trading account" title="Accounts" style="border:0;background:transparent;color:var(--t2)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M7 5V3h10v2M8 12h8M12 8v8"/></svg></button>
     <div class="tb-btn rip" id="btnBell" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div id="bellDot" style="display:none;position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid var(--s1)"></div></div>
     <div class="tb-profile-btn rip" id="btnProfile"><div class="tb-profile-inner">1</div></div>
   </div>
@@ -1434,7 +1464,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div style="display:flex;flex-direction:column;gap:10px">
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">1</div>
-        <div><div style="font-size:12px;font-weight:600;color:var(--text)">Connect your first account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect FundingPips, TradeLocker, or MetaTrader 5 to start tracking your funded accounts.</div></div>
+        <div><div style="font-size:12px;font-weight:600;color:var(--text)">Connect your first account</div><div style="font-size:11px;color:var(--t3);margin-top:2px">Connect a Match-Trader account with a read-only API token to start tracking it.</div></div>
       </div>
       <div style="display:flex;align-items:flex-start;gap:12px">
         <div style="min-width:28px;height:28px;background:rgba(42,171,238,0.15);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--blue)">2</div>
@@ -1940,6 +1970,7 @@ function connectorTypeForAccount(acctId){
 function accountSupportsManualSync(acctId){
   const connector=connectorTypeForAccount(acctId);
   if(!connector) return {supported:false,reason:'Connector is unavailable for this account.'};
+  if(connector==='matchtrader_api') return {supported:true,connector};
   if(connector==='fundingpips_extension'||connector==='tradelocker_api'){
     return {supported:true,connector};
   }
@@ -1966,9 +1997,9 @@ function clearManualSyncState(acctId){
 }
 
 function manualSyncStateChip(state){
-  if(state.status==='syncing') return {label:'syncing',cls:'syncing'};
-  if(state.status==='success') return {label:'success',cls:'connected'};
-  if(state.status==='failed') return {label:'failed',cls:'error'};
+  if(state.status==='syncing') return {label:state.label||'syncing',cls:state.label==='queued'?'waiting':'syncing'};
+  if(state.status==='success') return {label:state.label||'success',cls:state.label==='partial'?'waiting':'connected'};
+  if(state.status==='failed') return {label:state.label||'failed',cls:'error'};
   return null;
 }
 
@@ -2002,6 +2033,7 @@ async function triggerManualSync(acctId){
   }
   const currentState=getManualSyncState(acctId);
   if(currentState.status==='syncing') return;
+  if(capability.connector==='matchtrader_api'){ TaliMatchTrader.manualSync(acctId); return; }   // its own route, per connection id
 
   const requestSeq=++manualSyncRequestSeq;
   setManualSyncState(acctId,{status:'syncing',message:'Starting sync…',requestSeq,updatedAt:Date.now()});
@@ -2192,7 +2224,7 @@ function refreshAccountSettingsSurface(reason='state'){
         const overrideChip=manualSyncStateChip(syncUiState);
         const chip=overrideChip||sync;
         const statusText=manualSyncStateMessage(id,sync.sub);
-        const buttonText=syncUiState.status==='syncing'?'Syncing…':'Sync now';
+        const buttonText=syncUiState.status==='syncing'?(syncUiState.label==='queued'?'Queued…':'Syncing…'):'Sync now';
         const disableSync=syncUiState.status==='syncing'||!isActive||!capability.supported;
         const helper=!capability.supported?capability.reason:(isActive?'':'Switch to this account to sync.');
         const helperHtml=helper?`<div class="meta">${helper}</div>`:'';
@@ -2240,13 +2272,16 @@ function renderAcctSheet(){
   let html=Object.entries(ACCOUNTS).map(([id,info],i)=>{
     const isActive=id===activeAcct;
     const bal=acctBalances[id];
-    const balStr=bal!=null?usd(bal):'—';
+    const isApi=info.connectorType==='matchtrader_api';
+    const balStr=info.balanceText||(bal!=null?usd(bal):'—');
     const balColor=isActive?'var(--green)':'var(--t2)';
     const liveAcct=liveAccountsCache[id];
     const lastSeen=liveAcct?.last_updated;
     const primaryPill=info.isPrimary?'<span class="chip chip-warn" style="padding:2px 8px;font-size:9px">Primary</span>':'';
     let subTxt;
-    if(isActive){
+    if(isApi){
+      subTxt='<span style="color:var(--t2)">'+escapeHtml(TaliMatchTrader.sheetSubtitle(id))+'</span>';
+    } else if(isActive){
       subTxt='<span style="color:var(--blue)">Live · syncing</span>';
     } else if(lastSeen){
       const ageMins=Math.round((Date.now()-new Date(lastSeen).getTime())/60000);
@@ -2258,15 +2293,15 @@ function renderAcctSheet(){
     return`<div class="as-acct rip ${isActive?'active-acct':''}" onclick="switchAccount('${id}')">
       <div class="as-acct-avatar" style="background:${gradients[i]||gradients[0]}">${info.idx}</div>
       <div class="as-acct-info">
-        <div class="as-acct-id">${id}</div>
-        <div class="as-acct-label">${info.label} ${primaryPill}</div>
+        <div class="as-acct-id">${escapeHtml(info.displayId||id)}</div>
+        <div class="as-acct-label">${isApi?escapeHtml(info.label):info.label} ${primaryPill}</div>
       </div>
       <div class="as-acct-right">
         <div class="as-acct-bal" style="color:${balColor}">${balStr}</div>
         <div class="as-acct-sub">${subTxt}</div>
         <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end">
-          <button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" onclick="event.stopPropagation();setPrimaryAccount('${id}')">Primary</button>
-          <button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();deactivateAccount('${id}')">Deactivate</button>
+          ${isApi?matchTraderSheetButtons(id):`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" onclick="event.stopPropagation();setPrimaryAccount('${id}')">Primary</button>
+          <button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();deactivateAccount('${id}')">Deactivate</button>`}
         </div>
       </div>
       ${check}
@@ -2280,6 +2315,7 @@ function renderAcctSheet(){
 }
 
 const ADD_ACCOUNT_PATHS={
+  matchtraderApi:{title:'Match-Trader API',tagline:'Broker or prop firm account · read-only API token',badge:'READ-ONLY',badgeColor:'#2AABEE',accent:'#2AABEE',portalBg:'#0d1520',portalBorder:'rgba(42,171,238,0.2)',logoText:'MT',logoColor:'#2AABEE',logoBg:'#0a1220',desc:'Connect with a read-only API token from Match-Trader.'},
   fundingpips:{title:'FundingPips',tagline:'Prop Firm',badge:'PROP FIRM',badgeColor:'#22c55e',accent:'#22c55e',portalBg:'#0d1a11',portalBorder:'rgba(34,197,94,0.2)',logoText:'FP',logoColor:'#22c55e',logoBg:'#0a1a0d',desc:'Connect with your FundingPips login. Accounts are discovered automatically.'},
   tradelocker:{title:'TradeLocker',tagline:'API Connection',badge:'LIVE',badgeColor:'#2AABEE',accent:'#2AABEE',portalBg:'#0d1520',portalBorder:'rgba(42,171,238,0.2)',logoText:'TL',logoColor:'#2AABEE',logoBg:'#0a1220',desc:'Connect your TradeLocker account via secure API credentials.'},
   mt5:{title:'MetaTrader 5',tagline:'MT5 Bridge',badge:'BRIDGE',badgeColor:'#a78bfa',accent:'#a78bfa',portalBg:'#110d1a',portalBorder:'rgba(167,139,250,0.2)',logoText:'MT5',logoColor:'#a78bfa',logoBg:'#0e0a18',desc:'Connect your MT5 account through the TaliTrade bridge pairing flow.'}
@@ -2289,21 +2325,33 @@ let addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
 function openAddAccountFlow(){
   addAcctFlowState.discoveredAccounts=[];
   closeAcctSheet();
-  addAcctFlowState={step:1,path:'',loading:false,error:'',success:''};
+  addAcctFlowState={step:1,path:'',loading:false,error:'',success:'',checkingApi:true};
   renderAddAccountFlow();
   document.getElementById('add-acct-overlay').classList.add('open');
   document.getElementById('add-acct-sheet').classList.add('open');
   document.body.style.overflow='hidden';
+  const openedFlow=addAcctFlowState;
+  const checking=window.TaliMatchTrader?TaliMatchTrader.loadConnections():Promise.resolve(false);
+  checking.then(()=>{
+    if(addAcctFlowState!==openedFlow)return;
+    addAcctFlowState.checkingApi=false;
+    if(addAcctFlowState.step===1&&document.getElementById('add-acct-sheet').classList.contains('open'))renderAddAccountFlow();
+  });
 }
 
 function closeAddAccountFlow(){
+  if(window.TaliMatchTrader) TaliMatchTrader.clearTokenInput();
   document.getElementById('add-acct-overlay').classList.remove('open');
   document.getElementById('add-acct-sheet').classList.remove('open');
   document.body.style.overflow='';
 }
 
-function setAddAccountPath(path){
+const SUPPORTED_ADD_PATHS=['matchtraderApi'];
+function setAddAccountPath(path,cardKey){
+  if(!SUPPORTED_ADD_PATHS.includes(path)) return;   // only supported integrations can be opened, whatever calls this
+  if(!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable())) return;
   addAcctFlowState.path=path;
+  addAcctFlowState.selectedCard=cardKey||path;
   addAcctFlowState.step=2;
   addAcctFlowState.error='';
   addAcctFlowState.success='';
@@ -2327,12 +2375,16 @@ function renderAddAccountFlow(){
   if(!body||!footer||!stepEl)return;
 
   if(addAcctFlowState.step===1){
-    stepEl.textContent='Step 1 · Select broker';
-    const BROKER_FAVICONS={fundingpips:'https://www.google.com/s2/favicons?domain=fundingpips.com&sz=64',tradelocker:'https://www.google.com/s2/favicons?domain=tradelocker.com&sz=64',mt5:'https://www.google.com/s2/favicons?domain=metatrader5.com&sz=64'};
+    stepEl.textContent='Step 1 · Select connection';
+    const BROKER_FAVICONS={matchtraderApi:'https://www.google.com/s2/favicons?domain=match-trade.com&sz=64',fundingpips:'https://www.google.com/s2/favicons?domain=fundingpips.com&sz=64',tradelocker:'https://www.google.com/s2/favicons?domain=tradelocker.com&sz=64',mt5:'https://www.google.com/s2/favicons?domain=metatrader5.com&sz=64'};
     function brokerCard(key){
-      const p=ADD_ACCOUNT_PATHS[key];
-      const isSelected=addAcctFlowState.path===key;
-      return `<button class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${key}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer;text-align:left;transition:all 0.15s;">
+      // The card is offered only when the server reports the integration ready; until then it is
+      // shown disabled with the reason, never replaced by another sign-in method.
+      const ready=!!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable());
+      const base=ADD_ACCOUNT_PATHS[key];
+      const p=ready?base:{...base,tagline:addAcctFlowState.checkingApi?'Checking availability…':'Not available on this server right now'};
+      const isSelected=addAcctFlowState.selectedCard===key;
+      return `<button ${ready?'':'disabled'} data-broker-card="${key}" aria-pressed="${isSelected?'true':'false'}" class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${key}','${key}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:${ready?'pointer':'default'};opacity:${ready?'1':'0.6'};text-align:left;transition:all 0.15s;">
         <div style="width:40px;height:40px;border-radius:10px;background:${p.logoBg};display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid ${p.portalBorder};overflow:hidden">
           <img src="${BROKER_FAVICONS[key]}" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none';this.nextSibling.style.display='flex'" alt="${p.title}">
           <span style="display:none;font-size:11px;font-weight:800;color:${p.logoColor};font-family:Inter,sans-serif">${p.logoText}</span>
@@ -2347,7 +2399,10 @@ function renderAddAccountFlow(){
         ${isSelected?`<svg width="18" height="18" viewBox="0 0 18 18" fill="none"><circle cx="9" cy="9" r="8" stroke="${p.accent}" stroke-width="1.5"/><path d="M5.5 9l2.5 2.5L12.5 6" stroke="${p.accent}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`:''}
       </button>`;
     }
-    body.innerHTML=brokerCard('fundingpips')+brokerCard('tradelocker')+brokerCard('mt5');
+    // One supported integration for now. Other providers' code and existing accounts are untouched;
+    // they are simply not offered for new connections here.
+    body.innerHTML=SUPPORTED_ADD_PATHS.map(brokerCard).join('')
+      +'<div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6;padding:4px 2px">Works with brokers and prop firms that run Match-Trader <b>and</b> have Trader API enabled for your account. Not every Match-Trader broker does.</div>';
     footer.innerHTML=`<button class="btn btn-ghost rip" onclick="closeAddAccountFlow()">Cancel</button>`;
     return;
   }
@@ -2388,6 +2443,36 @@ function renderAddAccountFlow(){
       </div>`;
       footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button><button class="btn btn-blue rip" onclick="submitFundingPipsCredentials()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Connecting...':'Connect FundingPips'}</button>`;
     }
+  } else if(addAcctFlowState.path==='matchtraderApi'){
+    const p=ADD_ACCOUNT_PATHS.matchtraderApi;
+    const rotating=!!addAcctFlowState.rotateAccountKey;
+    // The token field is never pre-filled and is recreated empty on every render. Nothing here
+    // stores the token: it goes straight to the backend, which encrypts it.
+    content=`<div style="background:${p.portalBg};border:1px solid ${p.portalBorder};border-radius:16px;padding:20px 18px;">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid ${p.portalBorder}">
+        <div style="flex:1"><div style="font-weight:700;font-size:14px;color:#e8f0ff">${rotating?'Replace API token':p.title}</div><div style="font-size:11px;color:rgba(148,163,184,0.7);margin-top:1px">Read-only · no email or password needed</div></div>
+        <span style="font-size:11px;color:${p.accent};font-weight:600">Encrypted</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <label for="mtApiTokenInput" style="font-size:12px;color:#e8f0ff;font-weight:600">Your Match-Trader read-only API token</label>
+        <input class="aaf-input" id="mtApiTokenInput" type="password" placeholder="Paste your token here" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" data-lpignore="true" style="border-color:rgba(42,171,238,0.2)" ${addAcctFlowState.loading?'disabled':''}>
+        <div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6">Your trading account is detected automatically and linked to your signed-in TaliTrade account. The broker name and account are read from the broker’s own response. No broker password or account number is needed.</div>
+        <details style="font-size:12px;color:rgba(148,163,184,0.85);line-height:1.7">
+          <summary style="cursor:pointer;color:#2aabee;font-weight:600">Where do I get my token?</summary>
+          <ol style="padding-left:20px;margin:10px 0">
+            <li>Open your broker or prop firm’s <b>Match-Trader</b> platform.</li>
+            <li>Open <b>API Access</b> and generate a token.</li>
+            <li>Name it <b>TaliTrade</b>, select an expiry and <b>Read-only</b>.</li>
+            <li>Copy the token and paste it above.</li>
+          </ol>
+          <div>The token is shown only once. Your broker must have <b>Trader API</b> enabled for your account: if API Access is missing or the token is refused, ask the broker to enable it.</div>
+        </details>
+        <div style="font-size:11px;color:rgba(148,163,184,0.6);line-height:1.6">TaliTrade uses this connection only to read balances, positions and trade history. Generate a read-only token; trading access is not needed.</div>
+        <div style="font-size:11px;color:rgba(148,163,184,0.5)">The token is sent once, encrypted on the server and never shown again. You can disconnect at any time.</div>
+        ${addAcctFlowState.loading?'<div style="font-size:12px;color:#2AABEE;padding:4px 0">Verifying with Match-Trader…</div>':''}
+      </div>
+    </div>`;
+    footer.innerHTML=`<button class="btn btn-ghost rip" onclick="backAddAccountStep()" ${addAcctFlowState.loading?'disabled':''}>Back</button><button class="btn btn-blue rip" onclick="TaliMatchTrader.submitToken()" ${addAcctFlowState.loading?'disabled':''}>${addAcctFlowState.loading?'Connecting…':(rotating?'Replace token':'Connect account')}</button>`;
   } else if(addAcctFlowState.path==='brokerApi'){
     content=`<div class="aaf-flow-note">Enter your account metadata to connect through <code>/auth/link-account</code>.</div>
       <div class="aaf-form">
@@ -2546,6 +2631,7 @@ async function submitBrokerApiAccountFlow(){
 }
 
 async function setPrimaryAccount(id){
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(id))) return;   // API connections are not legacy /auth/accounts rows
   try{
     const res=await authFetch('/auth/accounts/'+encodeURIComponent(id)+'/set-primary',{method:'POST'});
     if(!res.ok) throw new Error('primary failed');
@@ -2557,6 +2643,7 @@ async function setPrimaryAccount(id){
 }
 
 async function deactivateAccount(id){
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(id))) return;
   try{
     const res=await authFetch('/auth/accounts/'+encodeURIComponent(id)+'/deactivate',{method:'POST'});
     if(!res.ok) throw new Error('deactivate failed');
@@ -2572,6 +2659,7 @@ function switchAccount(id){
   if(id===activeAcct){closeAcctSheet();return;}
   closeAcctSheet();
   activeAcct=id;
+  if(window.TaliMatchTrader) TaliMatchTrader.onContextChange();   // late responses for the previous account are dropped
   rememberActiveAccountPreference();
 
   // Update profile button number
@@ -2638,6 +2726,7 @@ function inferBalanceFromTrades(trades, accountSize){
 }
 
 async function fetchAllTrades(accountId, pageSize=200){
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(accountId))) return [];   // API accounts never use the scraper journal route
   // Return cached data if available and not stale (< 30s old)
   if(tradesCache[accountId]&&tradesCache[accountId+'_ts']&&(Date.now()-tradesCache[accountId+'_ts'])<30000){
     return tradesCache[accountId];
@@ -2645,7 +2734,7 @@ async function fetchAllTrades(accountId, pageSize=200){
   const out=[];
   for(let page=0;page<100;page++){
     const offset=page*pageSize;
-    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc&source=scraper`);
+    const res=await fetch(API+`/extension/journal?account_id=${accountId}&limit=${pageSize}&offset=${offset}&order=desc&source=scraper`,{headers:taliAuthHeaders()});
     if(!res.ok) throw new Error('Journal fetch failed: '+res.status);
     const data=await res.json();
     const chunk=data.trades||[];
@@ -2693,6 +2782,14 @@ function hasLinkedAccounts(){
   return Object.keys(ACCOUNTS).length > 0;
 }
 
+// Notification drawer state. Declared here, ahead of the boot calls (fetchStatus/fetchAnalytics/fetchPayout):
+// with no linked account those call renderNoAccountState() -> resetDrawerForContext() straight away.
+let drawerNotifs={alerts:[],news:[]};
+let drawerTab='all';
+const DRAWER_READ_STORAGE_KEY='tali_legacy_drawer_read_v1';
+let drawerReadState=readJsonStorage(DRAWER_READ_STORAGE_KEY,{});
+// Same reason: renderNoAccountState() -> refreshChartForActiveAccount() reads these during boot.
+let chartInited=false,chart=null,lineSeries=null;
 const overviewState={status:null,analytics:null,payout:null};
 const dashboardState={
   status:null,
@@ -2727,10 +2824,10 @@ function renderOverviewCards(){
   const s=overviewState.status||{};
   const a=overviewState.analytics||{};
   const p=overviewState.payout||{};
-  setOverviewStat('ovBalance',s.balance!=null?usd(s.balance):'$—',s.balanceSub||'Active account',s.balanceTone||'txt-dim');
-  setOverviewStat('ovEquity',s.equity!=null?usd(s.equity):'$—',s.equitySub||'Including floating P&L',s.equityTone||'txt-dim');
-  setOverviewStat('ovDailyPnl',a.dailyPnl!=null?pnl(a.dailyPnl):'$—',a.dailySub||'Today',a.dailyTone||'txt-dim');
-  setOverviewStat('ovOverallPnl',a.overallPnl!=null?pnl(a.overallPnl):'$—',a.overallSub||'Closed + inferred balance drift',a.overallTone||'txt-dim');
+  setOverviewStat('ovBalance',s.balanceText||(s.balance!=null?usd(s.balance):'$—'),s.balanceSub||'Active account',s.balanceTone||'txt-dim');
+  setOverviewStat('ovEquity',s.equityText||(s.equity!=null?usd(s.equity):'$—'),s.equitySub||'Including floating P&L',s.equityTone||'txt-dim');
+  setOverviewStat('ovDailyPnl',a.dailyPnlText||(a.dailyPnl!=null?pnl(a.dailyPnl):'$—'),a.dailySub||'Today',a.dailyTone||'txt-dim');
+  setOverviewStat('ovOverallPnl',a.overallPnlText||(a.overallPnl!=null?pnl(a.overallPnl):'$—'),a.overallSub||'Closed + inferred balance drift',a.overallTone||'txt-dim');
   setOverviewStat('ovWinRate',a.winRate!=null?(a.winRate+'%'):'—',a.winRateSub||'Waiting for trade history',a.winRateTone||'txt-dim');
   setOverviewStat('ovProgress',p.progressVal||'—',p.progressSub||'Waiting for eligibility data',p.progressTone||'txt-dim');
   setOverviewStat('ovSync',s.syncVal||'—',s.syncSub||'Monitoring connection',s.syncTone||'txt-dim');
@@ -2882,7 +2979,7 @@ function refreshDashboardQuickActions(){
   const capability=accountSupportsManualSync(activeAcct);
   const syncUiState=getManualSyncState(activeAcct);
   const syncing=syncUiState.status==='syncing';
-  btn.textContent=syncing?'Syncing…':'Sync now';
+  btn.textContent=syncing?(syncUiState.label==='queued'?'Queued…':'Syncing…'):'Sync now';
   btn.disabled=syncing||!capability.supported;
   meta.textContent=capability.supported?'In-shell controls':'Sync unavailable for this account';
 }
@@ -2896,6 +2993,87 @@ function renderDashboardCards(){
   renderDashboardAlertsPanel();
   renderDashboardEventsPanel();
   refreshDashboardQuickActions();
+}
+
+// ── MATCH-TRADER API ACCOUNTS ────────────────────────────────────────────────
+function matchTraderSheetButtons(id){
+  const reconnect=TaliMatchTrader.needsReconnect(id)?`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--blue)" onclick="event.stopPropagation();closeAcctSheet();TaliMatchTrader.openReconnect('${id}')">Reconnect</button>`:'';
+  const label=TaliMatchTrader.isDisconnectPending(id)?'Tap again to confirm':'Disconnect';
+  return reconnect+`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();TaliMatchTrader.disconnect('${id}')">${label}</button>`;
+}
+
+// Widgets that need prop-firm rules or stage data are shown as unavailable, never guessed.
+function renderMatchTraderUnavailable(kind){
+  if(kind==='payout'){
+    const meta=document.getElementById('payoutMeta');
+    if(meta)meta.textContent='Not available for API accounts yet';
+    const sp=document.getElementById('skelPayout'),rp=document.getElementById('payoutHero');
+    if(sp){sp.classList.remove('sk-in');sp.classList.add('sk-out');}
+    if(rp){rp.classList.remove('sk-in');rp.classList.add('sk-out');}
+  }
+}
+
+if(window.TaliMatchTrader){
+  TaliMatchTrader.attach({
+    getActiveAccount:()=>activeAcct,
+    historyState,
+    rehydrateAccounts:rehydrateAccountsMap,
+    getAddFlowState:()=>addAcctFlowState,
+    renderAddAccountFlow:()=>renderAddAccountFlow(),
+    openAddAccountFlow:()=>openAddAccountFlow(),
+    closeAddAccountFlow:()=>closeAddAccountFlow(),
+    renderHistoryPanel:()=>renderHistoryPanel(),
+    reloadHistory:()=>{resetHistoryState(true);loadHistoryPage(true);fetchJournal();},
+    rerenderAccountSheet:()=>renderAcctSheet(),
+    setManualSyncState:(id,next)=>setManualSyncState(id,next),
+    showAccountActionStatus:(message,tone)=>showAccountActionStatus(message,tone),
+    setTopStatus:(text,color)=>{const el=document.getElementById('tb-status');if(el){el.textContent=text;el.style.color=color;}},
+    activateAccount:(key)=>{
+      if(!ACCOUNTS[key]) return;
+      if(activeAcct===key){ fetchStatus(); fetchJournal(); loadHistoryPage(true); return; }
+      switchAccount(key);
+      loadHistoryPage(true);
+    },
+    afterDisconnect:(key)=>{
+      if(activeAcct===key||!ACCOUNTS[activeAcct]){
+        const next=Object.keys(ACCOUNTS)[0]||'';
+        activeAcct='';
+        if(next){ switchAccount(next); } else { TaliMatchTrader.onContextChange(); renderNoAccountState(); }
+      }
+      renderAcctSheet();
+      refreshAccountSettingsSurface();
+    },
+    // One stored snapshot -> the existing overview/dashboard state. No default account size,
+    // no inferred balance, no prop rules: anything unknown stays "—".
+    applyApiState:(view)=>{
+      if(view.overviewStatus){ overviewState.status=view.overviewStatus; dashboardState.status={...view.overviewStatus,lastSyncLabel:view.overviewStatus.syncSub}; }
+      if(view.analytics){ overviewState.analytics=view.analytics; dashboardState.analytics=view.analytics; }
+      if(view.payout){ overviewState.payout=view.payout; dashboardState.payout=view.payout; }
+      dashboardState.alerts=[];
+      showOnboardingCard(false);
+      renderOverviewCards();
+      renderDashboardCards();
+      const sr=document.getElementById('skelRisk'),rr=document.getElementById('realRisk');
+      if(sr){sr.classList.remove('sk-in');sr.classList.add('sk-out');}
+      if(rr){rr.classList.remove('sk-in');rr.classList.add('sk-out');}
+      const riskMeta=document.getElementById('riskMeta');
+      if(riskMeta)riskMeta.textContent='Not available for API accounts yet';
+      if(view.label){ const footer=document.getElementById('footerAcct'); if(footer)footer.textContent=view.label; }
+      if(view.tiles){
+        const analyticsMeta=document.getElementById('analyticsMeta');
+        if(analyticsMeta)analyticsMeta.textContent='Imported period · closed entries';
+        [['Wr','wr'],['Pf','pf'],['Netpl','netpl'],['Trades','totalTrades']].forEach(([k,realId])=>{
+          const skel=document.getElementById('skel'+k),real=document.getElementById(realId);
+          if(skel){skel.classList.remove('sk-in');skel.classList.add('sk-out');}
+          if(real){real.classList.remove('sk-out');real.classList.add('sk-in');real.textContent=view.tiles[realId];}
+        });
+      }
+      if(view.accountKey&&ACCOUNTS[view.accountKey]&&view.balanceText){
+        ACCOUNTS[view.accountKey].balanceText=view.balanceText;
+        if(document.getElementById('acct-sheet').classList.contains('open'))renderAcctSheet();
+      }
+    }
+  });
 }
 
 const bootstrapTaliUser=getTaliUser();
@@ -2996,7 +3174,7 @@ function renderNoAccountState(kind='default'){
 
   const payoutChecks=document.getElementById('payoutChecks');
   if(payoutChecks){
-    payoutChecks.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid var(--border);border-radius:var(--rs)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg><span style="font-size:12px;color:var(--t3)">Connect a FundingPips account to unlock payout tracking.</span></div>`;
+    payoutChecks.innerHTML=`<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--s2);border:1px solid var(--border);border-radius:var(--rs)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4"/><path d="M12 16h.01"/></svg><span style="font-size:12px;color:var(--t3)">Connect an account to see payout tracking where it is available.</span></div>`;
   }
   const payoutHero=document.getElementById('payoutHero');
   const skelPayout=document.getElementById('skelPayout');
@@ -3057,8 +3235,9 @@ function setBar(idx,pct,used,limit,remaining,chips){
 async function fetchStatus(){
   const requestSeq=++statusFetchSeq;
   const requestedAcct=activeAcct;
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))) return TaliMatchTrader.refreshSnapshot(activeAcct);
   try{
-    const res=await fetch(API+'/extension/status');
+    const res=await fetch(API+'/extension/status',{headers:taliAuthHeaders()});
     const data=await res.json();
     if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
     const acct=data.accounts&&data.accounts[activeAcct];
@@ -3269,7 +3448,7 @@ if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
 async function fetchLeaderboard(){
   try{
-    const res=await fetch(API+'/leaderboard?limit=10');
+    const res=await fetch(API+'/leaderboard?limit=10',{headers:taliAuthHeaders()});
     if(!res.ok)throw new Error('status '+res.status);
     const data=await res.json();
     const rows=data.leaderboard||[];
@@ -3287,7 +3466,7 @@ async function fetchLeaderboard(){
     ];
     const you=getTaliUser();
     el.innerHTML=rows.map((r,i)=>{
-      const isYou=you&&r.accountId===activeAcct;
+      const isYou=!!you&&r.isYou===true;
       const rankCls=medals[i]||'';
       const grad=gradients[i]||'linear-gradient(135deg,var(--s3),var(--s2))';
       const initial=(r.displayName||'T').charAt(0).toUpperCase();
@@ -3315,12 +3494,13 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
 async function fetchPayout(){
   const requestSeq=++payoutFetchSeq;
   const requestedAcct=activeAcct;
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))){ renderMatchTraderUnavailable('payout'); return; }
   if(!activeAcct||!hasLinkedAccounts()){
     renderNoAccountState('payout');
     return;
   }
   try{
-    const res=await fetch(API+'/extension/payout?account_id='+activeAcct);
+    const res=await fetch(API+'/extension/payout?account_id='+activeAcct,{headers:taliAuthHeaders()});
     if(!res.ok)throw new Error('status '+res.status);
     const payload=await res.json();
     if(requestSeq!==payoutFetchSeq||requestedAcct!==activeAcct) return;
@@ -4083,6 +4263,7 @@ function applyCustomHistoryRange(){
 }
 async function loadHistoryPage(reset=false){
   if(!activeAcct||historyState.loading)return;
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))) return TaliMatchTrader.loadHistoryPage(reset);   // cursor paging over imported entries
   if(reset){
     historyState.offset=0;
     historyState.rows=[];
@@ -4095,7 +4276,7 @@ async function loadHistoryPage(reset=false){
   const rid=++historyState.reqId;
   renderHistoryPanel();
   try{
-    const res=await fetch(API+`/extension/journal?account_id=${activeAcct}&limit=${HISTORY_PAGE_SIZE}&offset=${historyState.offset}&order=desc&source=scraper`);
+    const res=await fetch(API+`/extension/journal?account_id=${activeAcct}&limit=${HISTORY_PAGE_SIZE}&offset=${historyState.offset}&order=desc&source=scraper`,{headers:taliAuthHeaders()});
     if(!res.ok)throw new Error('status '+res.status);
     const data=await res.json();
     if(rid!==historyState.reqId||historyState.accountId!==activeAcct)return;
@@ -4135,11 +4316,11 @@ function renderHistoryPanel(){
     const exit=t.closePrice??t.exitPrice;
     return `<div class="history-row ${win?'win':'loss'} rip">
       <div>
-        <div class="history-main"><span class="history-symbol">${t.symbol||'—'}</span><span class="history-side">${side}</span></div>
+        <div class="history-main"><span class="history-symbol">${escapeHtml(t.symbol||'—')}</span><span class="history-side">${escapeHtml(side)}</span></div>
         <div class="history-meta"><span>Open ${t.openedAt?formatHistoryTime({closedAt:t.openedAt}):'—'}</span><span>Close ${formatHistoryTime(t)}</span>${size!=null?`<span>Size ${size}</span>`:''}</div>
         <div class="history-prices">${entry!=null?`Entry ${entry}`:'Entry —'} · ${exit!=null?`Exit ${exit}`:'Exit —'}</div>
       </div>
-      <div class="history-pnl" style="color:${win?'var(--green)':'var(--red)'}">${pnl(pnlVal)}</div>
+      <div class="history-pnl" style="color:${win?'var(--green)':'var(--red)'}">${t.pnlText?escapeHtml(t.pnlText):pnl(pnlVal)}</div>
     </div>`;
   }).join('');
   const empty=historyState.loading?'Loading trades...':(historyState.rows.length?'No trades match current filters.':'No trades synced for this account yet.');
@@ -4158,6 +4339,7 @@ async function fetchJournal(){
     renderNoAccountState('journal');
     return;
   }
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))) return TaliMatchTrader.renderJournal();   // imported, read-only entries
   try{
     let trades=await fetchAllTrades(activeAcct);
     // Same corrupt-pnl guard as fetchAnalytics — filter out close-price-as-pnl rows
@@ -4190,6 +4372,7 @@ async function fetchJournal(){
 async function fetchAnalytics(){
   const requestSeq=++analyticsFetchSeq;
   const requestedAcct=activeAcct;
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))) return TaliMatchTrader.refreshSnapshot(activeAcct,{force:true});   // period figures come from a server-side aggregate
   if(!activeAcct||!hasLinkedAccounts()){
     renderNoAccountState('analytics');
     return;
@@ -4394,6 +4577,7 @@ async function fetchChallenges(){
   const host=document.getElementById('challengeStatusList');
   const meta=document.getElementById('challengeMeta');
   if(!host||!meta)return;
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))){ meta.textContent='Not available for API accounts yet'; host.innerHTML='<div style="text-align:center;padding:24px;color:var(--t3);font-size:12px">Challenge and stage rules are not set up for Match-Trader API accounts yet.</div>'; return; }
   if(!activeAcct){
     meta.textContent='No active account';
     host.innerHTML='<div class="card card-p" style="text-align:center;color:var(--t3);font-size:12px">Connect an account to see challenge progress.</div>';
@@ -4402,7 +4586,7 @@ async function fetchChallenges(){
   meta.textContent='Account '+activeAcct;
   host.innerHTML='<div class="card card-p" style="text-align:center;color:var(--t3);font-size:12px">Loading challenge and payout checks…</div>';
   try{
-    const res=await fetch(API+'/extension/payout?account_id='+encodeURIComponent(activeAcct));
+    const res=await fetch(API+'/extension/payout?account_id='+encodeURIComponent(activeAcct),{headers:taliAuthHeaders()});
     if(!res.ok) throw new Error('payout failed');
     const ev=await res.json();
     const checks=Object.values(ev.checks||{});
@@ -4413,7 +4597,7 @@ async function fetchChallenges(){
 }
 
 // CHART ENGINE
-let chartInited=false,chart=null,lineSeries=null;
+// (chartInited and the rest of this line are declared earlier, next to overviewState: boot calls use them before this point)
 let currentPrice=0,currentSym='Account Equity',lotSize=1.0,slPrice=0,tpPrice=0,orderSide='buy';
 let orderTypeIdx=0;const orderTypes=['Market','Limit','Stop'];
 let chartRefreshSeq=0;
@@ -4565,6 +4749,12 @@ async function refreshChartForActiveAccount(reason='poll'){
   if(acctIdEl) acctIdEl.textContent=accountId||'No account';
   if(acctTypeEl) acctTypeEl.textContent=acctInfo?.label||'Connect account';
 
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(accountId))){
+    resetChartSeries();
+    showChartState('Equity history not available','Match-Trader API accounts do not include an equity timeline. Balance, positions and trades are on the dashboard.');
+    updateChartSummary({points:[],tradeCount:0,wins:0,losses:0},[]);
+    return;
+  }
   if(!accountId){
     resetChartSeries();
     showChartState('No active account','Select or connect an account to view an equity timeline.');
@@ -4690,10 +4880,8 @@ setInterval(()=>{if(document.getElementById('page-chart').classList.contains('ac
 updateRiskCalc();
 
 // ── NOTIFICATION DRAWER ──────────────────────────────────────────────────────
-let drawerNotifs={alerts:[],news:[]};
-let drawerTab='all';
-const DRAWER_READ_STORAGE_KEY='tali_legacy_drawer_read_v1';
-let drawerReadState=readJsonStorage(DRAWER_READ_STORAGE_KEY,{});
+// (drawer state - drawerNotifs, drawerTab, drawerReadState - is declared earlier, next to overviewState,
+//  because the first boot calls reach resetDrawerForContext() before this point of the script runs)
 
 function drawerScopeKey(){
   return activeAcct||'no_account';
