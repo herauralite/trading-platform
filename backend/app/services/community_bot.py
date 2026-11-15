@@ -14,6 +14,7 @@ from app.core.database import engine
 
 log = logging.getLogger(__name__)
 CHANNEL = "https://t.me/talitrade"
+PROFILE_TEXT = "Automated trading alerts and account tools from TaliTrade."
 profile_verified = False
 
 
@@ -36,8 +37,8 @@ async def restore_profile():
             return
         for lang in ("", "en"):
             for method, field, value in (
-                ("Description", "description", "Automated trading alerts and account tools from TaliTrade."),
-                ("ShortDescription", "short_description", "Automated trading alerts and account tools from TaliTrade."),
+                ("Description", "description", PROFILE_TEXT),
+                ("ShortDescription", "short_description", PROFILE_TEXT),
             ):
                 args = {"language_code": lang}
                 current = await api(client, "getMy" + method, data=args)
