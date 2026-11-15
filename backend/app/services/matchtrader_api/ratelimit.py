@@ -13,6 +13,7 @@ Running several replicas requires moving these counters to shared storage first.
 """
 from __future__ import annotations
 
+import os
 import random
 import time
 from collections import defaultdict, deque
@@ -26,6 +27,8 @@ ENDPOINT_LIMITS_PER_MINUTE = {
     "/v1/closed-positions": 20,
     "/v1/ledgers": 20,
 }
+GLOBAL_PER_MINUTE_ENV = "TALITRADE_MT_API_GLOBAL_PER_MINUTE"
+DEFAULT_GLOBAL_PER_MINUTE = 30   # the real account-wide ceiling is not published: stay well under the endpoint sum (120)
 HEADROOM = 0.7          # use at most 70% of a documented endpoint budget
 BACKFILL_SHARE = 0.5    # low-priority callers may use at most half of the usable budget
 WINDOW_SECONDS = 60.0
@@ -50,18 +53,24 @@ class AccountRateBudget:
         return calls
 
     def reserve(self, path: str, *, low_priority: bool = False) -> None:
-        """Count one request against the budget or raise BudgetExhausted. Failed requests count too."""
+        """Count one request against the endpoint AND account-wide budgets, or raise BudgetExhausted.
+        Failed requests count too."""
         now = self._clock()
         for key in (path, "*"):
             until = self._blocked_until.get(key, 0.0)
             if until > now:
                 raise BudgetExhausted(path, until - now)
         calls = self._trim(path, now)
+        everything = self._trim("*", now)
         usable = max(1, int(ENDPOINT_LIMITS_PER_MINUTE.get(path, 10) * HEADROOM))
         allowed = max(1, int(usable * BACKFILL_SHARE)) if low_priority else usable
         if len(calls) >= allowed:
             raise BudgetExhausted(path, WINDOW_SECONDS - (now - calls[0]))
+        global_allowed = max(1, int(global_limit_per_minute() * BACKFILL_SHARE)) if low_priority else global_limit_per_minute()
+        if len(everything) >= global_allowed:
+            raise BudgetExhausted(path, WINDOW_SECONDS - (now - everything[0]))
         calls.append(now)
+        everything.append(now)
 
     def observe_headers(self, path: str, remaining_endpoint: int | None, remaining_global: int | None) -> None:
         now = self._clock()
@@ -77,6 +86,14 @@ class AccountRateBudget:
         key = "*" if global_scope else path
         self._blocked_until[key] = max(self._blocked_until.get(key, 0.0), self._clock() + pause)
         return pause
+
+
+def global_limit_per_minute() -> int:
+    """Account-wide request budget across all endpoints (configurable; conservative by default)."""
+    try:
+        return max(5, int(os.getenv(GLOBAL_PER_MINUTE_ENV) or DEFAULT_GLOBAL_PER_MINUTE))
+    except ValueError:
+        return DEFAULT_GLOBAL_PER_MINUTE
 
 
 _budgets: dict[str, AccountRateBudget] = {}

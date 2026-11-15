@@ -55,6 +55,54 @@ run the smoke script before trusting any field.
 
 A connection the caller does not own always answers `404 Connection not found`.
 
+## Dashboard integration (branch `feature/matchtrader-dashboard`)
+
+The served dashboard is `frontend/public/app.html` (Vite copies `public/` to `dist/`; `vercel.json` rewrites
+`/app` to `/app.html`). `frontend/app.html` and the React app under `frontend/src/` are not what `/app` serves
+and were not changed.
+
+| Piece | File |
+| --- | --- |
+| Owner-scoped read models, sync verdict | `backend/app/services/matchtrader_api/read_models.py` |
+| `GET .../{id}/snapshot`, `GET .../{id}/trades?limit&cursor` | `routes.py` |
+| HTTP client + pure display logic | `frontend/public/tali-matchtrader-api.js` |
+| Provider bridge (cards, snapshot -> cards, history, sync, token form) | `frontend/public/tali-matchtrader-dashboard.js` |
+| Dispatch hooks, token form, account sheet | `frontend/public/app.html` |
+
+Flow: token form -> `POST /connections` -> one `POST /{id}/sync` -> `GET /{id}/snapshot` -> `POST /{id}/backfill`
+(last 7 days) -> the worker finishes the import -> the page re-reads the snapshot every 10 s while importing.
+Browser GETs read PostgreSQL only. The page's 5-second status timer reads the snapshot at most every 8 s and
+never triggers a broker call.
+
+`POST /{id}/sync` now returns `{"ok": bool, "result": {"state", "live_ready", "resources"}, "outcome"}`.
+`ok` is true only when summary and positions were persisted by that request. `state` is one of
+`ok | partial | busy | needs_reauth | rate_limited | failed | not_active`.
+
+Snapshot rules: money is a decimal string, times are UTC ISO-8601, unknown is `null`. `summary`, `positions`
+and `pending_orders` are `null` until their first successful fetch (`[]` means fetched and empty).
+`freshness.<resource>.status` is `fresh | degraded | stale | failed | never_synced | not_permitted`.
+`history.period_stats` is a SQL aggregate over every imported closed entry, not over a page.
+
+Example (synthetic values):
+
+```json
+{"connection": {"id": 12, "account_key": "mtapi:12", "connector_type": "matchtrader_api", "broker_name": "Example Broker",
+                "display_label": "Example Broker · …0001", "masked_login": "…0001", "currency": "USD",
+                "provider_account_type": "DEMO", "status": "active", "display_state": "ready"},
+ "summary": {"balance": "50123.45", "equity": "50100", "free_funds": "50100", "margin": "0", "profit": "-23.45",
+             "credit": "0", "margin_level": null, "fetched_at": "2026-01-01T12:00:00Z"},
+ "positions": [], "pending_orders": [],
+ "freshness": {"summary": {"status": "fresh", "last_success_at": "2026-01-01T12:00:00Z", "last_error": null, "is_stale": false}},
+ "history": {"coverage_status": "in_progress", "closed_entry_count": 3,
+             "period_stats": {"net_profit": "31.25", "closed_entries": 3, "winning_entries": 2, "losing_entries": 1}},
+ "background_refresh": {"enabled": true, "live_interval_seconds": 30, "history_interval_seconds": 120}}
+```
+
+What API accounts show: balance, equity, floating P&L, open positions, pending orders, sync freshness, recent
+closed trades, and imported-period net P&L / winning-entry ratio. Shown as unavailable (never guessed): daily
+P&L, payout and challenge progress, risk rules, account size, prop stage, equity chart, journal notes.
+Currency precision is not stored; amounts display with 2 decimals.
+
 ## Identity and ownership
 
 - External identity = (`platformUrl` host, `login`). `brokerName` is display only. The platform host is never
@@ -94,6 +142,7 @@ Additive only: 9 tables prefixed `mtapi_` plus indexes, created at startup **onl
 | `TALITRADE_MT_API_WORKER_ENABLED` | off | Background polling (needs the flag above too) |
 | `TALITRADE_MT_TOKEN_KEYS` | - | JSON `{"v1": "<base64 of 32 random bytes>"}`. Secret. Separate from `SECRET_KEY` |
 | `TALITRADE_MT_TOKEN_KEY_ACTIVE` | - | Key version used for new tokens, e.g. `v1` |
+| `TALITRADE_MT_API_GLOBAL_PER_MINUTE` | 30 | Account-wide request cap across all endpoints (the real ceiling is unpublished) |
 | `TALITRADE_MT_API_LIVE_INTERVAL_SECONDS` | 30 | Summary/positions/pending orders (min 10) |
 | `TALITRADE_MT_API_HISTORY_INTERVAL_SECONDS` | 120 | Closed positions/ledgers (min 30) |
 | `TALITRADE_MT_API_HISTORY_OVERLAP_SECONDS` | 900 | Re-read window on each history pass |
@@ -103,7 +152,8 @@ Additive only: 9 tables prefixed `mtapi_` plus indexes, created at startup **onl
 Generate a key: `python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"`.
 Key rotation: add `v2` to the JSON, set it active; old tokens still decrypt with `v1` until rotated.
 
-At defaults one account uses about 6 live + 1-3 history requests per minute.
+At defaults one account uses about 6 live + 1-3 history requests per minute. A 429 pauses only that endpoint when the
+rate headers prove the account still has budget; otherwise the whole account is paused until `Retry-After`.
 
 ## Tests
 
@@ -137,7 +187,6 @@ re-point. Do not drop tables as part of a rollback. Users revoke their own token
 
 - Canonical cutover: writing API data into `trades` / `positions` / `account_snapshots`, per-account source
   precedence, rejecting extension writes for cut-over accounts.
-- Connection UI in the dashboard (token form, status, reconnect guidance).
 - SSE / alert publishing from API data (the repo has no SSE today), alert de-duplication outbox.
 - Token expiry tracking: no trustworthy source documented, so nothing is stored or inferred from the JWT.
 - Multi-replica rate budgeting (in-process today; the app enforces a single process).
