@@ -13,6 +13,9 @@ const bridgeSrc = fs.readFileSync(path.join(pub, 'tali-matchtrader-dashboard.js'
 const appHtml = fs.readFileSync(path.join(pub, 'app.html'), 'utf8')
 const BROKER_TOKEN = 'broker-token-SECRET-0123456789-abcdefghij'
 const NOW = Date.parse('2026-11-14T22:00:30Z')
+const READY = { secure_storage: true, worker: true, connect_enabled: true, accepting_connections: true }
+const req = (state, extra = {}) => ({ id: 1, state, detail: null, resources: {}, pending: state === 'queued' || state === 'running', requested_at: '2026-11-14T22:00:00Z', started_at: null, finished_at: null, ...extra })
+const settle = async () => { for (let i = 0; i < 25; i++) await new Promise((r) => setTimeout(r, 0)) }
 
 // ── tiny fake DOM: only what the bridge touches ──
 function makeDocument() {
@@ -61,7 +64,7 @@ const trade = (uid, extra = {}) => ({ entry_key: `mtapi:7:${uid}`, uid, position
 function load({ session = 'session-1' } = {}) {
   const calls = []
   const routes = []
-  const env = { session, active: '', timers: [], flow: { step: 2, path: 'matchtraderApi', loading: false, error: '', success: '' }, log: [], accounts: {}, sync: {}, history: { filter: 'all', offset: 0, rows: [], hasMore: true, loading: false, error: null, accountId: '', reqId: 0 } }
+  const env = { session, active: '', timers: [], delays: [], syncStates: [], flow: { step: 2, path: 'matchtraderApi', loading: false, error: '', success: '' }, log: [], accounts: {}, sync: {}, history: { filter: 'all', offset: 0, rows: [], hasMore: true, loading: false, error: null, accountId: '', reqId: 0 } }
   const document = makeDocument()
   const window = { document, localStorage: { getItem: () => env.session }, TaliApiBase: { resolveApiBase: () => 'http://localhost:8000' } }
   vm.runInNewContext(apiSrc, { window, Intl, Date, JSON, Number, String, Object, Promise, Error, encodeURIComponent, Math, Array })
@@ -76,6 +79,7 @@ function load({ session = 'session-1' } = {}) {
     },
     getBaseApiUrl: () => 'http://localhost:8000', getSessionToken: () => env.session, document, now: () => NOW,
     setInterval: (fn, ms) => { env.timers.push({ fn, ms }); return env.timers.length }, clearInterval: (id) => { if (env.timers[id - 1]) env.timers[id - 1].cleared = true },
+    delay: async (ms) => { env.delays.push(ms) },                            // sync-status polling waits; instant in tests
   }
   const bridge = window.TaliMatchTrader.createBridge(deps)
   const applied = []
@@ -85,7 +89,7 @@ function load({ session = 'session-1' } = {}) {
     getAddFlowState: () => env.flow, renderAddAccountFlow: () => { document.getElementById('mtApiTokenInput').value = ''; env.log.push('renderFlow') },
     openAddAccountFlow: () => env.log.push('openFlow'), closeAddAccountFlow: () => env.log.push('closeFlow'),
     renderHistoryPanel: () => env.log.push('renderHistory'), reloadHistory: () => env.log.push('reloadHistory'), rerenderAccountSheet: () => env.log.push('sheet'),
-    setManualSyncState: (id, next) => { env.sync[id] = next }, showAccountActionStatus: (message, tone) => env.log.push(['status', tone, message]),
+    setManualSyncState: (id, next) => { env.sync[id] = next; env.syncStates.push(`${next.status}/${next.label}`) }, showAccountActionStatus: (message, tone) => env.log.push(['status', tone, message]),
     setTopStatus: (text) => { env.top = text }, activateAccount: (key) => { env.active = key; env.log.push(['activate', key]) },
     afterDisconnect: (key) => env.log.push(['afterDisconnect', key]), applyApiState: (view) => applied.push(view),
   })
@@ -227,7 +231,7 @@ test('feature off (404) hides the provider without breaking anything; a network 
   assert.equal(t.bridge.isAvailable(), false)
   assert.equal(t.bridge.isApiAccount('mtapi:7'), false)
   const u = load()
-  u.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  u.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   await u.bridge.loadConnections()
   assert.equal(u.bridge.isAvailable(), true)
   assert.deepEqual(Object.keys(u.env.accounts), ['mtapi:7'])
@@ -236,26 +240,44 @@ test('feature off (404) hides the provider without breaking anything; a network 
   assert.equal(u.bridge.isApiAccount('mtapi:7'), true)
 })
 
-test('token submit: clears the field first, connects, syncs once, backfills 7 days, then shows the account', async () => {
+test('the token form is offered only when the server reports every part ready; existing accounts stay visible', async () => {
+  for (const service of [{ ...READY, worker: false, accepting_connections: false }, { ...READY, connect_enabled: false, accepting_connections: false },
+    { ...READY, secure_storage: false, accepting_connections: false }, undefined, { ...READY, accepting_connections: 'yes' }]) {
+    const t = load()
+    t.on('GET', '/connections', (c, r) => r(200, { service, connections: [{ id: 7, card: card(7) }] }))
+    await t.bridge.loadConnections()
+    assert.equal(t.bridge.isAvailable(), false)                             // routes answering is not enough
+    assert.equal(t.bridge.isApiAccount('mtapi:7'), true)                     // but a connected account is still shown
+  }
+})
+
+test('token submit: clears the field first, connects, backfills 7 days, shows the account, then follows the queued first sync', async () => {
   const t = load()
-  t.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' } }))
-  t.on('POST', '/connections/7/sync', (c, r) => r(200, { ok: true, result: { state: 'ok', live_ready: true } }))
+  const states = [req('running'), req('completed', { resources: { summary: 'ok', positions: 'ok', pending_orders: 'ok' } })]
+  t.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' }, sync_request: req('queued') }))
+  t.on('GET', '/connections/7/sync', (c, r) => r(200, { request: states.shift() || req('completed') }))
   t.on('POST', '/connections/7/backfill', (c, r) => r(200, { ok: true, queued: ['closed_positions', 'ledgers'] }))
-  t.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
+  t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   const input = t.document.getElementById('mtApiTokenInput')
   input.value = `  ${BROKER_TOKEN}  `
   const pending = t.bridge.submitToken()
   assert.equal(input.value, '')                                           // gone from the page before the request resolves
   await pending
-  assert.deepEqual(t.calls.map((c) => `${c.method} ${c.url.replace('http://localhost:8000/connectors/matchtrader-api', '')}`),
-    ['POST /connections', 'POST /connections/7/sync', 'POST /connections/7/backfill', 'GET /connections'])
+  const paths = () => t.calls.map((c) => `${c.method} ${c.url.replace('http://localhost:8000/connectors/matchtrader-api', '')}`)
+  assert.deepEqual(paths().slice(0, 3), ['POST /connections', 'POST /connections/7/backfill', 'GET /connections'])
   assert.deepEqual(t.calls[0].body, { token: BROKER_TOKEN })
-  assert.equal(t.calls[2].body.from_ms, NOW - 7 * 86400000)                // seven days, not all-time
-  assert.equal(t.calls.filter((c) => c.url.endsWith('/sync')).length, 1)   // exactly one broker-contacting sync
+  assert.equal(t.calls[1].body.from_ms, NOW - 7 * 86400000)                // seven days, not all-time
   assert.equal(t.env.active, 'mtapi:7')
-  assert.ok(t.env.log.includes('closeFlow'))
+  assert.ok(t.env.log.includes('closeFlow'))                               // the form closes without waiting for the broker
+  const status = t.env.log.find((l) => Array.isArray(l) && l[0] === 'status')
+  assert.match(status[2], /first sync is queued/)                          // connected is not announced as synced
   assert.equal(t.env.timers.length, 1)                                     // import polling started...
   assert.equal(t.env.timers[0].ms, 10000)
+  await settle()
+  assert.equal(paths().filter((x) => x === 'POST /connections/7/sync').length, 0)   // the server already queued it: no second job
+  assert.deepEqual(t.env.syncStates, ['syncing/queued', 'syncing/running', 'success/completed'])
+  assert.ok(paths().includes('GET /connections/7/snapshot'))               // saved data re-read once it completed
   // ...and nothing anywhere still holds the token
   const everything = JSON.stringify([t.env.flow, t.env.log, t.env.accounts, t.env.sync, t.calls.slice(1)])
   assert.ok(!everything.includes(BROKER_TOKEN))
@@ -280,22 +302,23 @@ test('connect that fails or saves a non-active connection is reported accurately
   assert.match(short.env.flow.error, /read-only API token/)
 
   const failing = load()
-  failing.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' } }))
-  failing.on('POST', '/connections/7/sync', (c, r) => r(200, { ok: false, result: { state: 'failed', live_ready: false } }))
+  failing.on('POST', '/connections', (c, r) => r(200, { ok: true, connection: { id: 7, status: 'active' }, sync_request: req('queued') }))
+  failing.on('GET', '/connections/7/sync', (c, r) => r(200, { request: req('failed', { detail: 'failed', resources: { summary: 'transient' } }) }))
   failing.on('POST', '/connections/7/backfill', (c, r) => r(200, { ok: true }))
-  failing.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7, { balance: null, last_synced_at: null, display_state: 'first_sync_pending' }) }] }))
+  failing.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7, { summary: null })))
+  failing.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7, { balance: null, last_synced_at: null, display_state: 'first_sync_pending' }) }] }))
   failing.document.getElementById('mtApiTokenInput').value = BROKER_TOKEN
   await failing.bridge.submitToken()
-  const status = failing.env.log.find((l) => Array.isArray(l) && l[0] === 'status')
-  assert.equal(status[1], 'info')
-  assert.match(status[2], /first sync did not finish/)                     // connected, but not presented as synced
+  await settle()
+  assert.deepEqual(failing.env.syncStates, ['syncing/queued', 'failed/failed'])
+  assert.match(failing.env.sync['mtapi:7'].message, /^Failed\./)          // connected, but never presented as synced
   assert.equal(failing.bridge.sheetSubtitle('mtapi:7'), 'Connected · first sync pending')
 })
 
 test('responses for a previous account or session are never rendered', async () => {
   const t = load()
   let release
-  t.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }, { id: 8, card: card(8) }] }))
+  t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }, { id: 8, card: card(8) }] }))
   t.on('GET', '/connections/7/snapshot', (c, r) => new Promise((resolve) => { release = () => resolve(r(200, snapshot(7))) }))
   t.on('GET', '/connections/8/snapshot', (c, r) => r(200, snapshot(8)))
   await t.bridge.loadConnections()
@@ -312,7 +335,7 @@ test('responses for a previous account or session are never rendered', async () 
   // same account, but the session changed (logout / different user) while loading
   const u = load()
   let releaseU
-  u.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  u.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   u.on('GET', '/connections/7/snapshot', (c, r) => new Promise((resolve) => { releaseU = () => resolve(r(200, snapshot(7))) }))
   await u.bridge.loadConnections()
   u.env.active = 'mtapi:7'
@@ -326,7 +349,7 @@ test('responses for a previous account or session are never rendered', async () 
 
   // a snapshot whose identity does not match the request is ignored
   const v = load()
-  v.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  v.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   v.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(8)))
   await v.bridge.loadConnections()
   v.env.active = 'mtapi:7'
@@ -336,7 +359,7 @@ test('responses for a previous account or session are never rendered', async () 
 
 test('status polling reads saved data at a bounded rate and never triggers a broker sync', async () => {
   const t = load()
-  t.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
   await t.bridge.loadConnections()
   t.env.active = 'mtapi:7'
@@ -348,7 +371,7 @@ test('status polling reads saved data at a bounded rate and never triggers a bro
 
 test('history pages by cursor without duplicates; manual sync is interpreted, not assumed', async () => {
   const t = load()
-  t.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   t.on('GET', '/trades?limit=20', (c, r) => r(200, { trades: [trade('u3'), trade('u2')], next_cursor: 'CUR1', has_more: true }))
   t.on('GET', '/trades?limit=20&cursor=CUR1', (c, r) => r(200, { trades: [trade('u2'), trade('u1', { symbol: '<img src=x onerror=alert(1)>' })], next_cursor: null, has_more: false }))
   t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
@@ -361,20 +384,83 @@ test('history pages by cursor without duplicates; manual sync is interpreted, no
   assert.equal(t.env.history.hasMore, false)
   assert.ok(t.calls.every((c) => !c.url.includes('/extension/')))                                           // never the scraper routes
 
-  await t.bridge.manualSync('mtapi:7')
-  assert.equal(t.env.sync['mtapi:7'].status, 'syncing')                    // lease busy: not labelled a successful refresh
-  assert.match(t.env.sync['mtapi:7'].message, /already running/)
-  assert.ok(t.calls.some((c) => c.url.endsWith('/snapshot')))              // saved data is re-read afterwards
-  for (const [state, expected] of [['ok', 'succeeded'], ['partial', 'succeeded'], ['needs_reauth', 'failed'], ['rate_limited', 'failed'], ['failed', 'failed'], [undefined, 'failed']]) {
-    assert.equal(t.core.interpretSync({ ok: true, result: { state } }).status, expected)
+})
+
+test('a refresh is queued, then followed: queued, running, partially updated, completed and failed are distinct', async () => {
+  const setup = (sequence, post = (c, r) => r(202, { accepted: true, already_pending: false, request: req('queued') })) => {
+    const t = load()
+    t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
+    t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
+    t.on('POST', '/connections/7/sync', post)
+    t.on('GET', '/connections/7/sync', (c, r) => { const next = sequence.length > 1 ? sequence.shift() : sequence[0]; return typeof next === 'number' ? r(next, { detail: 'x' }) : r(200, { request: next }) })
+    return t
   }
-  assert.equal(t.core.interpretSync({ ok: true }).liveReady, false)        // HTTP 200 alone proves nothing
+  const run = async (t) => { await t.bridge.loadConnections(); t.env.active = 'mtapi:7'; return t.bridge.manualSync('mtapi:7') }
+
+  const done = setup([req('queued'), req('running'), req('completed')])
+  const view = await run(done)
+  assert.deepEqual(done.env.syncStates, ['syncing/queued', 'syncing/queued', 'syncing/queued', 'syncing/running', 'success/completed'])
+  assert.equal(view.liveReady, true)
+  assert.equal(done.calls.filter((c) => c.method === 'POST' && c.url.endsWith('/sync')).length, 1)      // one request, then only status reads
+  assert.ok(done.env.delays.every((ms) => ms === done.core.SYNC_POLL_MS) && done.env.delays.length === 3)
+  const order = done.calls.map((c) => `${c.method} ${c.url.split('/connections')[1]}`)
+  assert.ok(order.lastIndexOf('GET /7/snapshot') > order.lastIndexOf('GET /7/sync'))                     // saved data re-read only after the final state
+  assert.ok(done.env.log.includes('reloadHistory'))
+
+  const partial = setup([req('partial', { resources: { summary: 'ok', positions: 'ok', pending_orders: 'transient' } })])
+  await run(partial)
+  assert.equal(partial.env.sync['mtapi:7'].label, 'partial')
+  assert.match(partial.env.sync['mtapi:7'].message, /^Partially updated\. Could not refresh: pending orders\.$/)
+
+  for (const [detail, text] of [['unauthorized', /Reconnect with a new read-only token/], ['rate_limited', /rate limit/], ['failed', /could not be reached/]]) {
+    const failed = setup([req('failed', { detail })])
+    const result = await run(failed)
+    assert.equal(failed.env.sync['mtapi:7'].status, 'failed')
+    assert.match(failed.env.sync['mtapi:7'].message, text)
+    assert.equal(result.liveReady, false)
+  }
+  const cancelled = setup([req('cancelled', { detail: 'connection_changed' })])
+  await run(cancelled)
+  assert.match(cancelled.env.sync['mtapi:7'].message, /cancelled because the connection changed/)
+
+  // Accepted by the server but never picked up: the page stops waiting and says so. It is not "completed" and not "failed".
+  const stuck = setup([req('queued')])
+  const waiting = await run(stuck)
+  assert.equal(stuck.env.delays.length, stuck.core.SYNC_POLL_MAX)
+  assert.equal(stuck.env.sync['mtapi:7'].status, 'idle')
+  assert.match(stuck.env.sync['mtapi:7'].message, /Still queued on the server/)
+  assert.equal(waiting.liveReady, false)
+
+  // A failed status read is a blip, not a failed sync.
+  const blip = setup([500, req('running'), req('completed')])
+  await run(blip)
+  assert.equal(blip.env.sync['mtapi:7'].label, 'completed')
+
+  // The server refuses (no worker): reported as failed with the server's reason; nothing is polled.
+  const refused = setup([req('queued')], (c, r) => r(503, { detail: 'Background sync is not running on this server' }))
+  await run(refused)
+  assert.equal(refused.env.sync['mtapi:7'].status, 'failed')
+  assert.match(refused.env.sync['mtapi:7'].message, /Background sync is not running/)
+  assert.equal(refused.calls.filter((c) => c.method === 'GET' && c.url.endsWith('/sync')).length, 0)
+
+  // Logging out (or switching user) stops the follow-up: nothing is written for the old session.
+  const left = setup([req('queued')])
+  left.deps.delay = async () => { left.env.session = '' }
+  await run(left)
+  assert.deepEqual(left.env.syncStates, ['syncing/queued', 'syncing/queued'])
+  assert.equal(left.calls.filter((c) => c.method === 'GET' && c.url.endsWith('/sync')).length, 0)
+
+  const c = done.core
+  assert.equal(c.interpretSyncRequest(null).status, 'failed')              // no request object: never assumed fine
+  assert.equal(c.interpretSyncRequest({ state: 'queued' }).pending, true)
+  assert.equal(c.interpretSyncRequest({ state: 'completed' }).liveReady, true)
+  assert.equal(c.interpretSyncRequest({ state: 'something-new' }).status, 'failed')
 })
 
 test('provider text is written as text, positions distinguish unknown from empty, disconnect needs two taps', async () => {
   const t = load()
   assert.ok(!apiSrc.includes('innerHTML') && !bridgeSrc.includes('innerHTML') && !bridgeSrc.includes('insertAdjacentHTML'))
-  t.on('GET', '/connections', (c, r) => r(200, { connections: [{ id: 7, card: card(7) }] }))
+  t.on('GET', '/connections', (c, r) => r(200, { service: READY, connections: [{ id: 7, card: card(7) }] }))
   const evil = '<img src=x onerror=alert(1)>'
   t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7, { positions: [{ id: '1', symbol: evil, side: null, volume: '0.1', open_price: '1', net_profit: '-2.5' }], pending_orders: null,
     connection: card(7, { display_label: `${evil} · …0001` }) })))

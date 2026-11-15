@@ -1997,9 +1997,9 @@ function clearManualSyncState(acctId){
 }
 
 function manualSyncStateChip(state){
-  if(state.status==='syncing') return {label:'syncing',cls:'syncing'};
-  if(state.status==='success') return {label:'success',cls:'connected'};
-  if(state.status==='failed') return {label:'failed',cls:'error'};
+  if(state.status==='syncing') return {label:state.label||'syncing',cls:state.label==='queued'?'waiting':'syncing'};
+  if(state.status==='success') return {label:state.label||'success',cls:state.label==='partial'?'waiting':'connected'};
+  if(state.status==='failed') return {label:state.label||'failed',cls:'error'};
   return null;
 }
 
@@ -2224,7 +2224,7 @@ function refreshAccountSettingsSurface(reason='state'){
         const overrideChip=manualSyncStateChip(syncUiState);
         const chip=overrideChip||sync;
         const statusText=manualSyncStateMessage(id,sync.sub);
-        const buttonText=syncUiState.status==='syncing'?'Syncing…':'Sync now';
+        const buttonText=syncUiState.status==='syncing'?(syncUiState.label==='queued'?'Queued…':'Syncing…'):'Sync now';
         const disableSync=syncUiState.status==='syncing'||!isActive||!capability.supported;
         const helper=!capability.supported?capability.reason:(isActive?'':'Switch to this account to sync.');
         const helperHtml=helper?`<div class="meta">${helper}</div>`:'';
@@ -2346,8 +2346,9 @@ function closeAddAccountFlow(){
   document.body.style.overflow='';
 }
 
-function setAddAccountPath(path){
+function setAddAccountPath(path,cardKey){
   addAcctFlowState.path=path;
+  addAcctFlowState.selectedCard=cardKey||path;
   addAcctFlowState.step=2;
   addAcctFlowState.error='';
   addAcctFlowState.success='';
@@ -2378,8 +2379,8 @@ function renderAddAccountFlow(){
       const apiBlocked=apiRecommended&&!(window.TaliMatchTrader&&TaliMatchTrader.isAvailable());
       const targetPath=apiRecommended?'matchtraderApi':key;
       const p=apiRecommended?{...ADD_ACCOUNT_PATHS[key],tagline:apiBlocked?(addAcctFlowState.checkingApi?'Checking API availability…':'API connection is unavailable on this server'):'Match-Trader account · connect with a read-only API token',badge:'READ-ONLY'}:ADD_ACCOUNT_PATHS[key];
-      const isSelected=addAcctFlowState.path===targetPath;
-      return `<button ${apiBlocked?'disabled':''} class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${targetPath}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer;text-align:left;transition:all 0.15s;">
+      const isSelected=addAcctFlowState.selectedCard===key;
+      return `<button ${apiBlocked?'disabled':''} data-broker-card="${key}" aria-pressed="${isSelected?'true':'false'}" class="aaf-broker-card rip${isSelected?' selected':''}" onclick="setAddAccountPath('${targetPath}','${key}')" style="display:flex;align-items:center;gap:14px;width:100%;background:${isSelected?'rgba(42,171,238,0.07)':'rgba(255,255,255,0.03)'};border:1px solid ${isSelected?p.accent:'rgba(255,255,255,0.07)'};border-radius:12px;padding:14px 16px;margin-bottom:8px;cursor:pointer;text-align:left;transition:all 0.15s;">
         <div style="width:40px;height:40px;border-radius:10px;background:${p.logoBg};display:flex;align-items:center;justify-content:center;flex-shrink:0;border:1px solid ${p.portalBorder};overflow:hidden">
           <img src="${BROKER_FAVICONS[key]}" width="26" height="26" style="object-fit:contain;border-radius:4px" onerror="this.style.display='none';this.nextSibling.style.display='flex'" alt="${p.title}">
           <span style="display:none;font-size:11px;font-weight:800;color:${p.logoColor};font-family:Inter,sans-serif">${p.logoText}</span>
@@ -2774,6 +2775,14 @@ function hasLinkedAccounts(){
   return Object.keys(ACCOUNTS).length > 0;
 }
 
+// Notification drawer state. Declared here, ahead of the boot calls (fetchStatus/fetchAnalytics/fetchPayout):
+// with no linked account those call renderNoAccountState() -> resetDrawerForContext() straight away.
+let drawerNotifs={alerts:[],news:[]};
+let drawerTab='all';
+const DRAWER_READ_STORAGE_KEY='tali_legacy_drawer_read_v1';
+let drawerReadState=readJsonStorage(DRAWER_READ_STORAGE_KEY,{});
+// Same reason: renderNoAccountState() -> refreshChartForActiveAccount() reads these during boot.
+let chartInited=false,chart=null,lineSeries=null;
 const overviewState={status:null,analytics:null,payout:null};
 const dashboardState={
   status:null,
@@ -2963,7 +2972,7 @@ function refreshDashboardQuickActions(){
   const capability=accountSupportsManualSync(activeAcct);
   const syncUiState=getManualSyncState(activeAcct);
   const syncing=syncUiState.status==='syncing';
-  btn.textContent=syncing?'Syncing…':'Sync now';
+  btn.textContent=syncing?(syncUiState.label==='queued'?'Queued…':'Syncing…'):'Sync now';
   btn.disabled=syncing||!capability.supported;
   meta.textContent=capability.supported?'In-shell controls':'Sync unavailable for this account';
 }
@@ -4581,7 +4590,7 @@ async function fetchChallenges(){
 }
 
 // CHART ENGINE
-let chartInited=false,chart=null,lineSeries=null;
+// (chartInited and the rest of this line are declared earlier, next to overviewState: boot calls use them before this point)
 let currentPrice=0,currentSym='Account Equity',lotSize=1.0,slPrice=0,tpPrice=0,orderSide='buy';
 let orderTypeIdx=0;const orderTypes=['Market','Limit','Stop'];
 let chartRefreshSeq=0;
@@ -4864,10 +4873,8 @@ setInterval(()=>{if(document.getElementById('page-chart').classList.contains('ac
 updateRiskCalc();
 
 // ── NOTIFICATION DRAWER ──────────────────────────────────────────────────────
-let drawerNotifs={alerts:[],news:[]};
-let drawerTab='all';
-const DRAWER_READ_STORAGE_KEY='tali_legacy_drawer_read_v1';
-let drawerReadState=readJsonStorage(DRAWER_READ_STORAGE_KEY,{});
+// (drawer state - drawerNotifs, drawerTab, drawerReadState - is declared earlier, next to overviewState,
+//  because the first boot calls reach resetDrawerForContext() before this point of the script runs)
 
 function drawerScopeKey(){
   return activeAcct||'no_account';
