@@ -29,6 +29,7 @@ pydantic_core==2.41.5
 python-dotenv==1.2.1
 python-jose==3.5.0
 python-telegram-bot==22.6
+pillow>=11.3,<13
 PyYAML==6.0.3
 rsa==4.9.1
 six==1.17.0
