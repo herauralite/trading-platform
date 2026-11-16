@@ -2062,7 +2062,7 @@ async def send_telegram(message: str, chat_id: str = None):
         async with httpx.AsyncClient() as client:
             await client.post(f"https://api.telegram.org/bot{token}/sendMessage", json={"chat_id": cid, "text": message, "parse_mode": "HTML"})
     except Exception as e:
-        logger.error(f"Telegram error: {e}")
+        logger.error("Telegram send failed (%s)", type(e).__name__)
 
 
 def resolve_telegram_chat_target(telegram_user_id: str | None = None) -> str | None:
@@ -2113,8 +2113,8 @@ async def daily_summary_scheduler():
     while True:
         try:
             now_utc   = datetime.now(timezone.utc)
-            et_offset = -4 if 3 <= now_utc.month <= 11 else -5
-            now_et    = now_utc + timedelta(hours=et_offset)
+            from zoneinfo import ZoneInfo
+            now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
             if now_et.weekday() < 5:
                 today_key = now_et.strftime("%Y-%m-%d")
                 target    = now_et.replace(hour=17, minute=5, second=0, microsecond=0)
@@ -2123,18 +2123,22 @@ async def daily_summary_scheduler():
                     from app.core.database import engine
                     try:
                         async with engine.connect() as conn:
-                            result = await conn.execute(text("SELECT DISTINCT uid FROM (SELECT telegram_user_id AS uid FROM prop_accounts WHERE is_active = TRUE UNION SELECT user_id AS uid FROM trading_accounts WHERE is_active = TRUE AND user_id IS NOT NULL) uids"))
+                            result = await conn.execute(text("SELECT user_id FROM telegram_alert_preferences"))
                             user_ids = [r[0] for r in result.fetchall()]
                     except Exception:
                         user_ids = []
                     if user_ids:
                         for uid in user_ids:
                             try:
-                                await send_daily_summary(today_key, tg_uid=uid)
+                                from app.services.bot_reports import api_report
+                                from app.services.community_bot import deliver
+                                report = await api_report(uid, "summary")
+                                if report:
+                                    await deliver(uid, "summary:" + today_key, report)
+                                elif await get_user_primary_account(uid):
+                                    await send_daily_summary(today_key, chat_id=uid, tg_uid=uid)
                             except Exception as e:
                                 logger.error(f"Daily summary for {uid}: {e}")
-                    else:
-                        await send_daily_summary(today_key)
         except Exception as e:
             logger.error(f"Daily summary scheduler: {e}")
         await asyncio.sleep(60)
@@ -2219,8 +2223,8 @@ async def weekend_scheduler():
     while True:
         try:
             now_utc   = datetime.now(timezone.utc)
-            et_offset = -4 if 3 <= now_utc.month <= 11 else -5
-            now_et    = now_utc + timedelta(hours=et_offset)
+            from zoneinfo import ZoneInfo
+            now_et = now_utc.astimezone(ZoneInfo("America/New_York"))
             if now_et.weekday() == 4:
                 today_key = now_et.strftime("%Y-%m-%d")
                 for warn_hour, warn_min, label, icon in [(16, 0, "1 HOUR", "⚠️"), (16, 30, "30 MINUTES", "🔴"), (16, 45, "15 MINUTES", "🚨")]:
@@ -2230,9 +2234,11 @@ async def weekend_scheduler():
                     target = now_et.replace(hour=warn_hour, minute=warn_min, second=0, microsecond=0)
                     if abs((now_et - target).total_seconds()) <= 60:
                         weekend_alerted.add(key)
-                        open_accts = [aid for aid, a in account_data_store.items() if a.get("hasPositions")]
-                        pos_warn   = (f"\n🔴 <b>OPEN POSITIONS!</b>\nAccounts: {', '.join(open_accts)}\nProfits will NOT count.\n") if open_accts else ""
-                        await send_telegram(f"{icon} <b>MARKET CLOSES IN {label}</b>\n{'─'*28}\n🗓 Friday close: <b>5:00 PM ET</b>\n📊 Affects: DJI30, NAS100, SP500, Forex, Gold\n{pos_warn}{'─'*28}\n⚠️ Holding over weekend <b>not permitted</b>.\nProfits <b>won't count</b> — close before 5 PM ET.")
+                        from app.services import community_bot
+                        await community_bot.market_alert("weekend:" + key, "Friday market close",
+                            f"5:00 pm New York · {label.lower()}",
+                            "Check your instrument’s trading hours and your account’s weekend holding rules.",
+                            "Session reminder")
         except Exception as e:
             logger.error(f"Weekend scheduler: {e}")
         await asyncio.sleep(60)
@@ -2277,8 +2283,8 @@ def parse_event_time(event: dict):
         time_str = time_str.strip().lower()
         dt_time  = (datetime.strptime(time_str, "%I:%M%p") if ":" in time_str else datetime.strptime(time_str, "%I%p")).time()
         naive    = datetime.combine(dt_date, dt_time)
-        offset   = -4 if 3 <= dt_date.month <= 11 else -5
-        return naive.replace(tzinfo=timezone(timedelta(hours=offset))).astimezone(timezone.utc)
+        from zoneinfo import ZoneInfo
+        return naive.replace(tzinfo=ZoneInfo("America/New_York")).astimezone(timezone.utc)
     except Exception:
         return None
 
@@ -2308,23 +2314,22 @@ async def news_scheduler():
 
 async def send_news_alert(event: dict, event_time: datetime, minutes: int):
     from app.services import community_bot
-    await community_bot.market_alert(f"calendar:{event.get('title')}:{event_time.isoformat()}",
-        event.get("title", "Market event"), f"{event_time:%Y-%m-%d %H:%M} UTC | Scheduled economic release")
-    title    = event.get("title", "Unknown")
-    currency = (event.get("country") or "").upper()
-    forecast = event.get("forecast", ""); previous = event.get("previous", "")
-    et_offset = -4 if 3 <= event_time.month <= 11 else -5
-    et_time   = event_time + timedelta(hours=et_offset)
-    tl        = title.lower()
-    guidance  = ""
-    if any(w in tl for w in ["fomc", "fed", "powell", "interest rate"]):
-        guidance = "⚡ <b>Fed event — expect high volatility.</b>\n"
-    elif any(w in tl for w in ["non-farm", "nfp", "payroll"]):
-        guidance = "⚡ <b>NFP — biggest mover for indices.</b>\n"
-    elif any(w in tl for w in ["cpi", "inflation", "pce"]):
-        guidance = "⚡ <b>Inflation data — rate expectations impact.</b>\n"
-    forecast_line = f"Forecast: <b>{forecast}</b> | Previous: {previous}\n" if forecast else ""
-    await send_telegram(f"🗞 <b>HIGH-IMPACT NEWS IN {minutes} MIN</b>\n{'─'*28}\n📌 <b>{title}</b>\n🌍 Currency: <b>{currency}</b>\n🕐 Time: <b>{et_time.strftime('%I:%M %p ET')}</b>\n📊 Affects: <b>DJI30, NAS100, SP500</b>\n{forecast_line}{'─'*28}\n{guidance}⚠️ No trades within <b>5 min before or after</b> this event.")
+    from zoneinfo import ZoneInfo
+    title = event.get("title") or "Economic release"
+    currency = event.get("country") or ""
+    stamp = event_time.astimezone(ZoneInfo("America/New_York"))
+    detail = f"{currency} · {stamp:%b %d, %I:%M %p %Z}"
+    family = "CPI" if currency == "CAD" and "cpi" in title.lower() else title
+    if family == "CPI" and title != family:
+        title = "Canadian inflation report"
+        caption = "Headline CPI tracks household prices. Median and trimmed CPI help show whether inflation is broad-based."
+    else:
+        caption = f"{title} is scheduled for {stamp:%I:%M %p %Z}."
+        for field in ("forecast", "previous"):
+            if event.get(field):
+                caption += f" {field.title()}: {event[field]}."
+    await community_bot.market_alert(f"calendar:{currency}:{family}:{event_time.isoformat()}:{30 if minutes >= 20 else 10}",
+                                    title, detail, caption, "Coming up")
 
 
 # ─── In-memory live state ─────────────────────────────────────────────────────
@@ -2369,7 +2374,8 @@ async def get_user_primary_account(telegram_user_id: str) -> str:
 @app.get("/telegram/profile-status")
 async def telegram_profile_status():
     from app.services import community_bot
-    return {"default_and_english_verified": community_bot.profile_verified,
+    return {"mobile_alerts_version": 1, "private_menu_verified": community_bot.profile_verified,
+            "default_and_english_verified": community_bot.profile_verified,
             "verified_text": community_bot.PROFILE_TEXT if community_bot.profile_verified else None}
 
 
@@ -2388,18 +2394,37 @@ async def telegram_webhook(request: Request):
 
     if message.get("chat", {}).get("type") != "private" or not tg_from.get("id") or tg_uid != chat_id:
         return {"ok": True}
+    from app.services.bot_reports import COMMANDS, api_report
     command, _, payload = cmd.partition(" ")
-    if telegram_command_matches(command, "/accounts"):
-        return {"method": "sendMessage", "chat_id": chat_id, "text": await community_bot.accounts(tg_uid)}
-    if any(telegram_command_matches(command, c) for c in ("/status", "/today", "/journal", "/week", "/summary", "/payout")):
+    def reply(message):
+        return {"method":"sendMessage", "chat_id":chat_id, "text":message[:4050]}
+    name = next((key for key in COMMANDS if telegram_command_matches(command, "/" + key)), None)
+    if name == "help":
+        return reply("TaliTrade commands\n" + "\n".join(f"/{key} — {value}" for key,value in COMMANDS.items()) + "\n\nReports use linked API accounts first. For an older account, send /status legacy or append legacy to a report command.")
+    if not name:
+        return reply("Send /help for available commands.") if cmd.startswith("/") else {"ok":True}
+    if name == "accounts":
+        return reply(await community_bot.accounts(tg_uid))
+    if name in {"status","today","journal","week","summary","payout"}:
+        report = None if payload.strip() == "legacy" else await api_report(tg_uid, name)
+        if report:
+            return reply(report)
         if not await get_user_primary_account(tg_uid):
-            return {"method": "sendMessage", "chat_id": chat_id, "text": "Use /accounts for your connected accounts and /alerts for private updates."}
-    if any(telegram_command_matches(command, c) for c in ("/alerts", "/stop")):
-        enabled = telegram_command_matches(command, "/alerts")
-        await community_bot.subscribe(tg_uid, enabled)
-        return {"method": "sendMessage", "chat_id": chat_id, "text": (
-            "Account and market alerts enabled. Connect your accounts at talitrade.com/app with this Telegram login. Send /stop to turn these alerts off."
-            if enabled else "Your community account and market alerts are off.")}
+            return reply("Connect an account at https://www.talitrade.com/app with this Telegram login, then send /accounts.")
+    if name in {"alerts","stop"}:
+        await community_bot.subscribe(tg_uid, name == "alerts")
+        return reply("Private account and market alerts enabled. Send /stop to turn them off." if name=="alerts" else "Subscribed account and market alerts are off.")
+    if name == "news":
+        from app.services.bot_releases import published
+        calendar = await upcoming_news()
+        try:
+            latest = await published()
+        except Exception:
+            latest = []
+        if latest:
+            url, title, period, brief = latest[0]
+            return reply(f"{title} · {period}\n{brief}\n{url}\n\n{calendar}")
+        return reply(calendar)
     if telegram_command_matches(command, "/start") and payload.strip() == "waitlist":
         if message.get("chat", {}).get("type") == "private" and chat_id == tg_uid and tg_from.get("id"):
             # Telegram executes this Bot API method as the webhook response.
@@ -2414,18 +2439,12 @@ async def telegram_webhook(request: Request):
             }
         return {"ok": True}
 
-    if telegram_command_matches(cmd, "/start"):
-        user = await db_upsert_user({"id": tg_from.get("id"), "username": tg_from.get("username"), "first_name": tg_from.get("first_name"), "last_name": tg_from.get("last_name")})
-        accounts = await db_get_user_accounts(tg_uid)
-        name     = tg_from.get("first_name") or tg_from.get("username") or "Trader"
-        if accounts:
-            acct_lines = "\n".join(f"  • {a['account_id']} ({a['account_type'] or a['broker']}, ${(a['account_size'] or 0):,})" for a in accounts)
-            await send_telegram(f"👋 Welcome back, <b>{name}</b>!\n\nYour linked accounts:\n{acct_lines}\n\nUse /status to check your live risk.", chat_id=chat_id)
-        else:
-            await send_telegram(f"👋 Welcome to <b>TaliTrade</b>, {name}!\n\nYour Telegram account is registered. To get started:\n\n1️⃣ Open the platform at www.talitrade.com/app\n2️⃣ Log in with Telegram\n3️⃣ Connect your supported trading account and send /alerts here\n\nYour trading data will automatically link to this account.\n\n/help — see all commands", chat_id=chat_id)
-        return {"ok": True}
+    if name == "start":
+        await db_upsert_user({key: tg_from.get(key) for key in ("id","username","first_name","last_name")})
+        return reply("Welcome to TaliTrade. Sign in at https://www.talitrade.com/app to connect your account. Use /accounts to see your connections, /alerts for notifications, or /help for all commands.")
 
-    dispatch = {"/status": handle_status, "/today": handle_today, "/journal": handle_journal, "/news": handle_news}
+    cmd = command
+    dispatch = {"/status": handle_status, "/today": handle_today, "/journal": handle_journal}
     for c, fn in dispatch.items():
         if telegram_command_matches(cmd, c):
             await fn(chat_id, tg_uid=tg_uid); return {"ok": True}
@@ -2433,8 +2452,6 @@ async def telegram_webhook(request: Request):
     if telegram_command_matches(cmd, "/payout"):    await handle_payout(chat_id, tg_uid=tg_uid)
     elif telegram_command_matches(cmd, "/summary"):  await send_daily_summary(date.today().isoformat(), chat_id=chat_id, tg_uid=tg_uid)
     elif telegram_command_matches(cmd, "/week"):     await send_weekly_summary(chat_id=chat_id, tg_uid=tg_uid)
-    elif telegram_command_matches(cmd, "/help"):
-        await send_telegram("🤖 <b>TaliTrade Commands</b>\n\n/status  — Live risk snapshot\n/today   — Today's trades & P&L\n/journal — Last 10 trades\n/news    — Upcoming high-impact news\n/payout  — Payout eligibility check\n/summary — Today's market-close recap\n/week    — Weekly performance report\n/help    — This message", chat_id=chat_id)
     return {"ok": True}
 
 
@@ -2448,28 +2465,22 @@ async def handle_payout(chat_id: str, tg_uid: str = None):
     await send_telegram(f"💸 <b>Payout Check — {acct_id}</b>\n{'─'*28}\n\n{format_payout_status(ev, short=False)}", chat_id=chat_id)
 
 
-async def handle_news(chat_id: str):
-    events   = await fetch_news_calendar()
-    now      = datetime.now(timezone.utc)
-    upcoming = []
-    for event in events:
-        if not is_index_relevant(event): continue
-        et = parse_event_time(event)
-        if not et: continue
-        mins = (et - now).total_seconds() / 60
-        if 0 < mins < 480:
-            upcoming.append((mins, event, et))
-    upcoming.sort(key=lambda x: x[0])
+async def upcoming_news():
+    from zoneinfo import ZoneInfo
+    events = await fetch_news_calendar()
+    if not events and not news_last_fetch:
+        return "The economic calendar is temporarily unavailable. Try /news again shortly."
+    now = datetime.now(timezone.utc)
+    upcoming = sorted(((stamp, event) for event in events if is_index_relevant(event)
+                      and (stamp := parse_event_time(event)) and now < stamp <= now + timedelta(hours=8)),
+                      key=lambda item: item[0])
     if not upcoming:
-        await send_telegram("📅 No high-impact news in the next 8 hours.", chat_id=chat_id)
-        return
-    lines = []
-    for mins, event, et in upcoming[:8]:
-        et_offset = -4 if 3 <= et.month <= 11 else -5
-        et_time   = et + timedelta(hours=et_offset)
-        when      = f"in {round(mins)}m" if mins < 60 else f"in {round(mins/60,1)}h"
-        lines.append(f"🔴 <b>{event.get('title','?')}</b> — {et_time.strftime('%I:%M %p')} ET ({when})")
-    await send_telegram(f"📅 <b>Upcoming High-Impact News</b>\n<i>DJI30, NAS100, SP500</i>\n{'─'*28}\n\n" + "\n".join(lines) + f"\n\n{'─'*28}\n⚠️ No trades within 5 min before/after each event.", chat_id=chat_id)
+        return "No high-impact events listed for the next eight hours."
+    lines = ["Next eight hours"]
+    for stamp,event in upcoming[:8]:
+        local = stamp.astimezone(ZoneInfo("America/New_York"))
+        lines.append(f"{local:%I:%M %p %Z} · {event.get('country','')} · {event.get('title','Economic release')}")
+    return "\n".join(lines)
 
 
 async def handle_status(chat_id: str, tg_uid: str = None):
