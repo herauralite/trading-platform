@@ -67,3 +67,12 @@ def test_real_account_reports(monkeypatch):
         assert await bot_reports.api_report("no_accounts","journal") is None
         await db.dispose()
     asyncio.run(run())
+
+def test_automatic_release_caption(monkeypatch):
+    url = "https://www.statcan.gc.ca/daily-quotidien/example"
+    monkeypatch.setattr(community_bot,"published",AsyncMock(return_value=[(url,"Canadian inflation","October","Prices rose.")]))
+    send = AsyncMock()
+    monkeypatch.setattr(community_bot,"market_alert",send)
+    asyncio.run(community_bot.release_pass())
+    assert send.await_args.args[3] == "Prices rose."
+    assert url in send.await_args.args[0]

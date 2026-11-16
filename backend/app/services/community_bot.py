@@ -3,6 +3,9 @@ import hashlib
 import hmac
 import json
 import logging
+from pathlib import Path
+from io import BytesIO
+from PIL import Image, ImageChops, ImageStat
 import os
 from app.services.bot_banner import banner
 from app.services.bot_reports import COMMANDS
@@ -34,10 +37,27 @@ async def api(client, method, *, data=None, files=None):
     return res.json()["result"]
 
 
+async def matches_avatar(client, user_id, target):
+    photos = await api(client, "getUserProfilePhotos", data={"user_id":user_id,"limit":1})
+    if not photos["photos"]:
+        return False
+    largest = max(photos["photos"][0], key=lambda p: p["width"])
+    file = await api(client, "getFile", data={"file_id":largest["file_id"]})
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    response = await client.get(f"https://api.telegram.org/file/bot{token}/{file['file_path']}")
+    response.raise_for_status()
+    with Image.open(BytesIO(response.content)) as remote, Image.open(BytesIO(target)) as local:
+        def thumbnail(img):
+            return img.convert("RGB").resize((64,64), Image.Resampling.LANCZOS)
+        difference = ImageChops.difference(thumbnail(remote), thumbnail(local))
+        return max(ImageStat.Stat(difference).rms) < 8
+
+
 async def restore_profile():
     global profile_verified
     async with httpx.AsyncClient(timeout=10) as client:
-        if (await api(client, "getMe"))["username"].lower() != "talitradebot":
+        me = await api(client, "getMe")
+        if me["username"].lower() != "talitradebot":
             return
         for lang in ("", "en"):
             for method, field, value in (
@@ -58,6 +78,13 @@ async def restore_profile():
                 await api(client, "setMyCommands", data={**args, "commands":json.dumps(commands)})
                 if await api(client, "getMyCommands", data=args) != commands:
                     raise RuntimeError("Private menu verification failed")
+        target = Path(__file__).with_name("midnight-avatar.jpg").read_bytes()
+        if not await matches_avatar(client, me["id"], target):
+            await api(client, "setMyProfilePhoto",
+                      data={"photo":json.dumps({"type":"static","photo":"attach://avatar"})},
+                      files={"avatar":("midnight.jpg",target,"image/jpeg")})
+            if not await matches_avatar(client, me["id"], target):
+                raise RuntimeError("Avatar verification pending")
         profile_verified = True
 
 
@@ -205,4 +232,4 @@ async def gold_pass():
 async def release_pass():
     for url, title, period, summary in await published():
         await market_alert("official:" + url, title, period + " · Statistics Canada",
-                           summary + "\n" + url, "Economic release")
+                           summary, "Economic release")

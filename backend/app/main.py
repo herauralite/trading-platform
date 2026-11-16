@@ -2374,7 +2374,7 @@ async def get_user_primary_account(telegram_user_id: str) -> str:
 @app.get("/telegram/profile-status")
 async def telegram_profile_status():
     from app.services import community_bot
-    return {"mobile_alerts_version": 1, "private_menu_verified": community_bot.profile_verified,
+    return {"mobile_alerts_version": 2, "midnight_avatar_verified": community_bot.profile_verified, "private_menu_verified": community_bot.profile_verified,
             "default_and_english_verified": community_bot.profile_verified,
             "verified_text": community_bot.PROFILE_TEXT if community_bot.profile_verified else None}
 
@@ -2441,7 +2441,15 @@ async def telegram_webhook(request: Request):
 
     if name == "start":
         await db_upsert_user({key: tg_from.get(key) for key in ("id","username","first_name","last_name")})
-        return reply("Welcome to TaliTrade. Sign in at https://www.talitrade.com/app to connect your account. Use /accounts to see your connections, /alerts for notifications, or /help for all commands.")
+        return {
+            "method": "sendMessage", "chat_id": chat_id, "parse_mode": "HTML",
+            "text": ("<b>Welcome to TaliTrade</b>\n<i>Built to keep traders funded.</i>\n\n"
+                     "Connect your account in the dashboard, then send /alerts for trade updates here.\n\n"
+                     "/accounts · Your linked accounts\n/news · Your market briefing"),
+            "reply_markup": {"inline_keyboard": [
+                [{"text": "Open dashboard", "url": "https://www.talitrade.com/app"}],
+                [{"text": "Join the TaliTrade channel", "url": community_bot.CHANNEL}]]},
+        }
 
     cmd = command
     dispatch = {"/status": handle_status, "/today": handle_today, "/journal": handle_journal}
