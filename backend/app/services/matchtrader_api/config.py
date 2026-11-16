@@ -75,11 +75,13 @@ def connect_enabled() -> bool:
     return api_enabled() and _flag("TALITRADE_MT_API_CONNECT_ENABLED")
 
 
-def service_status() -> dict:
+def service_status(user_id: str | None = None) -> dict:
     """Readiness gates as the dashboard sees them. No secrets, only booleans."""
     from app.services.matchtrader_api import crypto
 
-    status = {"secure_storage": crypto.is_configured(), "worker": worker_enabled(), "connect_enabled": connect_enabled()}
+    pilot_ids = os.getenv("TALITRADE_MT_API_PILOT_USER_IDS", "").split(",")
+    pilot = bool(user_id) and api_enabled() and str(user_id) in {s.strip() for s in pilot_ids}
+    status = {"secure_storage": crypto.is_configured(), "worker": worker_enabled(), "connect_enabled": connect_enabled() or pilot}
     status["accepting_connections"] = all(status.values())
     return status
 
