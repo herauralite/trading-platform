@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import hmac
-import io
+import json
 import logging
 import os
-import textwrap
+from app.services.bot_banner import banner
+from app.services.bot_reports import COMMANDS
+from app.services.bot_releases import published
 from datetime import date, timedelta, timezone
 
 import httpx
@@ -13,6 +15,8 @@ from sqlalchemy import text
 from app.core.database import engine
 
 log = logging.getLogger(__name__)
+# Telegram request URLs contain the bot credential.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 CHANNEL = "https://t.me/talitrade"
 PROFILE_TEXT = "Automated trading alerts and account tools from TaliTrade."
 profile_verified = False
@@ -47,6 +51,13 @@ async def restore_profile():
                     verified = await api(client, "getMy" + method, data=args)
                     if verified[field] != value:
                         raise RuntimeError("Profile verification failed")
+        commands = [{"command": name, "description": desc} for name, desc in COMMANDS.items()]
+        for language in ("", "en"):
+            args = {"language_code": language, "scope": json.dumps({"type":"all_private_chats"})}
+            if await api(client, "getMyCommands", data=args) != commands:
+                await api(client, "setMyCommands", data={**args, "commands":json.dumps(commands)})
+                if await api(client, "getMyCommands", data=args) != commands:
+                    raise RuntimeError("Private menu verification failed")
         profile_verified = True
 
 
@@ -80,28 +91,42 @@ async def deliver(user_id, key, message, photo=None):
                 await api(client, "sendMessage", data={"chat_id": user_id, "text": message})
 
 
+async def alert_image(section, title, detail):
+    try:
+        return await asyncio.to_thread(banner, section, title, detail)
+    except Exception:
+        log.warning("Banner unavailable; delivering text")
+        return None
+
+
 async def account_pass():
     queries = ["""SELECT a.user_id, 'account:' || a.id AS key, 'Connected account: ' ||
-        COALESCE(a.display_label,a.broker_name,'Trading account') AS message
+        COALESCE(a.display_label,a.broker_name,'Trading account') AS message, NULL::text AS fill_detail
         FROM trading_accounts a JOIN telegram_alert_preferences p ON p.user_id=a.user_id
         WHERE a.is_active AND a.created_at >= p.enabled_since"""]
     async with engine.connect() as conn:
         if await conn.scalar(text("SELECT to_regclass('mtapi_connections') IS NOT NULL")):
             queries.append("""SELECT c.user_id, 'mt:' || c.id AS key, 'Connected Match-Trader account: ' ||
-                COALESCE(c.broker_name,'Match-Trader') || ' · ' || right(c.external_login,4) AS message
+                COALESCE(c.broker_name,'Match-Trader') || ' · ' || right(c.external_login,4) AS message, NULL::text AS fill_detail
                 FROM mtapi_connections c JOIN telegram_alert_preferences p ON p.user_id=c.user_id
                 WHERE c.disconnected_at IS NULL AND c.created_at>=p.enabled_since""")
             queries.append("""SELECT c.user_id, 'close:' || c.id || ':' || t.uid AS key,
                 'Trade closed · ' || t.symbol || ' · Account ending ' || right(c.external_login,4) ||
-                COALESCE(' · Net ' || t.net_profit || ' ' || c.account_currency,'') AS message
+                COALESCE(' · Net ' || t.net_profit || ' ' || c.account_currency,'') AS message, concat_ws(' · ', 'Closed ' || to_char(t.close_time AT TIME ZONE 'UTC','HH24:MI') || ' UTC',
+                    'Entry ' || t.open_price, 'Exit ' || t.close_price) AS fill_detail
                 FROM mtapi_closed_positions t JOIN mtapi_connections c ON c.id=t.connection_id
                 JOIN telegram_alert_preferences p ON p.user_id=c.user_id
                 WHERE c.disconnected_at IS NULL AND t.close_time>=p.enabled_since""")
         rows = (await conn.execute(text("SELECT e.* FROM (" + " UNION ALL ".join(queries) +
             ") e WHERE NOT EXISTS (SELECT 1 FROM telegram_alert_receipts r WHERE r.user_id=e.user_id AND r.event_key=e.key) LIMIT 100"))).all()
-    for uid, key, message in rows:
+    for uid, key, message, fill_detail in rows:
         try:
-            await deliver(uid, key, message)
+            parts = message.split(" · ")
+            if key.startswith("close:"):
+                image = await alert_image("Trade closed", " · ".join(parts[1:2] + parts[3:]), parts[2] if len(parts)>2 else "Trading account")
+            else:
+                image = await alert_image("Account connected", message.split(": ",1)[-1], "Telegram account alerts")
+            await deliver(uid, key, fill_detail if image and fill_detail else message, image)
         except Exception:
             log.warning("Account alert delivery deferred")
 
@@ -130,39 +155,29 @@ async def accounts(user_id):
     return ("Your connected accounts\n" + "\n".join(rows))[:4000] if rows else "Connect an account on talitrade.com/app using this Telegram login."
 
 
-def card(title, detail):
-    from PIL import Image, ImageDraw, ImageFont
-    img = Image.new("RGB", (920, 400), "#0d1925")
-    draw = ImageDraw.Draw(img)
-    draw.rectangle((0, 0, 12, 400), fill="#42baff")
-    for y, value, size, color in [(38, "TaliTrade  /  MARKET ALERT", 29, "#42baff"),
-                                  (112, textwrap.fill(title[:95], 32), 40, "white"),
-                                  (335, detail, 24, "#a9c1d2")]:
-        draw.multiline_text((48, y), value, font=ImageFont.load_default(size=size), fill=color)
-    output = io.BytesIO()
-    img.save(output, format="PNG")
-    return output.getvalue()
-
-
-async def market_alert(key, title, detail):
+async def market_alert(key, title, detail, caption=None, section="Market update"):
     async with engine.connect() as conn:
         users = (await conn.execute(text("SELECT user_id FROM telegram_alert_preferences"))).scalars().all()
     if users:
-        photo = await asyncio.to_thread(card, title, detail)
+        photo = await alert_image(section, title, detail)
         for uid in users:
             try:
-                await deliver(uid, key, f"{title}\n{detail}", photo)
+                await deliver(uid, key, caption or f"{title}\n{detail}", photo)
             except Exception:
                 log.warning("Market alert delivery failed")
 
 
 async def run():
+    next_release_check = 0
     next_gold_check = 0
     while True:
         jobs = [account_pass]
         if not profile_verified:
             jobs.append(restore_profile)
         now = asyncio.get_running_loop().time()
+        if now >= next_release_check:
+            jobs.append(release_pass)
+            next_release_check = now + 600
         if now >= next_gold_check:
             jobs.append(gold_pass)
             next_gold_check = now + 3600
@@ -185,3 +200,9 @@ async def gold_pass():
     if abs(change) >= 1:
         await market_alert("nbp-gold:" + latest["data"], f"Gold fixing {change:+.2f}%",
             f"NBP | {latest['cena']:.2f} PLN/g | {older['data']} to {latest['data']}")
+
+
+async def release_pass():
+    for url, title, period, summary in await published():
+        await market_alert("official:" + url, title, period + " · Statistics Canada",
+                           summary + "\n" + url, "Economic release")
