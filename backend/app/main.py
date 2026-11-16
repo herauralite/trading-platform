@@ -2445,7 +2445,7 @@ async def telegram_webhook(request: Request):
             "method": "sendMessage", "chat_id": chat_id, "parse_mode": "HTML",
             "text": ("<b>Welcome to TaliTrade</b>\n<i>Built to keep traders funded.</i>\n\n"
                      "Connect your account in the dashboard, then send /alerts for trade updates here.\n\n"
-                     "/accounts · Your linked accounts\n/news · Your market briefing"),
+                     "/accounts · Your linked accounts"),
             "reply_markup": {"inline_keyboard": [
                 [{"text": "Open dashboard", "url": "https://www.talitrade.com/app"}],
                 [{"text": "Join the TaliTrade channel", "url": community_bot.CHANNEL}]]},
