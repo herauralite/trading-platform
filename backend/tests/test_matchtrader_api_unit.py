@@ -467,3 +467,15 @@ def test_reconciliation_report_matches_exactly_flags_ambiguity_and_never_writes(
     assert sorted(report["api_only_uids"]) == ["u2", "u4"] and report["legacy_only_ids"] == [4]
     assert report["positions_closed_in_parts"] == 1 and report["writes_performed"] == 0
     assert report["api_net_profit_total"] == "36.50"   # netProfit only: commission/swap/ledgers are not added again
+def test_pilot_readiness_is_owner_specific(monkeypatch):
+    from app.services.matchtrader_api import config, crypto
+    monkeypatch.setattr(crypto, "is_configured", lambda: True)
+    for name in ("TALITRADE_MT_API_ENABLED", "TALITRADE_MT_API_WORKER_ENABLED"):
+        monkeypatch.setenv(name, "true")
+    monkeypatch.delenv("TALITRADE_MT_API_CONNECT_ENABLED", raising=False)
+    monkeypatch.setenv("TALITRADE_MT_API_PILOT_USER_IDS", "123")
+    assert config.service_status("123")["accepting_connections"]
+    assert not config.service_status("124")["accepting_connections"]
+    assert not config.service_status()["accepting_connections"]
+    monkeypatch.setenv("TALITRADE_MT_API_WORKER_ENABLED", "false")
+    assert not config.service_status("123")["accepting_connections"]

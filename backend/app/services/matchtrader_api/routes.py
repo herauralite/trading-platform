@@ -172,7 +172,7 @@ async def connect(body: TokenBody, principal: Principal = Depends(ingest_auth.re
     token = _submitted_token(body)
     if not crypto.is_configured():
         raise HTTPException(status_code=503, detail="Token storage is not configured on this server")
-    if not config.service_status()["accepting_connections"]:
+    if not config.service_status(principal.user_id)["accepting_connections"]:
         # Schema, routes and worker can be live before the form is opened; until then nothing is stored.
         raise HTTPException(status_code=503, detail="New Match-Trader connections are not open on this server yet")
     _throttle(principal.user_id)
@@ -225,11 +225,11 @@ async def list_connections(response: Response, view: str = "full", principal: Pr
     _private(response)
     cards = await get_read_models().list_owned(principal.user_id)
     if view == "cards":
-        return {"service": config.service_status(), "connections": [{"id": card["id"], "card": card} for card in cards]}
+        return {"service": config.service_status(principal.user_id), "connections": [{"id": card["id"], "card": card} for card in cards]}
     store = get_store()
     connections = await store.list_connections(principal.user_id)
     cards = {card["id"]: card for card in cards}
-    return {"service": config.service_status(),
+    return {"service": config.service_status(principal.user_id),
             "connections": [{**_public(c, await store.get_sync_state(c["id"]), await store.coverage(c["id"])), "card": cards.get(c["id"])} for c in connections]}
 
 

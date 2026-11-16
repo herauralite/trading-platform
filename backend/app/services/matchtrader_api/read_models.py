@@ -253,7 +253,7 @@ class ReadModels:
             "freshness": freshness, "history": history, "server_time": _iso(now),
             "background_refresh": {"enabled": config.worker_enabled(), "live_interval_seconds": config.live_interval_seconds(),
                                    "history_interval_seconds": config.history_interval_seconds()},
-            "service": config.service_status(),
+            "service": config.service_status(user_id),
         }
 
     async def _history(self, conn, params: dict, freshness: dict) -> dict:
