@@ -92,7 +92,9 @@ def test_client_is_get_only_fixed_host_and_path_allowlisted():
     run(go())
     assert {r[0] for r in broker.requests} == {"GET"} and len(broker.requests) == 2
     assert api.BASE_URL == "https://trader-api.match-trader.com"
-    assert all(p.startswith("/v1/") for p in api.ALLOWED_PATHS) and len(api.ALLOWED_PATHS) == 7
+    assert all(p.startswith("/v1/") for p in api.ALLOWED_PATHS) and api.ALLOWED_PATHS == {
+        "/v1/platform-details", "/v1/account", "/v1/account-summary", "/v1/positions", "/v1/pending-orders", "/v1/closed-positions", "/v1/ledgers",
+        "/v1/symbols", "/v1/quotes", "/v1/candles"}   # exactly the documented read paths: nothing that trades
 
 
 def test_client_never_follows_redirects_with_the_token():

@@ -26,6 +26,10 @@ ENDPOINT_LIMITS_PER_MINUTE = {
     "/v1/pending-orders": 20,
     "/v1/closed-positions": 20,
     "/v1/ledgers": 20,
+    # market data: published ceilings. They are ceilings, not polling targets (see market.py).
+    "/v1/symbols": 10,
+    "/v1/quotes": 60,
+    "/v1/candles": 20,
 }
 GLOBAL_PER_MINUTE_ENV = "TALITRADE_MT_API_GLOBAL_PER_MINUTE"
 DEFAULT_GLOBAL_PER_MINUTE = 30   # the real account-wide ceiling is not published: stay well under the endpoint sum (120)

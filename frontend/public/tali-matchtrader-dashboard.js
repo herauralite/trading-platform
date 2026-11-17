@@ -13,7 +13,7 @@
     var state = freshState();
 
     function freshState() {
-      return { available: null, service: null, syncWatch: {}, lastConnectTimings: null, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null };
+      return { available: null, service: null, syncWatch: {}, lastConnectTimings: null, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null, historyRequest: null };
     }
     function now() { return deps.now ? deps.now() : Date.now(); }
     function controller() {
@@ -32,12 +32,18 @@
       if (state.controller) { try { state.controller.abort(); } catch { /* already aborted */ } }
       state.controller = null;
       state.pendingDisconnect = null;
+      state.analyticsAt = 0;
+      state.historyRequest = null;
+      setHistoryStatus('History keeps importing in the background while the connection is active. You do not need to press Sync to keep your records.');
+      var date = doc && doc.getElementById('mtApiHistoryFrom');
+      if (date) date.value = '';
       renderPanel(null);
     }
     function reset() {
       onContextChange();
       if (state.pollTimer) deps.clearInterval(state.pollTimer);
       state = freshState();
+      firstSync = {};
       clearTokenInput();
     }
     function attach(pageHost) { host = pageHost; }
@@ -104,6 +110,8 @@
       }, function (err) {
         if (!isCurrent(context) || (err && err.name === 'AbortError')) return;
         if (err && err.status === 404) { loadConnections(); return; }
+        // The backend rejected the session itself (expired or revoked): the page returns to sign-in.
+        if (err && err.status === 401 && err.code !== 'no_session' && host && host.onSessionRejected) { host.onSessionRejected(); return; }
         var previous = state.snapshots[accountKey] ? core.deriveDisplayState(state.snapshots[accountKey], now()).overviewStatus : {};
         host.setTopStatus('connection error', 'var(--red)');
         host.applyApiState({ overviewStatus: Object.assign({}, previous, { syncVal: 'Error', syncSub: 'Could not load saved data from TaliTrade', syncTone: 'txt-red' }) });
@@ -127,11 +135,13 @@
     function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
 
     // Positions / pending orders / import status. Built with DOM nodes + textContent only.
+    var recentPages = new WeakMap();
     function renderPanel(snapshot) {
       if (!doc) return;
       var anchor = doc.getElementById('overviewCards');
       var panel = doc.getElementById('mtApiPanel');
-      if (!snapshot) { if (panel) panel.style.display = 'none'; return; }
+      var setupCard = doc.getElementById('mtApiSetupCard');
+      if (!snapshot) { if (panel) panel.style.display = 'none'; if (setupCard) setupCard.style.display = 'none'; return; }
       if (!anchor || !anchor.parentNode) return;
       if (!panel) {
         panel = el('div', null, 'margin-top:10px');
@@ -140,7 +150,24 @@
         anchor.parentNode.insertBefore(panel, anchor.nextSibling);
       }
       panel.style.display = 'block';
-      clear(panel);
+      // Account setup summary (what the trader told us about this account), above the broker data.
+      if (host && host.renderSetupCard) {
+        if (!setupCard) {
+          setupCard = el('div');
+          setupCard.id = 'mtApiSetupCard';
+          setupCard.className = 'card card-p';
+          anchor.parentNode.insertBefore(setupCard, panel);
+        }
+        setupCard.style.display = snapshot.summary ? 'block' : 'none';
+        if (snapshot.summary) host.renderSetupCard(setupCard, snapshot.connection.account_key);
+      }
+      // The panel holds two parts: content redrawn on every snapshot, and the history controls,
+      // built once so a date being typed is not wiped by the next refresh.
+      var content = doc.getElementById('mtApiPanelContent');
+      if (!content) { content = el('div'); content.id = 'mtApiPanelContent'; panel.appendChild(content); }
+      clear(content);
+      var outer = panel;
+      panel = content;
       var currency = (snapshot.connection && snapshot.connection.currency) || 'USD';
       var nowMs = now();
       var head = el('div', null, 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;gap:8px');
@@ -173,16 +200,136 @@
         return [(o.symbol || '—') + ' · ' + (o.side || 'side n/a') + ' ' + (o.type || '') + ' · ' + (o.volume || '—') + ' lots', '@ ' + (o.activation_price || '—'), 'font-family:JetBrains Mono,monospace;color:var(--t2)'];
       });
       var h = snapshot.history || {};
-      var note = h.coverage_status === 'in_progress' ? 'Importing trade history… (' + (h.closed_entry_count || 0) + ' entries so far)'
-        : h.coverage_status === 'partial_gaps' ? 'Trade history is incomplete: ' + h.gap_count + ' period(s) could not be fully imported.'
-        : h.coverage_status === 'complete_for_requested_range' ? 'Trade history imported' + (h.requested_from ? ' since ' + new Date(h.requested_from).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : ' for the recent period') + ' · ' + (h.closed_entry_count || 0) + ' closed entries.'
-        : h.coverage_status === 'not_permitted' ? 'Trade history is not permitted by this token.' : 'Trade history has not been imported yet.';
-      panel.appendChild(el('div', note, 'font-size:11px;color:var(--t3);margin-top:10px'));
+      panel.appendChild(el('div', 'Recent trades', 'font-size:13px;font-weight:700;margin:14px 0 6px'));
+      var recent = el('div', 'Loading recent trades…', 'font-size:12px;color:var(--t2)');
+      panel.appendChild(recent);
+      var ctx = captureContext(snapshot.connection.account_key);
+      if (!recentPages.has(snapshot)) {
+        recentPages.set(snapshot, api.listTrades(snapshot.connection.id, {limit: 5, signal: ctx.signal}));
+      }
+      recentPages.get(snapshot).then(function (page) {
+        if (!isCurrent(ctx) || !recent.isConnected) return;
+        clear(recent);
+        if (!page.trades.length) recent.textContent = 'No closed trades yet.';
+        page.trades.forEach(function (trade) {
+          var line = el('div', null, 'display:flex;justify-content:space-between;gap:8px;padding:7px 0;border-top:1px solid var(--border)');
+          line.appendChild(el('span', [trade.symbol, trade.side, trade.close_time && new Date(trade.close_time).toLocaleDateString()].filter(Boolean).join(' · ')));
+          line.appendChild(el('span', formatMoney(trade.net_profit, currency, {signed:true})));
+          recent.appendChild(line);
+        });
+      }, function () {
+        recentPages.delete(snapshot);
+        if (isCurrent(ctx)) recent.textContent = 'Recent trades are unavailable.';
+      });
       var pending = snapshot.sync_request && snapshot.sync_request.pending ? core.interpretSyncRequest(snapshot.sync_request) : null;
       if (pending) panel.appendChild(el('div', 'Refresh ' + pending.label + '…', 'font-size:11px;color:var(--blue);margin-top:4px'));
       if (snapshot.background_refresh && snapshot.background_refresh.enabled === false) {
         panel.appendChild(el('div', 'Background refresh is turned off on this server. Saved data is shown and cannot be refreshed until it is turned on.', 'font-size:11px;color:var(--orange);margin-top:4px'));
       }
+      var controls = doc.getElementById('mtApiHistoryControls');
+      if (controls) controls.style.display = snapshot.connection && snapshot.connection.status === 'active' && h.coverage_status !== 'not_permitted' ? '' : 'none';
+      outer.setAttribute('data-coverage', h.coverage_status || '');
+      var req = state.historyRequest;
+      if (req && snapshot.connection && snapshot.connection.account_key === req.accountKey) {
+        if (h.coverage_status === 'complete_for_requested_range') {
+          setHistoryStatus('History since ' + req.since + ' is imported: complete for the requested range.', 'ok');
+          state.historyRequest = null;
+        } else if (h.coverage_status === 'partial_gaps') {
+          setHistoryStatus('History since ' + req.since + ' was imported with ' + h.gap_count + ' period(s) the broker did not return. Figures may be incomplete.', 'error');
+          state.historyRequest = null;
+        }
+      }
+    }
+
+    // ── older history ──
+    function buildHistoryControls() {
+      var box = el('div', null, 'margin-top:10px;padding-top:10px;border-top:1px solid var(--border)');
+      box.id = 'mtApiHistoryControls';
+      box.appendChild(el('div', 'Load older history', 'font-size:10px;color:var(--t3);text-transform:uppercase;letter-spacing:.6px;margin-bottom:6px'));
+      var row = el('div', null, 'display:flex;flex-wrap:wrap;gap:6px;align-items:center');
+      [['30d', '30 days'], ['90d', '90 days'], ['all', 'All available']].forEach(function (choice) {
+        var b = el('button', choice[1], 'padding:4px 10px;font-size:11px');
+        b.type = 'button'; b.className = 'btn btn-ghost rip'; b.setAttribute('data-history-range', choice[0]);
+        b.addEventListener('click', function () { loadOlderHistory(choice[0]); });
+        row.appendChild(b);
+      });
+      var date = el('input', null, 'padding:3px 6px;font-size:11px;background:var(--s2);color:var(--text);border:1px solid var(--border);border-radius:6px');
+      date.type = 'date'; date.id = 'mtApiHistoryFrom'; date.setAttribute('aria-label', 'Import history from this date');
+      row.appendChild(date);
+      var go = el('button', 'From date', 'padding:4px 10px;font-size:11px');
+      go.type = 'button'; go.className = 'btn btn-ghost rip'; go.setAttribute('data-history-range', 'custom');
+      go.addEventListener('click', function () { loadOlderHistory('custom'); });
+      row.appendChild(go);
+      box.appendChild(row);
+      var status = el('div', 'History keeps importing in the background while the connection is active. You do not need to press Sync to keep your records.', 'font-size:11px;color:var(--t3);margin-top:6px;line-height:1.5');
+      status.id = 'mtApiHistoryStatus';
+      box.appendChild(status);
+      return box;
+    }
+    function setHistoryStatus(text, tone) {
+      var node = doc && doc.getElementById('mtApiHistoryStatus');
+      if (!node) return;
+      node.textContent = text;
+      node.style.color = tone === 'error' ? 'var(--red)' : tone === 'ok' ? 'var(--green)' : 'var(--t3)';
+    }
+    function dateToUtcMs(value) {
+      var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+      return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;   // start of that calendar day, UTC
+    }
+    function loadOlderHistory(range) {
+      var accountKey = host.getActiveAccount();
+      var id = connectionIdForAccount(accountKey);
+      if (id === null) return Promise.resolve();
+      var fromMs = null;
+      if (range === 'custom') {
+        var input = doc.getElementById('mtApiHistoryFrom');
+        fromMs = dateToUtcMs(input && input.value);
+        if (fromMs === null) { setHistoryStatus('Choose a start date first.', 'error'); return Promise.resolve(); }
+      }
+      var context = captureContext(accountKey);
+      setHistoryStatus('Requesting older history…');
+      return api.requestHistory(id, { range: range, fromMs: fromMs }).then(function (body) {
+        if (!isCurrent(context)) return;
+        var since = body.requested_from ? new Date(body.requested_from).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+        if (body.queued && body.queued.length) {
+          setHistoryStatus('Importing history since ' + since + (body.clamped_to_account_creation ? ' (when the account was created)' : '') + '. It continues in the background; figures update as it arrives.', 'ok');
+          state.historyRequest = { accountKey: accountKey, since: since };   // the note follows the server's coverage until it settles
+          startImportPolling(accountKey);
+        } else {
+          setHistoryStatus('History since ' + since + ' is already requested. Nothing new to import.');
+        }
+        state.analyticsAt = 0;
+        refreshSnapshot(accountKey, { force: true });
+      }, function (err) {
+        if (!isCurrent(context)) return;
+        if (err && err.code === 'start_date_required') {
+          setHistoryStatus(err.message, 'error');
+          var input = doc.getElementById('mtApiHistoryFrom');
+          if (input && input.focus) input.focus();
+          return;
+        }
+        setHistoryStatus((err && err.message) || 'Could not request older history.', 'error');
+      });
+    }
+
+    // ── analytics page ──
+    function renderAnalytics(force) {
+      var accountKey = host.getActiveAccount();
+      var id = connectionIdForAccount(accountKey);
+      if (id === null || !host.applyAnalytics) return Promise.resolve();
+      if (!force && state.analyticsKey === accountKey && now() - state.analyticsAt < 20000) return Promise.resolve();
+      state.analyticsKey = accountKey; state.analyticsAt = now();
+      var tz = 'UTC';
+      try { tz = (global.Intl && Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC'; } catch { tz = 'UTC'; }
+      var context = captureContext(accountKey);
+      return api.getAnalytics(id, { tz: deps.timeZone || tz, signal: context.signal }).then(function (payload) {
+        if (!isCurrent(context) || !payload || payload.connection_id !== id) return;
+        host.applyAnalytics(core.analyticsView(payload));
+      }, function (err) {
+        if (!isCurrent(context) || (err && err.name === 'AbortError')) return;
+        state.analyticsAt = 0;
+        host.applyAnalytics({ error: (err && err.message) || 'Could not load analytics.' });
+      });
     }
 
     // ── history / journal ──
@@ -254,6 +401,20 @@
     function delay(ms) { return deps.delay ? deps.delay(ms) : new Promise(function (resolve) { global.setTimeout(resolve, ms); }); }
 
     // Follow one queued refresh until the server reports a final state. The POST only queued it.
+    // Accounts connected in this page session whose first successful snapshot has not arrived yet.
+    // Memory only: a reload, a routine refresh or a failed sync never announces anything.
+    var firstSync = {};
+    function announceFirstSnapshot(accountKey, id, view) {
+      if (!firstSync[accountKey] || !view || view.status !== 'success' || !host || !host.onFirstSnapshot) return;
+      var session = deps.getSessionToken();
+      api.getSnapshot(id, {}).then(function (snapshot) {
+        if (!firstSync[accountKey] || session !== deps.getSessionToken() || !card(accountKey)) return;
+        if (!snapshot || !snapshot.summary || !snapshot.connection || snapshot.connection.account_key !== accountKey) return;
+        delete firstSync[accountKey];
+        state.snapshots[accountKey] = snapshot;
+        host.onFirstSnapshot(accountKey, snapshot);
+      }, function () { return null; });
+    }
     function watchSync(accountKey, id, firstRequest) {
       var session = deps.getSessionToken();
       var generation = state.generation;
@@ -266,6 +427,7 @@
         show(view);
         // Always re-read what is actually stored; never assume the request changed anything.
         return loadConnections().then(function () {
+          if (alive()) announceFirstSnapshot(accountKey, id, view);
           if (!alive() || host.getActiveAccount() !== accountKey) return view;
           if (generation !== state.generation) return view;      // the user moved on; their next view loads its own data
           return refreshSnapshot(accountKey, { force: true }).then(function () { host.reloadHistory(); return view; });
@@ -367,6 +529,7 @@
           timings.sheet_closed_ms = Math.round(now() - submittedAt);
           state.lastConnectTimings = timings;            // durations only; readable via TaliMatchTrader.lastConnectTimings()
           host.showAccountActionStatus('Match-Trader account connected. The first sync is queued; balances appear when it completes.', 'success');
+          firstSync[key] = true;                         // this page session made the connection: its first snapshot gets announced once
           startImportPolling(key);
           // Everything below runs after the sheet is closed.
           var imported = body.initial_backfill && body.initial_backfill.resources && body.initial_backfill.resources.length;
@@ -426,9 +589,11 @@
       isAvailable: function () { return state.available === true; },
       serviceStatus: function () { return state.service; },
       lastConnectTimings: function () { return state.lastConnectTimings || null; },
+      loadOlderHistory: loadOlderHistory, renderAnalytics: renderAnalytics,
       isDisconnectPending: function (accountKey) { return state.pendingDisconnect === accountKey; },
       needsReconnect: function (accountKey) { var c = card(accountKey); return !!c && (c.status === 'needs_reauth' || c.status === 'error' || c.status === 'forbidden'); },
-      cardFor: card
+      cardFor: card,
+      snapshotFor: function (accountKey) { return state.snapshots[accountKey] || null; }
     };
   }
 

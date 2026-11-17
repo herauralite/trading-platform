@@ -80,6 +80,7 @@ HISTORY_TURNS = (
     ("closed_positions", "incremental"), ("closed_positions", "reconcile"),
     ("ledgers", "incremental"), ("ledgers", "reconcile"),
 )
+_creation_checked: set[int] = set()   # connections whose creation time was looked up in this process
 _turn: dict[int, int] = {}   # connection id -> next position in HISTORY_TURNS (in-process; losing it only resets the rotation)
 
 
@@ -109,7 +110,16 @@ async def process_interval(store: SqlStore, client, connection_id: int, generati
             if not request.done():
                 request.cancel()
 
-    entries = await call(interval["range_from"], interval["range_to"], backfill.HISTORY_LIMIT)
+    try:
+        entries = await call(interval["range_from"], interval["range_to"], backfill.HISTORY_LIMIT)
+    except api.RequestRejected:
+        # A long backfill range refused as a request: treat it as a per-request window limit and
+        # ask again in two halves. Nothing is recorded as "no trades" for this range.
+        if interval["kind"] == "backfill" and interval["range_to"] - interval["range_from"] > backfill.WINDOW_SPLIT_MIN_MS:
+            children = backfill.split(interval["range_from"], interval["range_to"])
+            await store.complete_interval(connection_id, generation, owner, interval, [], backfill.WINDOW, children, ttl_seconds=config.LEASE_SECONDS)
+            return backfill.WINDOW
+        raise
     verdict = backfill.evaluate(interval["range_from"], interval["range_to"], len(entries))
     children: list[tuple[int, int]] = []
     if verdict == backfill.SPLIT:
@@ -161,6 +171,7 @@ async def sync_connection(store: SqlStore, connection_id: int, *, owner: str | N
 
 
 async def _run_pass(store, session, connection_id, owner, client_factory, live, history, now_ms, metrics, schedule) -> dict:
+    pass_started = time.monotonic()
     opened = await store.open_pass(connection_id, owner, config.LEASE_SECONDS, claim_request=live)
     if opened is None:
         connection = await store.get_connection(connection_id)
@@ -269,7 +280,7 @@ async def _run_pass(store, session, connection_id, owner, client_factory, live, 
                 wait = config.history_backlog_interval_seconds() if metrics.get("history_backlog") else config.history_interval_seconds()
                 history_in = wait + live_jitter
             try:
-                await store.close_pass(connection_id, owner, live_in=next_live_in(), history_in=history_in,
+                await store.close_pass(connection_id, owner, live_in=next_live_in(), history_in=history_in, pass_seconds=time.monotonic() - pass_started,
                                        finish_request=dict(request, **_request_verdict(outcome)) if request else None)
                 metrics["scheduled"] = schedule and (history_in is not None or next_live_in() is not None)
             except Exception as exc:  # the lease simply expires; an open request is retried by the next lease holder
@@ -308,6 +319,15 @@ async def _history_pass(store, client, opened, generation, owner, capabilities, 
         if not request.done():
             await refresh_live_if_due()
 
+    if opened.get("account_created_at") is None and connection_id not in _creation_checked:
+        # Stored before the creation time was recorded: ask once (low priority) so "all available
+        # history" has a lower bound. Failure is harmless: the user is asked for a start date.
+        _creation_checked.add(connection_id)
+        try:
+            profile = await client.account()
+            await store.save_account_created(connection_id, generation, owner, profile.createTime)
+        except (api.MatchTraderApiError, ratelimit.BudgetExhausted, StaleWriter):
+            pass
     permitted = [r for r in HISTORY_RESOURCES if capabilities.get(r) is not False]
     for resource in HISTORY_RESOURCES:
         if resource not in permitted:

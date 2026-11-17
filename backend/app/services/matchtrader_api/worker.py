@@ -14,7 +14,7 @@ import asyncio
 import logging
 import random
 
-from app.services.matchtrader_api import config, engine
+from app.services.matchtrader_api import config, engine, market
 from app.services.matchtrader_api.store import SqlStore
 
 logger = logging.getLogger("app.matchtrader_api")
@@ -73,6 +73,13 @@ async def run_due_once(store: SqlStore, *, client_factory=engine.default_client_
             if other["live_due"] or other["sync_requested"]:
                 handled.add(other["id"])
                 await _live_pass(store, owner, other["id"], client_factory)
+    if config.market_data_enabled():
+        # Last, and only for connections someone is looking at. Market calls are low priority in the
+        # shared rate budget and take the same lease, so they cannot crowd out account sync.
+        try:
+            await market.run_due_once(store, client_factory=client_factory, owner=owner)
+        except Exception as exc:
+            logger.error("matchtrader market round failed error_type=%s", type(exc).__name__)
     return len(handled)
 
 
@@ -84,6 +91,10 @@ async def _idle_seconds(store: SqlStore) -> float:
     stretched by a fixed poll period. Newly queued refreshes wake the loop through nudge()."""
     try:
         upcoming = await store.seconds_until_next_due()
+        if config.market_data_enabled():
+            market_next = await market.seconds_until_next_due(store)
+            if market_next is not None:
+                upcoming = market_next if upcoming is None else min(upcoming, market_next)
     except Exception:
         upcoming = None
     if upcoming is None:

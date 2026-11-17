@@ -839,7 +839,7 @@ def test_refresh_without_a_worker_is_refused_not_silently_queued(ctx, monkeypatc
         res = await ctx.http.post(f"{P}/{cid}/sync", headers=auth(ALICE))
         assert res.status_code == 503 and (await ctx.store.get_sync_request(cid))["state"] == "completed"   # still the earlier, finished request
         listing = (await ctx.http.get(P, headers=auth(ALICE))).json()
-        assert listing["service"] == {"secure_storage": True, "worker": False, "connect_enabled": True, "accepting_connections": False}
+        assert listing["service"] == {"secure_storage": True, "worker": False, "connect_enabled": True, "accepting_connections": False, "market_data": False, "account_setup": True}
         assert len(listing["connections"]) == 1                                    # existing accounts stay visible
 
     run_db(ctx, scenario)

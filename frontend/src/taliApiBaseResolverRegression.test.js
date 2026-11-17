@@ -23,11 +23,9 @@ test('api base resolution honors runtime, build-time, then known-good production
   assert.equal(buildResolver.resolveApiBase({ buildEnvApiBase: 'https://build.example.com/' }), 'https://build.example.com')
 
   const fallbackResolver = await loadResolverWithConfig({})
-  assert.equal(
-    fallbackResolver.resolveApiBase(),
-    'https://trading-platform-production-0614.up.railway.app',
-  )
-  assert.notEqual(fallbackResolver.resolveApiBase(), 'https://api.talitrade.com')
+  // Production fallback is the API domain (fronted by the Cloudflare proxy), not a provider-specific host.
+  assert.equal(fallbackResolver.resolveApiBase(), 'https://api.talitrade.com')
+  assert.equal(/railway\.app/.test(fallbackResolver.resolveApiBase()), false)
 })
 
 test('api base resolver only returns blank when same-origin proxy is explicitly enabled', async () => {
@@ -35,13 +33,13 @@ test('api base resolver only returns blank when same-origin proxy is explicitly 
   assert.equal(resolver.resolveApiBase(), '')
 })
 
-test('homepage and app auth/demo flows use shared TaliApiBase backend strategy', async () => {
-  const indexHtml = await readFile(new URL('../index.html', import.meta.url), 'utf8')
+test('homepage and app auth flows use shared TaliApiBase backend strategy', async () => {
+  const landingHtml = await readFile(new URL('../public/landing.html', import.meta.url), 'utf8')
   const appHtml = await readFile(new URL('../app.html', import.meta.url), 'utf8')
   const publicAppHtml = await readFile(new URL('../public/app.html', import.meta.url), 'utf8')
 
-  assert.equal(indexHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
-  assert.equal(indexHtml.includes("window.TaliApiBase.buildApiUrl('/demo/leaderboard')"), true)
+  assert.equal(landingHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
+  assert.equal(landingHtml.includes('window.TaliApiBase.resolveApiBase()'), true)
 
   assert.equal(appHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
   assert.equal(appHtml.includes('return window.TaliApiBase.resolveApiBase();'), true)
@@ -50,11 +48,8 @@ test('homepage and app auth/demo flows use shared TaliApiBase backend strategy',
   assert.equal(publicAppHtml.includes('return window.TaliApiBase.resolveApiBase();'), true)
 })
 
-test('shared resolver builds auth + leaderboard URLs against the same corrected backend origin', async () => {
+test('shared resolver builds auth + waitlist URLs against the same backend origin', async () => {
   const resolver = await loadResolverWithConfig({})
-  const authConfigUrl = resolver.buildApiUrl('/auth/telegram/config')
-  const leaderboardUrl = resolver.buildApiUrl('/demo/leaderboard')
-
-  assert.equal(authConfigUrl.startsWith('https://trading-platform-production-0614.up.railway.app/'), true)
-  assert.equal(leaderboardUrl.startsWith('https://trading-platform-production-0614.up.railway.app/'), true)
+  assert.equal(resolver.buildApiUrl('/auth/telegram/config'), 'https://api.talitrade.com/auth/telegram/config')
+  assert.equal(resolver.buildApiUrl('/waitlist'), 'https://api.talitrade.com/waitlist')
 })

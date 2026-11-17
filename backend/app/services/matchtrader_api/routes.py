@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field, SecretStr
 
 from app.core import ingest_auth
 from app.core.ingest_auth import Principal
-from app.services.matchtrader_api import worker, client as api, config, crypto, engine, ratelimit, read_models, reconcile
+from app.services.matchtrader_api import history_import, market, worker, client as api, config, crypto, engine, ratelimit, read_models, reconcile
 from app.services.matchtrader_api.store import IdentityConflict, SqlStore, StaleWriter
 
 logger = logging.getLogger("app.matchtrader_api")
@@ -66,7 +66,13 @@ def _submitted_token(body: TokenBody) -> str:
 
 
 class BackfillBody(BaseModel):
-    from_ms: int = Field(ge=0)
+    """``range``: 30d | 90d | all | custom. ``custom`` (or a bare ``from_ms``) needs ``from_ms``.
+    ``all`` uses the account creation time the broker reported; without it a start date is required."""
+    from_ms: int | None = Field(default=None, ge=0)
+    range: str | None = None
+
+
+HISTORY_PRESET_DAYS = {"30d": 30, "90d": 90}
 
 
 def _throttle(user_id: str) -> None:
@@ -129,6 +135,7 @@ async def _probe(token: str) -> dict:
             "platform_host": _platform_host(details.platformUrl) or "unverified",
             "external_login": account.login, "broker_name": details.brokerName, "platform_url": details.platformUrl,
             "account_currency": account.currency, "account_type": account.accountType,
+            "account_created_ms": account.createTime,
         },
         "identity_verified": _platform_host(details.platformUrl) is not None,
         "capabilities": capabilities,
@@ -269,7 +276,8 @@ async def rotate(connection_id: int, body: TokenBody, principal: Principal = Dep
         raise HTTPException(status_code=409, detail="That token belongs to a different trading account. Nothing was changed.")
     try:
         updated = await store.rotate_credential(connection_id, encrypt=_encryptor(token, principal.user_id, identity),
-                                                key_version=crypto.key_version_of, token_hint=crypto.mask_token(token), capabilities=probe["capabilities"])
+                                                key_version=crypto.key_version_of, token_hint=crypto.mask_token(token), capabilities=probe["capabilities"],
+                                                account_created_ms=identity.get("account_created_ms"))
     except StaleWriter:
         raise HTTPException(status_code=404, detail="Connection not found") from None
     return {"ok": True, "connection": _public(updated)}
@@ -324,24 +332,98 @@ async def sync_status(connection_id: int, response: Response, principal: Princip
 
 @router.post("/connections/{connection_id}/backfill")
 async def start_backfill(connection_id: int, body: BackfillBody, principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Import older closed trades and ledger entries in the background, back to a start point.
+
+    Only the not-yet-requested part is queued; repeating a request queues nothing and never removes
+    or duplicates imported rows. Completion is reported "for the requested range": the broker's
+    retention depth is not known, so this is never presented as lifetime completeness."""
     store = get_store()
     connection = await _owned(store, connection_id, principal)
     if connection["status"] != "active":
         raise HTTPException(status_code=409, detail="This connection is not active")
     cutoff = int(time.time() * 1000)
-    if body.from_ms >= cutoff:
-        raise HTTPException(status_code=422, detail="from_ms must be in the past")
-    queued = []
-    for resource in ("closed_positions", "ledgers"):
-        if (connection["capabilities"] or {}).get(resource) is False:
-            continue
-        if await store.enqueue_backfill(connection_id, resource, body.from_ms - 1, cutoff + 1):
-            queued.append(resource)
+    created = connection.get("account_created_at")
+    created_ms = int(created.timestamp() * 1000) if created else None
+    choice = (body.range or ("custom" if body.from_ms is not None else "")).strip().lower()
+    if choice in HISTORY_PRESET_DAYS:
+        from_ms, basis = cutoff - HISTORY_PRESET_DAYS[choice] * 86_400_000, choice
+    elif choice == "all":
+        if created_ms is None:
+            raise HTTPException(status_code=409, detail={"reason": "start_date_required",
+                                "message": "The broker did not report when this account was created. Choose a start date instead."})
+        from_ms, basis = created_ms, "account_created_at"
+    elif choice == "custom":
+        if body.from_ms is None:
+            raise HTTPException(status_code=422, detail="Choose a start date")
+        from_ms, basis = body.from_ms, "start_date"
+    else:
+        raise HTTPException(status_code=422, detail="Choose 30d, 90d, all or a start date")
+    if from_ms >= cutoff:
+        raise HTTPException(status_code=422, detail="The start date must be in the past")
+    if from_ms < 946_684_800_000:
+        raise HTTPException(status_code=422, detail="The start date is too far back")
+    clamped = False
+    if created_ms is not None and from_ms < created_ms:
+        from_ms, clamped = created_ms, True          # nothing can have closed before the account existed
+    resources = [r for r in ("closed_positions", "ledgers") if (connection["capabilities"] or {}).get(r) is not False]
+    planned = await store.request_older_history(connection_id, principal.user_id, from_ms, cutoff, resources)
+    if planned is None:
+        raise HTTPException(status_code=409, detail="This connection is not active")
+    queued = [p["resource"] for p in planned if p["queued"]]
     if queued:
         worker.nudge()
-    return {"ok": True, "queued": queued, "requested_from": datetime.fromtimestamp(body.from_ms / 1000, tz=timezone.utc).isoformat(),
-            "requested_to": datetime.fromtimestamp(cutoff / 1000, tz=timezone.utc).isoformat(), "background_refresh_enabled": config.worker_enabled(),
-            "note": "History is imported in the background. Coverage is reported per resource; it is only 'complete' for the range you requested."}
+    iso = lambda ms: datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")   # noqa: E731
+    return {"ok": True, "queued": queued, "already_requested": [p["resource"] for p in planned if not p["queued"]],
+            "requested_from": iso(from_ms), "requested_to": iso(cutoff), "lower_bound": basis, "clamped_to_account_creation": clamped,
+            "account_created_at": iso(created_ms) if created_ms else None, "background_refresh_enabled": config.worker_enabled(),
+            "note": "Older history is imported in the background. When it finishes, coverage reads 'complete for the requested range'. "
+                    "How far back the broker keeps history is not known; an account creation date is a starting point, not a guarantee."}
+
+
+class ImportBody(BaseModel):
+    retry: bool = False
+
+
+@router.post("/connections/{connection_id}/history-import")
+async def start_history_import(connection_id: int, response: Response, body: ImportBody | None = None,
+                               principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """One tap: import all closed-trade history the broker returns for this account, back to the
+    broker-reported account creation time. Extends any history already queued (the 7-day import
+    at connect), so repeating it, or tapping twice, never starts an overlapping job."""
+    store = get_store()
+    connection = await _owned(store, connection_id, principal)
+    if connection["status"] != "active":
+        raise HTTPException(status_code=409, detail="This connection is not active")
+    if not await history_import.start(store, connection, principal.user_id, retry=bool(body and body.retry)):
+        raise HTTPException(status_code=404, detail="Connection not found")
+    worker.nudge()
+    _private(response)
+    return await history_import.status(store, connection_id, principal.user_id)
+
+
+@router.get("/connections/{connection_id}/history-import")
+async def history_import_status(connection_id: int, response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """What has been imported and which dates have been checked. Counts are committed rows only."""
+    out = await history_import.status(get_store(), connection_id, principal.user_id)
+    if out is None:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    _private(response)
+    return out
+
+
+@router.get("/connections/{connection_id}/analytics")
+async def analytics(connection_id: int, response: Response, from_ms: int | None = None, to_ms: int | None = None, tz: str = "UTC",
+                    principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Realized performance over the imported closed entries of one connection (SQL aggregates
+    over the whole stored range, not a page)."""
+    try:
+        result = await get_read_models().read_owned_analytics(connection_id, principal.user_id, from_ms=from_ms, to_ms=to_ms, tz=tz)
+    except read_models.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+    except read_models.BadRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _private(response)
+    return result
 
 
 @router.get("/connections/{connection_id}/reconciliation")
@@ -363,3 +445,43 @@ async def disconnect(connection_id: int, principal: Principal = Depends(ingest_a
     logger.info("matchtrader connection disconnected id=%s user=%s", connection_id, principal.user_id)
     return {"ok": True, "note": "Syncing stopped and the stored token was deleted. Imported history was kept. "
                                 "This does not revoke the token at your broker: revoke it in Match-Trader's API Access screen."}
+
+
+# ── market data (reads the cache only; the worker does the broker calls) ─────
+def require_market() -> None:
+    if not config.market_data_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+    if not config.worker_enabled():
+        raise HTTPException(status_code=503, detail="Market data is not being refreshed on this server")
+
+
+def _market_response(payload: dict, response: Response) -> dict:
+    if payload.pop("_wake_worker", False):
+        worker.nudge()
+    _private(response)
+    return payload
+
+
+@router.get("/connections/{connection_id}/market/ticker", dependencies=[Depends(require_market)])
+async def market_ticker(connection_id: int, response: Response, principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Bid/ask snapshots for a small watchlist of instruments this account really offers."""
+    try:
+        return _market_response(await market.read_ticker(get_store(), connection_id, principal.user_id), response)
+    except market.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+
+
+@router.get("/connections/{connection_id}/market/candles", dependencies=[Depends(require_market)])
+async def market_candles(connection_id: int, response: Response, symbol: str | None = None, interval: str | None = None,
+                         principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Cached OHLC candles. Without ``symbol`` the server picks EURUSD if the account offers it, else its first FX pair."""
+    if interval is not None and interval not in market.UI_INTERVALS:
+        raise HTTPException(status_code=422, detail="Unsupported interval")
+    if symbol is not None and (len(symbol) > 40 or not symbol.strip()):
+        raise HTTPException(status_code=422, detail="Invalid symbol")
+    try:
+        return _market_response(await market.read_candles(get_store(), connection_id, principal.user_id, symbol=symbol, interval=interval), response)
+    except market.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+    except market.UnknownSymbol:
+        raise HTTPException(status_code=404, detail="This account does not offer that instrument") from None
