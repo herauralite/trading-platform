@@ -426,6 +426,22 @@ async def analytics(connection_id: int, response: Response, from_ms: int | None 
     return result
 
 
+@router.get("/connections/{connection_id}/progress")
+async def progress(connection_id: int, response: Response, tz: str = "UTC",
+                   principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Today's realized P&L and the progress of the targets and limits the trader saved for this
+    account. Owner from the session only; another user's connection answers 404."""
+    from app.services.account_setup import config as setup_config
+    try:
+        result = await get_read_models().read_owned_progress(connection_id, principal.user_id, tz=tz, setup_enabled=setup_config.enabled())
+    except read_models.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+    except read_models.BadRange as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from None
+    _private(response)
+    return result
+
+
 @router.get("/connections/{connection_id}/reconciliation")
 async def reconciliation(connection_id: int, principal: Principal = Depends(ingest_auth.require_session_principal)):
     store = get_store()

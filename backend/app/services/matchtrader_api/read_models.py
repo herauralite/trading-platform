@@ -405,6 +405,21 @@ class ReadModels:
             "not_derived": ["account equity history", "drawdown", "original risk", "MAE/MFE", "challenge or payout compliance"],
         }
 
+    async def read_owned_progress(self, connection_id: int, user_id: str, *, tz: str, setup_enabled: bool) -> dict:
+        """Daily P&L, the Challenge / payout headline and the progress rows (see progress.py),
+        from one repeatable-read snapshot of the stored data and the saved setup profile."""
+        from app.services.matchtrader_api import progress
+        zone = progress.zone(tz)
+        if zone is None:
+            raise BadRange("Unknown time zone")
+        engine = self._engine_getter()
+        async with engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            facts = await progress.gather(conn, self, connection_id, user_id, tz=zone, setup_enabled=setup_enabled)
+        if facts is None:
+            raise NotFound()
+        return {"connection_id": connection_id, **progress.build(facts, tz)}
+
     async def read_owned_closed_trades(self, connection_id: int, user_id: str, *, limit: int, cursor: str | None) -> dict:
         """Keyset page over imported closed entries (newest first). This pages TaliTrade's database,
         not the broker."""

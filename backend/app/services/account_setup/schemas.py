@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from decimal import Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -62,10 +64,25 @@ class Goal(_Doc):
         return self
 
 
+class PhaseStart(_Doc):
+    """The balance the trader confirmed a phase started from. Tied to that phase: it stops
+    applying when the current phase changes."""
+    phase: int = Field(ge=1, le=3)
+    amount: Decimal = Field(gt=0, le=Decimal("10000000000"))
+
+
+class CycleStart(_Doc):
+    """Where the current payout cycle started, confirmed after the withdrawal at ``after``. A later
+    withdrawal makes it outdated."""
+    amount: Decimal = Field(gt=0, le=Decimal("10000000000"))
+    after: datetime
+
+
 class Evaluation(_Doc):
     phaseCount: int | None = Field(default=None, ge=1, le=3)
     currentPhase: int | None = Field(default=None, ge=1, le=3)
     phaseTarget: Money | None = None
+    phaseStart: PhaseStart | None = None
 
     @model_validator(mode="after")
     def _phase_in_range(self):
@@ -81,11 +98,14 @@ class Master(_Doc):
     payoutTarget: Money | None = None          # the trader's own target
     firmMin: Money | None = None               # the firm's minimum profit for a withdrawal, kept separately
     growthTarget: Money | None = None
+    cycleStart: CycleStart | None = None
 
 
 class FirmRules(_Doc):
     dailyLoss: Money | None = None
     dailyReset: str | None = None
+    dailyResetZone: str | None = Field(default=None, max_length=64)    # IANA zone the reset time is in
+    dailyFrom: Literal["sod_balance", "sod_equity"] | None = None     # what a starting-size limit counts each day from
     overall: Money | None = None
     overallMode: Literal["static", "trailing"] | None = None
     overallRef: Literal["balance", "equity"] | None = None
@@ -95,6 +115,17 @@ class FirmRules(_Doc):
     def _hhmm(cls, value):
         if value is not None and not re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value):
             raise ValueError("reset time must be HH:MM")
+        return value
+
+    @field_validator("dailyResetZone")
+    @classmethod
+    def _zone(cls, value):
+        if value is None:
+            return value
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise ValueError("unknown time zone") from None
         return value
 
 
@@ -111,11 +142,11 @@ class Personal(_Doc):
     alerts: Alerts | None = None
 
 
-FLOWS = ("basics", "phase", "payout", "growth", "firm", "personal")
+FLOWS = ("basics", "phase", "payout", "growth", "firm", "personal", "phaseStart", "cycle")
 
 
 class Resume(_Doc):
-    flow: Literal["basics", "phase", "payout", "growth", "firm", "personal"]
+    flow: Literal["basics", "phase", "payout", "growth", "firm", "personal", "phaseStart", "cycle"]
     step: str = Field(max_length=32, pattern=r"^[A-Za-z]+$")
 
 
@@ -129,7 +160,7 @@ class Profile(_Doc):
     master: Master | None = None
     firmRules: FirmRules | None = None
     personal: Personal | None = None
-    done: dict[Literal["basics", "phase", "payout", "growth", "firm", "personal"], bool] = Field(default_factory=dict)
+    done: dict[Literal["basics", "phase", "payout", "growth", "firm", "personal", "phaseStart", "cycle"], bool] = Field(default_factory=dict)
     resume: Resume | None = None
     draft: dict[str, Any] = Field(default_factory=dict)   # typed but not yet confirmed answers
 

@@ -98,6 +98,8 @@
         var query = 'tz=' + encodeURIComponent(String(o.tz || 'UTC')) + (o.fromMs ? '&from_ms=' + Math.floor(Number(o.fromMs)) : '') + (o.toMs ? '&to_ms=' + Math.floor(Number(o.toMs)) : '');
         return request('GET', '/connections/' + id(connectionId) + '/analytics?' + query, o);
       },
+      // Today's realized P&L and the saved targets/limits measured on the server (see progress.py).
+      getProgress: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/progress?tz=' + encodeURIComponent(String((o && o.tz) || 'UTC')), o); },
       startRecentBackfill: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/backfill', { body: { from_ms: o.fromMs }, signal: o.signal }); },
       rotate: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/rotate', { body: { token: o.token }, signal: o.signal }); },
       disconnect: function (connectionId, o) { return request('DELETE', '/connections/' + id(connectionId), o); }
@@ -220,7 +222,7 @@
     var since = stats ? shortDate(stats.first_close_time) : null;          // first closed trade in the imported history
     var importedFrom = shortDate(history.requested_from);                   // where the imported history starts
     var analytics = {
-      dailyPnl: null, dailyPnlText: '—', dailySub: 'Not available for API accounts yet', dailyTone: 'txt-dim',
+      dailyPnl: null, dailyPnlText: '—', dailySub: 'Checking today’s closed trades…', dailyTone: 'txt-dim',
       overallPnl: null, overallPnlText: '—', overallSub: coverage === 'not_permitted' ? 'Trade history not permitted by this token' : 'Imported period · waiting for trades', overallTone: 'txt-dim',
       winRate: null, winRateSub: 'Waiting for imported trades', winRateTone: 'txt-dim'
     };
@@ -249,6 +251,59 @@
         : { wr: '—', netpl: '—', totalTrades: stats ? '0' : '—', pf: '—' },
       coverage: coverage, coverageNote: coverageNote
     };
+  }
+
+  // ── /progress -> the Daily P&L and Challenge / payout tiles (pure; unit tested) ──
+  function zoneShort(tz, iso) {
+    try {
+      var part = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(new Date(iso)).filter(function (x) { return x.type === 'timeZoneName'; })[0];
+      return part ? part.value : tz;
+    } catch { return tz; }
+  }
+  function dayText(tz, iso) {
+    try { return new Date(iso).toLocaleDateString('en-US', { timeZone: tz, month: 'short', day: 'numeric' }); } catch { return ''; }
+  }
+  function clockText(tz, iso) {
+    try { return new Date(iso).toLocaleTimeString('en-US', { timeZone: tz, hour: 'numeric', minute: '2-digit' }); } catch { return ''; }
+  }
+  var DAILY_STATUS = {
+    verified: 'Realized', partial: 'Realized · some closes have no result yet', delayed: 'Realized · delayed', importing: 'Realized so far · still importing',
+    gaps: 'Realized · part of today unchecked', not_imported: 'Realized · today not fully imported'
+  };
+  function progressTiles(payload, currency) {
+    var out = { analytics: null, payout: null };
+    if (!payload) return out;
+    var cur = payload.currency || currency, d = payload.daily_pnl;
+    if (d) {
+      var tz = d.time_zone || 'UTC', when = dayText(tz, d.day_start) + ' ' + zoneShort(tz, d.day_start);
+      if (d.value === null || d.value === undefined) {
+        out.analytics = { dailyPnl: null, dailyPnlText: '—', dailyTone: 'txt-dim',
+          dailySub: d.status === 'not_permitted' ? 'This token can’t read trade history' : 'Waiting for the first trade sync' };
+      } else {
+        var v = toNumber(d.value);
+        var label = DAILY_STATUS[d.status] || 'Realized';
+        if (d.status === 'delayed' && d.checked_through) label += ', checked ' + clockText(tz, d.checked_through);
+        out.analytics = { dailyPnl: v, dailyPnlText: formatMoney(d.value, cur, { signed: true }), dailyTone: v > 0 ? 'txt-green' : v < 0 ? 'txt-red' : 'txt-dim',
+          dailySub: label + ' · ' + when, dailyTitle: 'Net result of trades closed ' + when + ' (commission and swap included). Open positions are not included.' };
+      }
+    }
+    var o = payload.overview;
+    if (o) {
+      var p = { progressTone: 'txt-dim', action: o.action || null };
+      if (o.target !== undefined && o.current !== undefined && o.state !== 'unavailable') {
+        var reached = o.state === 'reached', ratio = toNumber(o.ratio_percent);
+        p.progressVal = reached ? 'Target reached' : (ratio === null ? '—' : (Math.round(ratio * 10) / 10) + '%');
+        p.progressSub = o.label + ' · ' + formatMoney(o.current, cur) + ' of ' + formatMoney(o.target, cur);
+        p.progressTone = reached ? 'txt-green' : o.state === 'below_start' ? 'txt-red' : 'txt-blue';
+      } else if (o.state === 'setup' || o.state === 'no_type') {
+        p.progressVal = '—'; p.progressSub = o.action ? o.action.label : 'Set up account';
+      } else {
+        p.progressVal = '—';
+        p.progressSub = (o.label ? o.label + ' · ' : '') + (o.action ? o.action.label : 'Not measured yet');
+      }
+      out.payout = p;
+    }
+    return out;
   }
 
   // Adds API connections to the page's account map without touching legacy entries.
@@ -369,7 +424,7 @@
     };
   }
 
-  var pure = { formatMoney: formatMoney, analyticsView: analyticsView, coverageText: coverageText, relativeTime: relativeTime, deriveDisplayState: deriveDisplayState, mergeAccounts: mergeAccounts,
+  var pure = { formatMoney: formatMoney, analyticsView: analyticsView, coverageText: coverageText, relativeTime: relativeTime, deriveDisplayState: deriveDisplayState, progressTiles: progressTiles, mergeAccounts: mergeAccounts,
                tradeToHistoryRow: tradeToHistoryRow, interpretSyncRequest: interpretSyncRequest, isApiAccountKey: isApiAccountKey, connectionIdFromKey: connectionIdFromKey,
                toNumber: toNumber, CONNECTION_STATUS_TEXT: CONNECTION_STATUS_TEXT,
                SNAPSHOT_MIN_INTERVAL_MS: SNAPSHOT_MIN_INTERVAL_MS, IMPORT_POLL_MS: IMPORT_POLL_MS, IMPORT_POLL_MAX: IMPORT_POLL_MAX, SYNC_POLL_MS: SYNC_POLL_MS, SYNC_POLL_MAX: SYNC_POLL_MAX, RECENT_BACKFILL_DAYS: RECENT_BACKFILL_DAYS };
