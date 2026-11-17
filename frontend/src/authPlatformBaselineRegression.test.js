@@ -2,8 +2,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
+// Line endings are normalised so the assertions hold on a Windows checkout (Git's default there is CRLF).
 async function readFrontendFile(relPath) {
-  return readFile(new URL(`../${relPath}`, import.meta.url), 'utf8')
+  return (await readFile(new URL(`../${relPath}`, import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
 }
 
 test('react app bootstrap preserves telegram config + token persistence recovery contract', async () => {
@@ -44,17 +45,17 @@ test('react app resolves account-presence from workspace inventory once hydrated
   assert.equal(appSource.includes('setWorkspaceApiHydrated(false)'), true)
 })
 
-test('homepage demo auth modal continues bootstrapping config and saving leaderboard after telegram widget auth', async () => {
-  const indexHtml = await readFrontendFile('index.html')
+// The homepage is public/landing.html (served at /). The earlier demo leaderboard flow was removed from it;
+// what it supports now is the early-access waitlist and Telegram sign-in before entering /app.
+test('homepage bootstraps Telegram config, gates /app behind Telegram sign-in and posts waitlist signups', async () => {
+  const landingHtml = await readFrontendFile('public/landing.html')
 
-  assert.equal(indexHtml.includes("const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');"), true)
-  assert.equal(indexHtml.includes("fetch(window.TaliApiBase.buildApiUrl('/demo/leaderboard'))"), true)
-
-  assert.equal(indexHtml.includes("openHomepageAuthGate('demo_save', { pnl: window._demoPnlToSave || 0 });"), true)
-  assert.equal(indexHtml.includes("s.setAttribute('data-onauth', 'onHomepageTelegramAuth(user)');"), true)
-  assert.equal(indexHtml.includes("if (homepageAuthIntent === 'demo_save') {"), true)
-  assert.equal(indexHtml.includes('saveDemoScore(user, pnl);'), true)
-  assert.equal(indexHtml.includes("fetch(getBaseApiUrl() + '/demo/score', {"), true)
+  assert.equal(landingHtml.includes('<script src="/tali-api-base.js"></script>'), true)
+  assert.equal(landingHtml.includes("const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');"), true)
+  assert.equal(landingHtml.includes("s.setAttribute('data-onauth', 'onHomepageTelegramAuth(user)');"), true)
+  assert.equal(landingHtml.includes('<a href="/app" onclick="return requireHomepageAuth(event, '), true)
+  assert.equal(landingHtml.includes("fetch(getBaseApiUrl() + '/waitlist/verified', {"), true)
+  assert.equal(landingHtml.includes('demo/leaderboard'), false)                       // the removed demo flow is not half-present
 })
 
 test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/connections', async () => {
@@ -63,6 +64,7 @@ test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/co
   const rewrites = Array.isArray(config.rewrites) ? config.rewrites : []
 
   assert.deepEqual(rewrites, [
+    { source: '/', destination: '/landing.html' },                  // the homepage
     { source: '/app', destination: '/app.html' },
     { source: '/app/:path*', destination: '/app.html' },
   ])

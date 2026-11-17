@@ -34,10 +34,19 @@ function makeDocument() {
       appendChild(c) { c.parentNode = this; this.children.push(c); return c },
       removeChild(c) { this.children = this.children.filter((x) => x !== c); c.parentNode = null; return c },
       insertBefore(c, ref) { c.parentNode = this; const i = ref ? this.children.indexOf(ref) : -1; if (i < 0) this.children.push(c); else this.children.splice(i, 0, c); return c },
+      attrs: {}, listeners: {},
+      setAttribute(k, v) { this.attrs[k] = String(v) }, getAttribute(k) { return k in this.attrs ? this.attrs[k] : null },
+      addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn) },
+      click() { (this.listeners.click || []).forEach((fn) => fn()) },
+      querySelectorAll(sel) {
+        const m = /^\[([a-z-]+)(?:="([^"]*)")?\]$/.exec(sel); const out = []
+        const walk = (n) => n.children.forEach((c) => { if (m && c.getAttribute(m[1]) !== null && (m[2] === undefined || c.getAttribute(m[1]) === m[2])) out.push(c); walk(c) })
+        walk(this); return out
+      },
     }
     return n
   }
-  const doc = { createElement: node, getElementById: (id) => byId.get(id) || null }
+  const doc = { createElement: node, getElementById: (id) => byId.get(id) || null, querySelectorAll: (sel) => root.querySelectorAll(sel) }
   const root = node('div')
   for (const id of ['overviewCards', 'journalEntries', 'journalMeta', 'mtApiTokenInput']) { const n = node('div'); n.id = id; root.appendChild(n) }
   return doc
@@ -121,7 +130,7 @@ test('a synced snapshot maps to the dashboard cards without invented values', ()
   assert.equal(view.overviewStatus.syncVal, 'Synced')
   assert.match(view.overviewStatus.syncSub, /Updated 30s ago · Broker One API/)   // age from the server timestamp, not the browser fetch
   assert.equal(view.analytics.overallPnlText, '-$12.50')
-  assert.match(view.analytics.overallSub, /^Imported period since Nov 8 · net of fees$/)
+  assert.match(view.analytics.overallSub, /^Net of fees · closed trades from Nov 8 · history imported from Nov 7$/)   // first close vs. where the import starts
   assert.equal(view.analytics.winRate, 25)
   assert.equal(view.analytics.winRateSub, '1 of 4 closed entries')
   assert.equal(view.analytics.dailyPnl, null)
@@ -534,4 +543,37 @@ test('the Add Account picker offers one supported integration; other providers a
   const form = appHtml.slice(appHtml.indexOf("addAcctFlowState.path==='matchtraderApi'"), appHtml.indexOf("addAcctFlowState.path==='brokerApi'"))
   assert.ok(!/FundingPips|FundedPips/i.test(form))                                           // generic instructions
   assert.match(form, /Trader API<\/b> enabled/)
+})
+
+test('analytics view: stated counting, undefined profit factor, coverage that says when figures may change', () => {
+  const t = load()
+  const v = t.core.analyticsView({ currency: 'USD', time_zone: 'America/Los_Angeles', positive_day_streak: 2,
+    summary: { net_profit: '-3301.3', closed_entries: 21, entries_with_result: 20, entries_without_result: 1, positions: 18, winning_entries: 5, losing_entries: 14,
+      breakeven_entries: 1, entry_win_rate_percent: '25.0', profit_factor: '0.41', average_win: '480.12', average_loss: '-407.33' },
+    best_symbol: { symbol: 'XAUUSD', net_profit: '812.5' }, cumulative_realized: [{ cumulative_net: '100' }, { cumulative_net: '-3301.3' }],
+    coverage: { status: 'in_progress', requested_from: '2026-08-17T00:00:00Z' } })
+  assert.equal(v.wr, '25.0%'); assert.equal(v.wrTone, 'txt-red')
+  assert.equal(v.wrSub, '5 of 20 closed entries (1 breakeven)')
+  assert.equal(v.netpl, '-$3,301.30'); assert.equal(v.netTone, 'txt-red')
+  assert.equal(v.wlSub, 'W:5 L:14 BE:1 · 18 positions')
+  assert.equal(v.pf, '0.41'); assert.equal(v.avgLoss, '-$407.33'); assert.equal(v.bestSymPnl, '+$812.50 net')
+  assert.match(v.coverage, /^Importing older history since Aug 1[67], 2026 · figures may change as it arrives · 1 entry without a reported result not counted$/)
+  assert.match(v.curveLabel, /Cumulative realized P&L .*not account equity/)
+  assert.deepEqual(Array.from(v.curve), [100, -3301.3])
+  assert.equal(v.meta, 'Imported closed entries · America/Los_Angeles days')
+  const wins = t.core.analyticsView({ summary: { entries_with_result: 2, winning_entries: 2, closed_entries: 2, profit_factor: null, profit_factor_undefined_reason: 'no_losses', net_profit: '5' }, coverage: { status: 'complete_for_requested_range' } })
+  assert.equal(wins.pf, 'No losses'); assert.match(wins.coverage, /complete for the requested range$/)
+  const empty = t.core.analyticsView({ summary: { closed_entries: 0, entries_with_result: 0 }, coverage: { status: 'not_requested' } })
+  assert.equal(empty.wr, '—'); assert.equal(empty.wrSub, 'No closed entries in this range'); assert.equal(empty.pf, '—'); assert.equal(empty.avgWin, '—')
+  assert.match(empty.coverage, /import range is not known/)
+})
+
+test('the dashboard replaces custom history controls with Recent trades', async () => {
+  const t = load()
+  t.on('GET', '/connections', (c, r) => r(200, {service: READY, connections: [{id: 7, card: card(7)}]}))
+  t.on('GET', '/connections/7/snapshot', (c, r) => r(200, snapshot(7)))
+  await t.bridge.loadConnections()
+  t.env.active = 'mtapi:7'
+  await t.bridge.refreshSnapshot('mtapi:7', {force:true})
+  assert.equal(t.document.querySelectorAll('[data-history-range]').length, 0)
 })

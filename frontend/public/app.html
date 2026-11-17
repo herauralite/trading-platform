@@ -152,7 +152,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .ticker-wrap:hover .ticker-inner{animation-play-state:paused;}
 @keyframes scrollT{from{transform:translateX(0);}to{transform:translateX(-50%);}}
 .tick-i{display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;}
-.tick-s{color:var(--t2);font-weight:500;}.t-up{color:var(--green);}.t-dn{color:var(--red);}.t-sep{color:var(--t3);}
+.tick-s{color:var(--t2);font-weight:500;}.t-up{color:var(--green);}.t-dn{color:var(--red);}.t-sep{color:var(--t3);}.t-px{color:var(--text);}.t-flat{color:var(--t3);}
 .risk-stack{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
 .rcard{background:var(--s1);border-radius:var(--r);border:1px solid var(--border);overflow:hidden;position:relative;transition:border-color .25s,transform .3s var(--out);}
 .rcard:hover{transform:translateY(-2px);}
@@ -461,6 +461,8 @@ body.compact-mode .sec-head{margin:8px 0 6px;}
 .tf-btn{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--t3);transition:all .2s var(--spring);flex-shrink:0;}
 .tf-btn:hover{border-color:var(--border2);color:var(--t2);}
 .tf-btn.active{background:var(--blue);border-color:var(--blue);color:#fff;}
+button.tf-btn{cursor:pointer;line-height:inherit;}
+.tf-btn:focus-visible,.chart-tool-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
 .chart-container{margin:0 12px;border-radius:var(--r);overflow:hidden;border:1px solid var(--border);background:var(--s1);position:relative;}
 #chartEl{width:100%;height:300px;}
 .chart-tools{position:absolute;top:8px;right:8px;display:flex;gap:4px;z-index:10;}
@@ -577,7 +579,8 @@ body.compact-mode .sec-head{margin:8px 0 6px;}
       <div id="gate-tg-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;text-align:center;">Authentication failed. Please try again.</div>
       <pre id="gate-tg-diag" style="display:none;margin:-2px 0 12px;padding:10px 12px;border-radius:10px;background:rgba(77,116,144,0.12);border:1px solid rgba(77,116,144,0.35);font-size:11px;line-height:1.45;color:#8bafc7;white-space:pre-wrap;text-align:left;"></pre>
       <button id="gate-tg-retry" onclick="retryTelegramGateSetup()" style="display:none;width:100%;max-width:280px;margin:0 auto 12px;padding:11px 14px;border-radius:10px;border:1px solid rgba(42,171,238,0.45);background:rgba(42,171,238,0.12);color:#b9e6fb;font-size:12px;font-weight:700;cursor:pointer;">Retry Telegram setup</button>
-      <div id="gate-signing" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
+      <button id="gate-session-retry" type="button" onclick="restoreSessionOrShowSignIn()" style="display:none;width:100%;max-width:280px;margin:0 auto 12px;padding:11px 14px;border-radius:10px;border:1px solid rgba(42,171,238,0.45);background:rgba(42,171,238,0.12);color:#b9e6fb;font-size:12px;font-weight:700;cursor:pointer;">Try again</button>
+      <div id="gate-signing" role="status" aria-live="polite" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
 
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
         Your Telegram ID is used only for alerts. <a href="https://www.talitrade.com" style="color:#2aabee;text-decoration:none;">Privacy</a>
@@ -601,6 +604,8 @@ body.compact-mode .sec-head{margin:8px 0 6px;}
 <script src="/tali-api-base.js"></script>
 <script src="/tali-matchtrader-api.js"></script>
 <script src="/tali-matchtrader-dashboard.js"></script>
+<script src="/tali-matchtrader-market.js"></script>
+<script src="/tali-account-setup.js"></script>
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
 const TALI_DEV_PASSWORD = String((window.__TALI_CONFIG__ && window.__TALI_CONFIG__.devGatePassword) || '').trim();
@@ -818,6 +823,115 @@ function parseTelegramAuthFailure(res, body) {
   return 'Telegram login failed. Please retry.';
 }
 
+// ── Session restore on page load ──
+// A stored session is checked with the backend (/auth/me) before the gate decides whether sign-in is
+// needed. Accepted: the gate opens and accounts load. Rejected (401/403, or the user no longer exists):
+// the stored session is cleared and sign-in is required. Backend unreachable: the session is kept, the
+// gate stays closed and offers a retry. Account content is never shown before the backend accepts it.
+const TALI_SESSION_NOTICE_KEY = 'tali_session_notice';
+const TALI_SESSION_CHECK_TIMEOUT_MS = 10000;
+const TALI_SESSION_EXPIRED_TEXT = 'Your session has expired or is no longer valid. Sign in again to continue.';
+let taliSessionRestoreRunning = false;
+let taliSessionAccepted = false;   // true once the backend accepted this session; account polling waits for it
+
+function clearStoredSession() {
+  taliSessionAccepted = false;
+  localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
+  localStorage.removeItem(TALI_USER_KEY);
+  sessionStorage.removeItem(TALI_TG_DONE_KEY);
+  if (window.TaliMatchTraderMarket) TaliMatchTraderMarket.reset();
+  if (window.TaliMatchTrader) TaliMatchTrader.reset();
+}
+
+async function validateStoredSession() {
+  const token = getSessionToken();
+  if (!token) return { state: 'none' };
+  const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), TALI_SESSION_CHECK_TIMEOUT_MS) : null;
+  try {
+    const res = await fetch(getBaseApiUrl() + '/auth/me', {
+      headers: { Authorization: 'Bearer ' + token },
+      credentials: 'include',
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    pushGateDiagnostic(`/auth/me_status=${res.status} session_restore`);
+    if (res.status === 401 || res.status === 403 || res.status === 404) return { state: 'rejected', status: res.status };
+    if (!res.ok) return { state: 'unavailable', status: res.status };
+    const data = await res.json();
+    const user = normalizeTaliUserShape(data.user);
+    if (!user) return { state: 'unavailable', status: res.status };
+    return { state: 'valid', user };
+  } catch (_) {
+    pushGateDiagnostic('/auth/me_failure=network session_restore');
+    return { state: 'unavailable', status: 0 };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function unlockGate() {
+  document.getElementById('gate-signing').style.display = 'none';
+  const gate = document.getElementById('gate');
+  gate.classList.add('unlocking');
+  setTimeout(() => gate.style.display = 'none', 450);
+}
+
+async function restoreSessionOrShowSignIn() {
+  if (taliSessionRestoreRunning) return;
+  taliSessionRestoreRunning = true;
+  const step2 = document.getElementById('gate-step2');
+  const signing = document.getElementById('gate-signing');
+  const retry = document.getElementById('gate-session-retry');
+  const widget = document.getElementById('tg-widget-wrap');
+  step2.style.display = 'block';
+  if (retry) retry.style.display = 'none';
+  if (widget) widget.style.display = 'none';
+  clearGateTelegramError();
+  signing.textContent = 'Checking your sign-in…';
+  signing.style.display = 'block';
+  const result = await validateStoredSession();
+  signing.style.display = 'none';
+  signing.textContent = 'Linking account…';
+  taliSessionRestoreRunning = false;
+  if (result.state === 'valid') {
+    localStorage.setItem(TALI_USER_KEY, JSON.stringify(result.user));
+    sessionStorage.setItem(TALI_TG_DONE_KEY, '1');
+    taliSessionAccepted = true;
+    applyUserToTopbar(result.user);
+    unlockGate();
+    loadAccountsForSession(result.user.telegramUserId);
+    return;
+  }
+  if (widget) widget.style.display = '';
+  if (result.state === 'rejected' || result.state === 'none') {
+    if (result.state === 'rejected') clearStoredSession();
+    await showTelegramStep();
+    if (result.state === 'rejected') setGateTelegramError(TALI_SESSION_EXPIRED_TEXT);
+    return;
+  }
+  // Unavailable: keep the stored session (it may well be valid), keep content locked, offer a retry.
+  if (widget) widget.style.display = 'none';
+  setGateTelegramError(result.status
+    ? 'TaliTrade could not confirm your sign-in right now (server error ' + result.status + '). You are still signed in. Try again in a moment.'
+    : 'TaliTrade could not be reached to confirm your sign-in. Check your connection; you are still signed in. Try again.');
+  if (retry) retry.style.display = 'block';
+}
+
+// Called after the backend accepted the session (sign-in or restore): the account list and API
+// connections load only then.
+function loadAccountsForSession(telegramUserId) {
+  if (!telegramUserId) return;
+  syncLinkedAccountsFromBackend(telegramUserId);
+  startAccountLinkWatcher(telegramUserId);
+}
+
+// The backend rejected the session while the page was open: clear it and start over at sign-in.
+function handleSessionRejected() {
+  clearStoredSession();
+  try { sessionStorage.setItem(TALI_SESSION_NOTICE_KEY, 'expired'); } catch (_) {}
+  location.reload();
+}
+
 (function() {
   if (!TALI_DEV_PASSWORD) {
     sessionStorage.setItem(TALI_PW_KEY, '1');
@@ -826,7 +940,16 @@ function parseTelegramAuthFailure(res, body) {
   if (pwOk) {
     document.getElementById('gate-step1').style.display = 'none';
     document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
-    showTelegramStep();
+    // An OIDC callback in the URL means a sign-in is completing: let the Telegram step finish it.
+    if (getSessionToken() && !parseTelegramOidcCallbackFromLocation()) {
+      // After the whole page is parsed: the restore touches state defined in later scripts.
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void restoreSessionOrShowSignIn(); });
+      else void restoreSessionOrShowSignIn();
+      return;
+    }
+    const notice = sessionStorage.getItem(TALI_SESSION_NOTICE_KEY);
+    sessionStorage.removeItem(TALI_SESSION_NOTICE_KEY);
+    void showTelegramStep().then(() => { if (notice === 'expired') setGateTelegramError(TALI_SESSION_EXPIRED_TEXT); });
     return;
   }
   document.getElementById('gate-input').addEventListener('keydown', function(e) {
@@ -1114,6 +1237,7 @@ async function finishTelegramLogin(data, widgetUser = null) {
   hydrateAccountsMap(data.accounts || []);
   localStorage.setItem(TALI_SESSION_TOKEN_KEY, token);
   sessionStorage.setItem(TALI_TG_DONE_KEY, '1');
+  taliSessionAccepted = true;      // the backend just issued this session
 
   try {
     const meRes = await fetch(getBaseApiUrl() + '/auth/me', {
@@ -1172,11 +1296,12 @@ async function finishTelegramLogin(data, widgetUser = null) {
   } catch (_) {}
 
   applyUserToTopbar(user);
+  // API connections load on sign-in as well as on page boot: the watcher below skips users who already
+  // have a linked account, which used to hide their API accounts until a reload.
+  if (window.TaliMatchTrader) TaliMatchTrader.loadConnections();
   startAccountLinkWatcher(user.telegramUserId);
-  document.getElementById('gate-signing').style.display = 'none';
-  const gate = document.getElementById('gate');
-  gate.classList.add('unlocking');
-  setTimeout(() => gate.style.display = 'none', 450);
+  sessionStorage.removeItem(TALI_SESSION_NOTICE_KEY);
+  unlockGate();
 }
 
 
@@ -1219,9 +1344,24 @@ function rehydrateAccountsMap() {
   if (!hadAccounts && hasLinkedAccounts()) { fetchStatus(); fetchAnalytics(); fetchJournal(); fetchPayout(); }
 }
 
+// /auth/me returns database rows (account_id, account_type, …); the sign-in payload uses camelCase
+// (accountId, accountType, …). Accept both, so a restored session lists the same accounts as a sign-in.
+function normalizeLinkedAccount(a) {
+  if (!a || typeof a !== 'object') return null;
+  return {
+    ...a,
+    accountId: a.accountId ?? a.account_id ?? null,
+    accountType: a.accountType ?? a.account_type ?? '',
+    accountSize: a.accountSize ?? a.account_size ?? null,
+    connectorType: a.connectorType ?? a.connector_type ?? '',
+    isPrimary: a.isPrimary ?? a.is_primary ?? false,
+  };
+}
+
 function hydrateAccountsMap(linkedAccounts, keepActive=true) {
   const prevActive = activeAcct;
-  lastLegacyLinkedAccounts = Array.isArray(linkedAccounts) ? linkedAccounts : [];
+  linkedAccounts = (Array.isArray(linkedAccounts) ? linkedAccounts : []).map(normalizeLinkedAccount).filter(Boolean);
+  lastLegacyLinkedAccounts = linkedAccounts;
   Object.keys(ACCOUNTS).forEach(k => delete ACCOUNTS[k]);
   const colors = ['var(--blue)', 'var(--t3)', '#e8a838', '#5e9e6e'];
   const deduped=[];
@@ -1299,6 +1439,7 @@ async function syncLinkedAccountsFromBackend(telegramUserId) {
       credentials: 'include',
     });
     pushGateDiagnostic(`/auth/me_status=${res.status} watcher`);
+    if (res.status === 401) { handleSessionRejected(); return false; }
     if (!res.ok) return false;
     const data = await res.json();
     const linkedAccounts = data.accounts || [];
@@ -1348,11 +1489,14 @@ function applyUserToTopbar(user) {
   }
   const btnProfile = document.getElementById('btnProfile');
   if (btnProfile) {
-    btnProfile.title = displayName + ' · tap to sign out';
-    btnProfile.onclick = (e) => {
+    btnProfile.title = 'Open profile';
+    document.getElementById('profileName').textContent = displayName;
+    document.getElementById('profileHandle').textContent = user.username ? '@' + user.username : '';
+    document.getElementById('profileSignOut').onclick = (e) => {
       e.stopPropagation();
       localStorage.removeItem(TALI_USER_KEY);
       localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
+      if (window.TaliMatchTraderMarket) TaliMatchTraderMarket.reset();
       if (window.TaliMatchTrader) TaliMatchTrader.reset();   // drop API account data, timers and in-flight requests
       sessionStorage.removeItem(TALI_PW_KEY);
       sessionStorage.removeItem(TALI_TG_DONE_KEY);
@@ -1451,7 +1595,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
   <div style="display:flex;gap:4px;">
     <button type="button" class="tb-btn rip" id="btnAccounts" onclick="openAcctSheet()" aria-label="Switch or add trading account" title="Accounts" style="border:0;background:transparent;color:var(--t2)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M7 5V3h10v2M8 12h8M12 8v8"/></svg></button>
     <div class="tb-btn rip" id="btnBell" style="position:relative"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg><div id="bellDot" style="display:none;position:absolute;top:6px;right:6px;width:7px;height:7px;border-radius:50%;background:var(--red);border:1.5px solid var(--s1)"></div></div>
-    <div class="tb-profile-btn rip" id="btnProfile"><div class="tb-profile-inner">1</div></div>
+    <button type="button" aria-label="Open profile" class="tb-profile-btn rip" style="padding:0;background:transparent" id="btnProfile"><span class="tb-profile-inner">T</span></button>
   </div>
 </div>
 
@@ -1490,17 +1634,9 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     </div>
   </div>
   <div class="ticker-wrap">
-    <div class="ticker-inner">
-      <span class="tick-i"><span class="tick-s">DJI30</span><span class="t-up">—</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">NAS100</span><span class="t-up">—</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">XAUUSD</span><span class="t-up">2,341.80</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">BTCUSD</span><span class="t-up">67,450</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">VIX</span><span class="t-up">18.34</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">DJI30</span><span class="t-up">—</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">NAS100</span><span class="t-up">—</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">XAUUSD</span><span class="t-up">2,341.80</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">BTCUSD</span><span class="t-up">67,450</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">VIX</span><span class="t-up">18.34</span></span>
+    <div class="ticker-inner" id="tickerInner" data-market-status="message">
+      <span class="tick-i"><span class="tick-s">Markets</span><span class="t-flat">Connect a Match-Trader account to see its prices</span></span><span class="t-sep">·</span>
+      <span class="tick-i"><span class="tick-s">Markets</span><span class="t-flat">Connect a Match-Trader account to see its prices</span></span><span class="t-sep">·</span>
     </div>
   </div>
   <div class="sec-head"><div class="sec-label">Risk Parameters</div><div class="sec-meta" id="riskMeta">10K 2-Step</div></div>
@@ -1597,6 +1733,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div class="stat-box" style="position:relative"><div class="stat-box-label">Net P&amp;L</div><div class="skel skel-r sk-fade sk-in" id="skelNetpl" style="width:80px;height:28px;margin-bottom:6px"></div><div class="stat-box-val txt-green sk-fade sk-out" id="netpl">—</div><div class="stat-box-sub">closed trades only</div></div>
     <div class="stat-box" style="position:relative"><div class="stat-box-label">Total Trades</div><div class="skel skel-r sk-fade sk-in" id="skelTrades" style="width:50px;height:28px;margin-bottom:6px"></div><div class="stat-box-val sk-fade sk-out" id="totalTrades">—</div><div class="stat-box-sub" id="wlSub">W:0 L:0</div></div>
   </div>
+  <div id="analyticsCoverage" style="display:none;font-size:11px;color:var(--t3);margin:-2px 2px 10px;line-height:1.5"></div>
   <!-- Row 2: Avg Win / Avg Loss / Best Symbol / Streak -->
   <div class="stat-row sk-fade sk-out" id="analyticsRow2" style="margin-top:0">
     <div class="stat-box"><div class="stat-box-label">Avg Win</div><div class="stat-box-val txt-green" id="avgWin">—</div><div class="stat-box-sub">per winning trade</div></div>
@@ -1605,7 +1742,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div class="stat-box"><div class="stat-box-label">Green Streak</div><div class="stat-box-val" id="greenStreak">—</div><div class="stat-box-sub" id="greenStreakSub">—</div></div>
   </div>
   <div class="chart-card">
-    <div class="chart-label">Equity Curve</div>
+    <div class="chart-label" id="curveLabel">Equity Curve</div>
     <div class="mini-chart">
       <svg viewBox="0 0 400 80" preserveAspectRatio="none">
         <defs><linearGradient id="cg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#2aabee" stop-opacity="0.3"/><stop offset="100%" stop-color="#2aabee" stop-opacity="0"/></linearGradient></defs>
@@ -1628,6 +1765,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
 
 <!-- ACCOUNT -->
 <div id="page-account" class="page">
+  <section class="card card-p" aria-label="Your profile" style="margin-bottom:16px"><div class="sec-label">Your profile</div><h2 id="profileName">Trader</h2><p id="profileHandle"></p><button type="button" class="btn btn-blue" onclick="openAcctSheet()">Manage accounts</button> <button type="button" id="profileSignOut" class="btn btn-ghost">Sign out</button></section>
   <div class="sec-head">
     <div class="sec-label">Payout</div>
     <div class="sec-meta" id="payoutMeta" style="color:var(--t3)">—</div>
@@ -1794,32 +1932,36 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
   <div class="chart-page-inner">
     <div class="inst-scroll"><div class="inst-track" id="instTrack">
       <div class="inst-btn active rip"><div class="inst-sym">Active Account</div><div class="inst-price" id="chartAcctId">No account</div><div class="inst-chg" id="chartAcctType">Connect account</div></div>
-      <div class="inst-btn rip"><div class="inst-sym">Source</div><div class="inst-price txt-blue">Trade timeline</div><div class="inst-chg">balanceAfter / equity</div></div>
-      <div class="inst-btn rip"><div class="inst-sym">Markers</div><div class="inst-price txt-blue">Closed trades</div><div class="inst-chg">Win/Loss overlays</div></div>
+      <div class="inst-btn rip"><div class="inst-sym">Source</div><div class="inst-price txt-blue" id="instSourceVal">Trade timeline</div><div class="inst-chg" id="instSourceSub">balanceAfter / equity</div></div>
+      <div class="inst-btn rip"><div class="inst-sym" id="instMarkersLabel">Markers</div><div class="inst-price txt-blue" id="instMarkersVal">Closed trades</div><div class="inst-chg" id="instMarkersSub">Win/Loss overlays</div></div>
     </div></div>
     <div class="price-header">
       <div><div class="ph-sym" id="ph-sym">Account Equity · Legacy</div><div class="ph-price" id="ph-price">$—</div><div class="ph-change" id="ph-change">Waiting for active account data</div></div>
       <div class="ph-ohlc">
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Points</div><div class="ph-ohlc-v" id="ohlc-o">0</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Trades</div><div class="ph-ohlc-v" id="ohlc-h">0</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Wins</div><div class="ph-ohlc-v txt-green" id="ohlc-l">0</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l">Losses</div><div class="ph-ohlc-v txt-red" id="ohlc-v">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel0">Points</div><div class="ph-ohlc-v" id="ohlc-o">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel1">Trades</div><div class="ph-ohlc-v" id="ohlc-h">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel2">Wins</div><div class="ph-ohlc-v txt-green" id="ohlc-l">0</div></div>
+        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel3">Losses</div><div class="ph-ohlc-v txt-red" id="ohlc-v">0</div></div>
       </div>
     </div>
+    <div class="tf-row" id="chartIntervalRow" style="display:none" role="group" aria-label="Candle interval">
+      <button type="button" class="tf-btn rip" data-interval="M1" aria-pressed="false" aria-label="1 minute candles">M1</button><button type="button" class="tf-btn active rip" data-interval="M5" aria-pressed="true" aria-label="5 minute candles">M5</button><button type="button" class="tf-btn rip" data-interval="H1" aria-pressed="false" aria-label="1 hour candles">H1</button>
+    </div>
+    <div id="chartWindowNote" style="display:none;font-size:11px;color:var(--t3);padding:0 14px 8px;line-height:1.5"></div>
     <div class="tf-row" id="chartRangeRow">
       <div class="tf-btn rip" data-range="7d">7D</div><div class="tf-btn active rip" data-range="30d">30D</div>
       <div class="tf-btn rip" data-range="all">All</div>
     </div>
     <div class="chart-container">
-      <div class="live-tag"><div class="live-tag-dot"></div><div class="live-tag-txt">LIVE</div></div>
+      <div class="live-tag"><div class="live-tag-dot"></div><div class="live-tag-txt" id="chartLiveTag">LIVE</div></div>
       <div class="chart-tools">
-        <div class="chart-tool-btn rip" id="toolCandle" title="Candle view requires market OHLC feed"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="6"/><rect x="6" y="6" width="4" height="9" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="8"/><rect x="14" y="8" width="4" height="6" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg></div>
-        <div class="chart-tool-btn active rip" id="toolLine"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+        <div class="chart-tool-btn rip" id="toolCandle" role="button" tabindex="0" title="Candle view is available for Match-Trader API accounts" aria-label="Candle view is available for Match-Trader API accounts"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="6"/><rect x="6" y="6" width="4" height="9" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="8"/><rect x="14" y="8" width="4" height="6" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg></div>
+        <div class="chart-tool-btn active rip" id="toolLine" role="button" tabindex="0" title="Line: account equity over time" aria-label="Line: account equity over time"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
       </div>
       <div id="chartStateOverlay" class="chart-state-overlay hidden"></div>
       <div id="chartEl"></div>
     </div>
-    <div class="order-panel">
+    <div class="order-panel" id="orderPanel">
       <div class="order-tabs">
         <div class="order-tab buy active rip" id="tabBuy">▲ BUY / LONG</div>
         <div class="order-tab sell rip" id="tabSell">▼ SELL / SHORT</div>
@@ -1844,7 +1986,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
         <button class="exec-btn buy-btn rip" id="execBtn" style="opacity:0.5;pointer-events:none;cursor:not-allowed" title="Coming soon"><span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;NQ/USD &nbsp;@ &nbsp;<span id="execPrice">17,234.25</span><span style="font-size:10px;margin-left:8px;opacity:0.8;font-weight:500">(coming soon)</span></button>
       </div>
     </div>
-    <div class="depth-card">
+    <div class="depth-card" id="depthCard">
       <div class="depth-head"><div class="depth-title">Market Depth</div><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3)">Spread: <span id="spreadVal" class="txt-blue">2.50</span></div></div>
       <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border)"><div style="padding:4px 12px;font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;border-right:1px solid var(--border)">SIZE · BID</div><div style="padding:4px 12px;font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase">ASK · SIZE</div></div>
       <div style="display:grid;grid-template-columns:1fr 1fr" id="depthRows"></div>
@@ -2193,7 +2335,7 @@ function refreshAccountSettingsSurface(reason='state'){
         const isInactive=info?.isActive===false||info?.deactivated===true||String(info?.status||'').toLowerCase().includes('inactive');
         const sync=deriveSyncState(id);
         const pills=[isActive?'<span class="chip chip-blue" style="padding:2px 8px;font-size:9px">Active</span>':'',isPrimary?'<span class="chip chip-warn" style="padding:2px 8px;font-size:9px">Primary</span>':'',isInactive?'<span class="chip chip-red" style="padding:2px 8px;font-size:9px">Inactive</span>':''].join('');
-        return `<div class="account-row ${isInactive?'inactive':''}"><div style="min-width:0;flex:1"><div class="title">${id}</div><div class="meta">${info.label||'No label'} ${pills}</div><div class="meta">${sync.sub}</div></div><div class="actions"><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" ${isActive?'disabled':''} onclick="switchAccount('${id}')">Switch</button><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" ${isPrimary?'disabled':''} onclick="setPrimaryAccount('${id}')">Set primary</button><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" ${isInactive?'disabled':''} onclick="deactivateAccount('${id}')">Deactivate</button></div></div>`;
+        return `<div class="account-row ${isInactive?'inactive':''}"><div style="min-width:0;flex:1"><div class="title">${id}</div><div class="meta">${info.label||'No label'} ${pills}</div><div class="meta">${sync.sub}</div></div><div class="actions"><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" ${isActive?'disabled':''} onclick="switchAccount('${id}')">Switch</button><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" ${isPrimary?'disabled':''} onclick="setPrimaryAccount('${id}')">Set primary</button><button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" ${isInactive?'disabled':''} onclick="deactivateAccount('${id}')">Remove account</button></div></div>`;
       }).join('');
     }
   }
@@ -2295,13 +2437,14 @@ function renderAcctSheet(){
       <div class="as-acct-info">
         <div class="as-acct-id">${escapeHtml(info.displayId||id)}</div>
         <div class="as-acct-label">${isApi?escapeHtml(info.label):info.label} ${primaryPill}</div>
+        ${isApi&&window.TaliAccountSetup&&TaliAccountSetup.switcherLine(id)?'<div class="as-acct-label" style="color:'+(TaliAccountSetup.hasPendingInvite(id)?'var(--blue)':'var(--t2)')+'">'+escapeHtml(TaliAccountSetup.switcherLine(id))+'</div>':''}
       </div>
       <div class="as-acct-right">
         <div class="as-acct-bal" style="color:${balColor}">${balStr}</div>
         <div class="as-acct-sub">${subTxt}</div>
         <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end">
           ${isApi?matchTraderSheetButtons(id):`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px" onclick="event.stopPropagation();setPrimaryAccount('${id}')">Primary</button>
-          <button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();deactivateAccount('${id}')">Deactivate</button>`}
+          <button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();deactivateAccount('${id}')">Remove account</button>`}
         </div>
       </div>
       ${check}
@@ -2643,6 +2786,7 @@ async function setPrimaryAccount(id){
 }
 
 async function deactivateAccount(id){
+  if(!window.confirm('Remove this account from your profile? Saved trade history will be kept.')) return;
   if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(id))) return;
   try{
     const res=await authFetch('/auth/accounts/'+encodeURIComponent(id)+'/deactivate',{method:'POST'});
@@ -2650,7 +2794,7 @@ async function deactivateAccount(id){
     const data=await res.json();
     hydrateAccountsMap(data.accounts||[],true);
     if(activeAcct===id){activeAcct=Object.keys(ACCOUNTS)[0]||'';}
-    showAccountActionStatus('Account '+id+' deactivated.','success');
+    showAccountActionStatus('Account '+id+' removed.','success');
     await refreshAfterAccountLink(activeAcct);
   }catch(_){ showAccountActionStatus('Could not deactivate account right now.','error'); }
 }
@@ -2659,12 +2803,12 @@ function switchAccount(id){
   if(id===activeAcct){closeAcctSheet();return;}
   closeAcctSheet();
   activeAcct=id;
+  if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.onContextChange();
   if(window.TaliMatchTrader) TaliMatchTrader.onContextChange();   // late responses for the previous account are dropped
+  if(window.TaliAccountSetup) TaliAccountSetup.onContextChange(); // an open setup sheet is saved for later; a waiting invitation opens on its own account
   rememberActiveAccountPreference();
 
-  // Update profile button number
   const info=ACCOUNTS[id];
-  document.querySelector('.tb-profile-inner').textContent=info.idx;
 
   // Reset overview + dashboard skeletons
   overviewState.status=null;
@@ -2998,7 +3142,7 @@ function renderDashboardCards(){
 // ── MATCH-TRADER API ACCOUNTS ────────────────────────────────────────────────
 function matchTraderSheetButtons(id){
   const reconnect=TaliMatchTrader.needsReconnect(id)?`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--blue)" onclick="event.stopPropagation();closeAcctSheet();TaliMatchTrader.openReconnect('${id}')">Reconnect</button>`:'';
-  const label=TaliMatchTrader.isDisconnectPending(id)?'Tap again to confirm':'Disconnect';
+  const label=TaliMatchTrader.isDisconnectPending(id)?'Confirm removal':'Remove account';
   return reconnect+`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();TaliMatchTrader.disconnect('${id}')">${label}</button>`;
 }
 
@@ -3014,8 +3158,34 @@ function renderMatchTraderUnavailable(kind){
 }
 
 if(window.TaliMatchTrader){
-  TaliMatchTrader.attach({
+  TaliMatchTraderMarket.attach({
     getActiveAccount:()=>activeAcct,
+    isApiAccount:(id)=>TaliMatchTrader.isApiAccount(id),
+    connectionIdForAccount:(id)=>TaliMatchTrader.connectionIdForAccount(id),
+    showChartState:(title,subtitle)=>showChartState(escapeHtml(title),escapeHtml(subtitle)),
+    hideChartState:()=>hideChartState(),
+  });
+  TaliMatchTraderMarket.startTicker();
+  if(window.TaliAccountSetup) TaliAccountSetup.attach({
+    getUserId:()=>{ try{ const u=JSON.parse(localStorage.getItem(TALI_USER_KEY)||'null'); return u&&(u.id||u.telegram_user_id||u.telegramUserId||u.username)||''; }catch(e){ return ''; } },
+    getActiveAccount:()=>activeAcct,
+    getAccount:(key)=>{ const c=TaliMatchTrader.cardFor(key); if(!c) return null;
+      return { broker:c.broker_name||'Match-Trader', ending:String(c.masked_login||'').replace(/[^0-9A-Za-z]/g,'').slice(-4), currency:c.currency||'USD', accountType:c.provider_account_type||'' }; },
+    getSnapshot:(key)=>TaliMatchTrader.snapshotFor(key),
+    refreshSwitcher:()=>renderAcctSheet(),
+    isBusy:()=>!!document.querySelector('#add-acct-sheet.open,#acct-sheet.open'),
+    // Server-controlled: the flag arrives with the Match-Trader service status. Off => the dashboard keeps its existing flow.
+    isEnabled:()=>!!(TaliMatchTrader.serviceStatus()||{}).account_setup,
+    getSessionToken:()=>{ try{ return localStorage.getItem('tali_session_token_v1')||''; }catch(e){ return ''; } },
+    getApiBase:()=>TaliApiBase.resolveApiBase(),
+    onSessionRejected:()=>handleSessionRejected(),
+  });
+  TaliMatchTrader.attach({
+    onFirstSnapshot:(key,snapshot)=>{ if(window.TaliAccountSetup) TaliAccountSetup.onFirstSnapshot(key,snapshot); },
+    renderSetupCard:(node,key)=>{ if(window.TaliAccountSetup) TaliAccountSetup.renderCard(node,key); },
+    hideHistoryRangeControls:()=>!!(window.TaliAccountSetup&&TaliAccountSetup.isEnabled()),
+    getActiveAccount:()=>activeAcct,
+    onSessionRejected:()=>handleSessionRejected(),
     historyState,
     rehydrateAccounts:rehydrateAccountsMap,
     getAddFlowState:()=>addAcctFlowState,
@@ -3045,6 +3215,35 @@ if(window.TaliMatchTrader){
     },
     // One stored snapshot -> the existing overview/dashboard state. No default account size,
     // no inferred balance, no prop rules: anything unknown stays "—".
+    applyAnalytics:(view)=>{
+      const set=(id,text,cls)=>{ const n=document.getElementById(id); if(!n) return; n.textContent=text; if(cls!==undefined) n.className='stat-box-val '+cls; };
+      const cov=document.getElementById('analyticsCoverage');
+      if(view.error){ if(cov){cov.style.display='';cov.textContent=view.error;} return; }
+      [['Wr','wr'],['Pf','pf'],['Netpl','netpl'],['Trades','totalTrades']].forEach(([k,realId])=>{
+        const skel=document.getElementById('skel'+k),real=document.getElementById(realId);
+        if(skel){skel.classList.remove('sk-in');skel.classList.add('sk-out');}
+        if(real){real.classList.remove('sk-out');real.classList.add('sk-in');}
+      });
+      const r2=document.getElementById('analyticsRow2'); if(r2){r2.classList.remove('sk-out');r2.classList.add('sk-in');}
+      set('analyticsMeta',view.meta);
+      if(cov){cov.style.display='';cov.textContent=view.coverage;}
+      set('wr',view.wr,view.wrTone); set('wrSub',view.wrSub); set('pf',view.pf); set('netpl',view.netpl,view.netTone);
+      set('totalTrades',view.totalTrades); set('wlSub',view.wlSub); set('avgWin',view.avgWin); set('avgLoss',view.avgLoss);
+      set('bestSym',view.bestSym); set('bestSymPnl',view.bestSymPnl); set('greenStreak',view.greenStreak); set('greenStreakSub',view.greenStreakSub);
+      set('curveLabel',view.curveLabel);
+      const ep=document.getElementById('equityPath'),ef=document.getElementById('equityFill');
+      const pts=view.curve||[];
+      if(ep&&ef){
+        if(pts.length>1){
+          const mn=Math.min(0,...pts),mx=Math.max(0,...pts),rng=mx-mn||1;
+          const xs=pts.map((_,i)=>i/(pts.length-1)*400),ys=pts.map(v=>70-(v-mn)/rng*60);
+          const d='M'+xs.map((x,i)=>x.toFixed(1)+','+ys[i].toFixed(1)).join(' L');
+          const color=pts[pts.length-1]>=0?'var(--green)':'var(--red)';
+          ep.setAttribute('d',d); ep.setAttribute('stroke',color);
+          ef.setAttribute('d',d+' L400,80 L0,80 Z');
+        }else{ ep.setAttribute('d','M0,40 L400,40'); ef.setAttribute('d','M0,40 L400,40 L400,80 L0,80 Z'); }
+      }
+    },
     applyApiState:(view)=>{
       if(view.overviewStatus){ overviewState.status=view.overviewStatus; dashboardState.status={...view.overviewStatus,lastSyncLabel:view.overviewStatus.syncSub}; }
       if(view.analytics){ overviewState.analytics=view.analytics; dashboardState.analytics=view.analytics; }
@@ -3058,16 +3257,14 @@ if(window.TaliMatchTrader){
       if(rr){rr.classList.remove('sk-in');rr.classList.add('sk-out');}
       const riskMeta=document.getElementById('riskMeta');
       if(riskMeta)riskMeta.textContent='Not available for API accounts yet';
+      // No risk rules run for API accounts, so the alert card must not claim limits are safe or monitored.
+      const aTitle=document.getElementById('alertTitle'),aSub=document.getElementById('alertSub'),aPill=document.getElementById('alertPill'),aIco=document.getElementById('alertIco'),aBar=document.getElementById('alertBar');
+      if(aTitle)aTitle.textContent='Risk alerts not available';
+      if(aSub)aSub.textContent='Risk limits are not monitored for API accounts yet';
+      if(aPill){aPill.textContent='Not set up';aPill.style.cssText='color:var(--t3);background:transparent;border:1px solid var(--border)';}
+      if(aIco){aIco.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="11" x2="12" y2="16"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>';aIco.style.background='transparent';aIco.style.border='1px solid var(--border)';aIco.style.color='var(--t3)';}
+      if(aBar)aBar.style.borderColor='';
       if(view.label){ const footer=document.getElementById('footerAcct'); if(footer)footer.textContent=view.label; }
-      if(view.tiles){
-        const analyticsMeta=document.getElementById('analyticsMeta');
-        if(analyticsMeta)analyticsMeta.textContent='Imported period · closed entries';
-        [['Wr','wr'],['Pf','pf'],['Netpl','netpl'],['Trades','totalTrades']].forEach(([k,realId])=>{
-          const skel=document.getElementById('skel'+k),real=document.getElementById(realId);
-          if(skel){skel.classList.remove('sk-in');skel.classList.add('sk-out');}
-          if(real){real.classList.remove('sk-out');real.classList.add('sk-in');real.textContent=view.tiles[realId];}
-        });
-      }
       if(view.accountKey&&ACCOUNTS[view.accountKey]&&view.balanceText){
         ACCOUNTS[view.accountKey].balanceText=view.balanceText;
         if(document.getElementById('acct-sheet').classList.contains('open'))renderAcctSheet();
@@ -3080,10 +3277,7 @@ const bootstrapTaliUser=getTaliUser();
 if(!bootstrapTaliUser){
   pushGateDiagnostic('gate_reason=no_local_authenticated_user');
 }
-if(bootstrapTaliUser){
-  syncLinkedAccountsFromBackend(bootstrapTaliUser.telegramUserId);
-  startAccountLinkWatcher(bootstrapTaliUser.telegramUserId);
-}
+// Accounts for a stored session load from restoreSessionOrShowSignIn() once the backend accepts it.
 applyAccountPreferences();
 refreshAccountSettingsSurface();
 renderDashboardCards();
@@ -3233,11 +3427,13 @@ function setBar(idx,pct,used,limit,remaining,chips){
 
 // MAIN STATUS POLL
 async function fetchStatus(){
+  if(!taliSessionAccepted) return;   // nothing to show before sign-in or while the stored session is being checked
   const requestSeq=++statusFetchSeq;
   const requestedAcct=activeAcct;
-  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))) return TaliMatchTrader.refreshSnapshot(activeAcct);
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))){ if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.refreshTicker(false); return TaliMatchTrader.refreshSnapshot(activeAcct); }
   try{
     const res=await fetch(API+'/extension/status',{headers:taliAuthHeaders()});
+    if(res.status===401){ handleSessionRejected(); return; }   // the session expired or was revoked while the page was open
     const data=await res.json();
     if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
     const acct=data.accounts&&data.accounts[activeAcct];
@@ -4372,7 +4568,14 @@ async function fetchJournal(){
 async function fetchAnalytics(){
   const requestSeq=++analyticsFetchSeq;
   const requestedAcct=activeAcct;
-  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))) return TaliMatchTrader.refreshSnapshot(activeAcct,{force:true});   // period figures come from a server-side aggregate
+  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))){
+    TaliMatchTrader.renderAnalytics(true);   // SQL aggregates over every imported entry
+    // The recent-trades panel pages through the imported entries; load it here too, not only after a sync.
+    if(historyState.accountId!==activeAcct||!historyState.rows.length){ resetHistoryState(true); loadHistoryPage(true); }
+    else renderHistoryPanel();
+    return TaliMatchTrader.refreshSnapshot(activeAcct,{force:true});
+  }
+  { const lbl=document.getElementById('curveLabel'); if(lbl) lbl.textContent='Equity Curve'; const cov=document.getElementById('analyticsCoverage'); if(cov) cov.style.display='none'; }
   if(!activeAcct||!hasLinkedAccounts()){
     renderNoAccountState('analytics');
     return;
@@ -4669,7 +4872,7 @@ function buildChartPayloadFromTrades(trades,statusSnapshot){
     seenPoint.set(ts,{time:ts,value:Number(value.toFixed(2))});
 
     if(Number.isFinite(pnlVal) && pnlVal!==0){
-      const markerText=(pnlVal>0?'WIN ':'LOSS ')+pnl(pnlVal);
+      const markerText=(pnlVal>0?'WIN ':'LOSS ')+(t.pnlText||pnl(pnlVal));   // the account's own currency when the row carries it
       const key=ts+'|'+markerText+'|'+(t.symbol||'');
       if(!markerKeys.has(key)){
         markerKeys.add(key);
@@ -4746,13 +4949,13 @@ async function refreshChartForActiveAccount(reason='poll'){
   const acctInfo=accountId?ACCOUNTS[accountId]:null;
   const acctIdEl=document.getElementById('chartAcctId');
   const acctTypeEl=document.getElementById('chartAcctType');
-  if(acctIdEl) acctIdEl.textContent=accountId||'No account';
+  if(acctIdEl) acctIdEl.textContent=acctInfo?.displayName||accountId||'No account';   // readable name, never the internal API key
   if(acctTypeEl) acctTypeEl.textContent=acctInfo?.label||'Connect account';
+  if(window.TaliMatchTraderMarket&&!(window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(accountId))) TaliMatchTraderMarket.leaveChart();
 
   if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(accountId))){
-    resetChartSeries();
-    showChartState('Equity history not available','Match-Trader API accounts do not include an equity timeline. Balance, positions and trades are on the dashboard.');
-    updateChartSummary({points:[],tradeCount:0,wins:0,losses:0},[]);
+    // A market-price chart of the broker's candles. It is not an account-equity timeline and is labelled accordingly.
+    TaliMatchTraderMarket.showChart({chart,lineSeries});
     return;
   }
   if(!accountId){
@@ -4814,7 +5017,11 @@ document.querySelectorAll('#chartRangeRow .tf-btn').forEach(btn=>{
   });
 });
 
+document.querySelectorAll('#chartIntervalRow .tf-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{ if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.setInterval(btn.dataset.interval); });
+});
 document.getElementById('toolCandle').addEventListener('click',function(){
+  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ TaliMatchTraderMarket.setMode('candle'); return; }   // real OHLC candles
   this.classList.add('active');
   document.getElementById('toolLine').classList.remove('active');
   showChartState('Candle view unavailable','Market OHLC feed is not connected in this shell. Showing equity line instead.');
@@ -4827,11 +5034,16 @@ document.getElementById('toolCandle').addEventListener('click',function(){
   applyAccountPreferences();
 });
 document.getElementById('toolLine').addEventListener('click',function(){
+  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ TaliMatchTraderMarket.setMode('line'); return; }     // candle closes
   this.classList.add('active');
   document.getElementById('toolCandle').classList.remove('active');
   localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
   applyAccountPreferences();
   refreshChartForActiveAccount('style');
+});
+['toolCandle','toolLine'].forEach(id=>{   // keyboard: Enter or Space activates the chart-mode controls
+  const el=document.getElementById(id);
+  if(el) el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); el.click(); } });
 });
 if((localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line')!=='line'){localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');}
 document.getElementById('toolLine').classList.add('active');

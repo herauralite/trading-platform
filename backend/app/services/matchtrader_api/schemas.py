@@ -148,6 +148,39 @@ class LedgerEntry(_StringId):
     type: str | None = None
 
 
+class MarketSymbol(_Model):
+    """One instrument offered on the account. ``symbol`` is the provider identifier used in
+    requests; ``alias`` is for display. Fields other than ``symbol`` may be absent or null."""
+    symbol: str
+    alias: str | None = None
+    description: str | None = None
+    type: str | None = None
+    baseCurrency: str | None = None
+    quoteCurrency: str | None = None
+    pricePrecision: int | None = None
+    sessionOpen: bool | None = None
+
+
+class MarketQuote(_Model):
+    """A snapshot: bid, ask and the provider's own timestamp (epoch milliseconds, UTC)."""
+    symbol: str
+    alias: str | None = None
+    bid: Decimal | None = None
+    ask: Decimal | None = None
+    timestamp: int | None = None
+
+
+class MarketCandle(_Model):
+    """One OHLC candle. ``timestamp`` is the candle's opening time (epoch milliseconds, UTC);
+    ``tickCount`` counts price ticks, it is not traded volume."""
+    timestamp: int
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    tickCount: int | None = None
+
+
 class ContractViolation(Exception):
     """The response did not match the documented envelope/schema. Never treated as 'empty'."""
 

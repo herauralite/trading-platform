@@ -13,7 +13,8 @@ from __future__ import annotations
 import base64
 import json
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_EVEN, Decimal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any, Callable
 
 from sqlalchemy import text
@@ -32,6 +33,13 @@ class NotFound(Exception):
 
 class BadCursor(Exception):
     pass
+
+
+class BadRange(Exception):
+    """An analytics range or time zone that cannot be used."""
+
+
+MAX_ANALYTICS_DAYS = 3700   # about ten years of daily rows
 
 
 def _default_engine():
@@ -195,7 +203,7 @@ class ReadModels:
             await conn.execution_options(isolation_level="REPEATABLE READ")
             row = (await conn.execute(text(f"""
                 SELECT c.id, c.external_login, c.broker_name, c.account_currency, c.account_type, c.status, c.status_detail,
-                       c.capabilities, c.ingestion_mode, c.created_at
+                       c.capabilities, c.ingestion_mode, c.created_at, c.account_created_at
                 FROM mtapi_connections c WHERE {_OWNED}
             """), params)).mappings().first()
             if not row:
@@ -242,7 +250,7 @@ class ReadModels:
                     "sl_price": _money(r["sl_price"]), "create_time": _iso(r["create_time"]),
                 } for r in rows]
 
-            history = await self._history(conn, params, freshness)
+            history = await self._history(conn, {**params, "_created": row["account_created_at"]}, freshness)
             request = (await conn.execute(text(f"""
                 SELECT r.request_id, r.state, r.detail, r.resources, r.requested_at, r.started_at, r.finished_at
                 FROM mtapi_sync_requests r JOIN mtapi_connections c ON c.id = r.connection_id WHERE {_OWNED}
@@ -259,6 +267,8 @@ class ReadModels:
     async def _history(self, conn, params: dict, freshness: dict) -> dict:
         """Coverage of imported closed positions plus an aggregate over the WHOLE imported set
         (computed in SQL, never from a page of rows)."""
+        created = params.get("_created")
+        params = {k: v for k, v in params.items() if not k.startswith("_")}
         cov = (await conn.execute(text(f"""
             SELECT COUNT(*) FILTER (WHERE i.status = 'queued' AND i.kind = 'backfill') AS queued,   -- the requested import; routine recent windows are always in flight
                    COUNT(*) FILTER (WHERE i.status = 'gap') AS gaps,
@@ -279,6 +289,8 @@ class ReadModels:
             status = "not_permitted"
         elif freshness["closed_positions"]["last_success_at"] is None:
             status = "pending"
+        elif cov["earliest_requested_ms"] is None:
+            status = "not_requested"          # rows exist but no import range was ever requested: nothing to call complete
         elif cov["gaps"]:
             status = "partial_gaps"
         elif cov["queued"]:
@@ -289,6 +301,7 @@ class ReadModels:
         requested_from = cov["requested_from_ms"] if cov["requested_from_ms"] is not None else cov["earliest_requested_ms"]
         return {
             "coverage_status": status, "requested_from": _ms_iso(requested_from), "requested_to": _ms_iso(cov["requested_to_ms"]),
+            "account_created_at": _iso(created) if created else None,
             "queued_intervals": int(cov["queued"]), "gap_count": int(cov["gaps"]),
             "closed_entry_count": int(agg["entries"]) if known else None,
             # Aggregate over everything imported so far. Entries are closing fills: a position closed
@@ -299,6 +312,97 @@ class ReadModels:
                 "first_close_time": _iso(agg["first_close"]), "last_close_time": _iso(agg["last_close"]),
                 "is_complete_for_requested_range": status == "complete_for_requested_range",
             } if known else None,
+        }
+
+    async def read_owned_analytics(self, connection_id: int, user_id: str, *, from_ms: int | None, to_ms: int | None, tz: str = "UTC") -> dict:
+        """Realized performance of one connection over [from, to), computed in SQL over every stored
+        closed entry in that range (not a page). Coverage is returned with it: figures can change
+        while older history is still importing."""
+        try:
+            if not tz or len(tz) > 64:
+                raise ZoneInfoNotFoundError(tz)
+            ZoneInfo(tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise BadRange("Unknown time zone") from None
+        if from_ms is not None and to_ms is not None and from_ms >= to_ms:
+            raise BadRange("The start must be before the end")
+        for value in (from_ms, to_ms):
+            if value is not None and not (0 <= value <= 4_102_444_800_000):
+                raise BadRange("Out-of-range timestamp")
+        params: dict[str, Any] = {"id": connection_id, "user": user_id, "tz": tz,
+                                  "from": datetime.fromtimestamp(from_ms / 1000, tz=timezone.utc) if from_ms is not None else None,
+                                  "to": datetime.fromtimestamp(to_ms / 1000, tz=timezone.utc) if to_ms is not None else None}
+        scope = f"""FROM mtapi_closed_positions t JOIN mtapi_connections c ON c.id = t.connection_id
+                    WHERE {_OWNED} AND (CAST(:from AS timestamptz) IS NULL OR t.close_time >= CAST(:from AS timestamptz))
+                      AND (CAST(:to AS timestamptz) IS NULL OR t.close_time < CAST(:to AS timestamptz))"""
+        engine = self._engine_getter()
+        async with engine.connect() as conn:
+            await conn.execution_options(isolation_level="REPEATABLE READ")
+            row = (await conn.execute(text(f"""
+                SELECT c.id, c.status, c.capabilities, c.account_currency, c.account_created_at FROM mtapi_connections c WHERE {_OWNED}
+            """), params)).mappings().first()
+            if not row:
+                raise NotFound()
+            now = (await conn.execute(text("SELECT NOW()"))).scalar()
+            freshness = _freshness(await self._states(conn, connection_id, user_id), row["capabilities"] or {}, now)
+            agg = (await conn.execute(text(f"""
+                SELECT COUNT(*) AS entries, COUNT(DISTINCT t.position_id) AS positions, COALESCE(SUM(t.net_profit), 0) AS net,
+                       COUNT(*) FILTER (WHERE t.net_profit > 0) AS wins, COUNT(*) FILTER (WHERE t.net_profit < 0) AS losses,
+                       COUNT(*) FILTER (WHERE t.net_profit = 0) AS breakeven,
+                       COALESCE(SUM(t.net_profit) FILTER (WHERE t.net_profit > 0), 0) AS gross_win,
+                       COALESCE(SUM(t.net_profit) FILTER (WHERE t.net_profit < 0), 0) AS gross_loss,
+                       COALESCE(SUM(t.commission), 0) AS commission, COALESCE(SUM(t.swap), 0) AS swap,
+                       MIN(t.close_time) AS first_close, MAX(t.close_time) AS last_close
+                {scope}
+            """), params)).mappings().first()
+            pos = (await conn.execute(text(f"""
+                SELECT COUNT(*) FILTER (WHERE p.net > 0) AS wins, COUNT(*) FILTER (WHERE p.net < 0) AS losses, COUNT(*) FILTER (WHERE p.net = 0) AS breakeven
+                FROM (SELECT t.position_id, SUM(t.net_profit) AS net {scope} GROUP BY t.position_id HAVING COUNT(t.net_profit) = COUNT(*)) p
+            """), params)).mappings().first()
+            daily = (await conn.execute(text(f"""
+                SELECT (t.close_time AT TIME ZONE CAST(:tz AS text))::date AS day, COALESCE(SUM(t.net_profit), 0) AS net, COUNT(*) AS entries
+                {scope} GROUP BY 1 ORDER BY 1 DESC LIMIT {MAX_ANALYTICS_DAYS}
+            """), params)).mappings().all()
+            best = (await conn.execute(text(f"""
+                SELECT t.symbol, SUM(t.net_profit) AS net, COUNT(*) AS entries {scope} AND t.net_profit IS NOT NULL
+                GROUP BY t.symbol ORDER BY SUM(t.net_profit) DESC, t.symbol LIMIT 1
+            """), params)).mappings().first()
+            history = await self._history(conn, {"id": connection_id, "user": user_id, "_created": row["account_created_at"]}, freshness)
+        summary = analytics_summary(dict(agg), {k: int(v) for k, v in dict(pos).items()})
+        days = list(reversed(daily))
+        running = Decimal(0)
+        cumulative = []
+        for d in days:
+            running += Decimal(d["net"])
+            cumulative.append({"day": d["day"].isoformat(), "cumulative_net": _money(running)})
+        # Positive-net days in a row, counting back from the most recent day with results.
+        streak = 0
+        for d in reversed(days):
+            if Decimal(d["net"]) > 0:
+                streak += 1
+            else:
+                break
+        requested_from = history.get("requested_from")
+        range_from_iso = _iso(params["from"]) if params["from"] else None
+        return {
+            "connection_id": connection_id, "currency": row["account_currency"], "time_zone": tz,
+            "range": {"from": range_from_iso, "to": _iso(params["to"]) if params["to"] else None},
+            "summary": summary,
+            "best_symbol": {"symbol": best["symbol"], "net_profit": _money(best["net"]), "entries": int(best["entries"])} if best else None,
+            "positive_day_streak": streak,
+            "daily": [{"day": d["day"].isoformat(), "net_profit": _money(Decimal(d["net"])), "entries": int(d["entries"])} for d in days],
+            "cumulative_realized": cumulative,
+            "daily_truncated": len(daily) >= MAX_ANALYTICS_DAYS,
+            "coverage": {
+                "status": history["coverage_status"], "requested_from": requested_from, "requested_to": history["requested_to"],
+                "queued_intervals": history["queued_intervals"], "gap_count": history["gap_count"],
+                "account_created_at": history.get("account_created_at"),
+                # The chosen range reaches further back than anything requested: older trades may simply not be imported.
+                "range_starts_before_requested_history": bool(range_from_iso is None or (requested_from and range_from_iso < requested_from)) if requested_from else True,
+                "may_change": history["coverage_status"] != "complete_for_requested_range",
+            },
+            "counting_rules": COUNTING_RULES,
+            "not_derived": ["account equity history", "drawdown", "original risk", "MAE/MFE", "challenge or payout compliance"],
         }
 
     async def read_owned_closed_trades(self, connection_id: int, user_id: str, *, limit: int, cursor: str | None) -> dict:
@@ -352,6 +456,63 @@ def public_sync_request(row: dict | None) -> dict | None:
     return {"id": int(row["request_id"]), "state": row["state"], "detail": row.get("detail"), "resources": resources,
             "pending": row["state"] in SYNC_REQUEST_PENDING, "requested_at": _iso(row.get("requested_at")),
             "started_at": _iso(row.get("started_at")), "finished_at": _iso(row.get("finished_at"))}
+
+
+def _ratio(numerator: Decimal, denominator: Decimal, places: str) -> str | None:
+    if not denominator:
+        return None
+    return format((numerator / denominator).quantize(Decimal(places), rounding=ROUND_HALF_EVEN), "f")
+
+
+def _percent(part: int, whole: int) -> str | None:
+    return _ratio(Decimal(part) * 100, Decimal(whole), "0.1") if whole else None
+
+
+def analytics_summary(row: dict, positions: dict) -> dict:
+    """Turn the SQL aggregate into reported figures. Pure: easy to check by hand.
+
+    Counting rules (also returned with the figures):
+    * an *entry* is one closing fill (uid). A position closed in parts counts once per part;
+    * a *position* is grouped by position id, with its entries' net results added up;
+    * net results are the broker's ``netProfit`` (commission and swap already included); they are
+      never added again. Cash ledger rows (deposits, withdrawals, CLOSE_POSITION) are not counted;
+    * breakeven = exactly zero net. Win rate = winning / all entries with a net result, so
+      breakevens count as not winning. Entries without a net result are reported, not counted;
+    * profit factor = gross wins / |gross losses|; with no losses it is undefined, not infinite."""
+    entries, wins, losses, breakeven = int(row["entries"]), int(row["wins"]), int(row["losses"]), int(row["breakeven"])
+    counted = wins + losses + breakeven
+    gross_win, gross_loss = Decimal(row["gross_win"] or 0), Decimal(row["gross_loss"] or 0)
+    if gross_loss:
+        pf, pf_note = _ratio(gross_win, -gross_loss, "0.01"), None
+    else:
+        pf, pf_note = None, ("no_losses" if gross_win else "no_results")
+    return {
+        "net_profit": _money(Decimal(row["net"] or 0)), "closed_entries": entries, "entries_with_result": counted,
+        "entries_without_result": entries - counted, "positions": int(row["positions"]),
+        "winning_entries": wins, "losing_entries": losses, "breakeven_entries": breakeven,
+        "entry_win_rate_percent": _percent(wins, counted),
+        "winning_positions": positions["wins"], "losing_positions": positions["losses"], "breakeven_positions": positions["breakeven"],
+        "position_win_rate_percent": _percent(positions["wins"], positions["wins"] + positions["losses"] + positions["breakeven"]),
+        "gross_profit": _money(gross_win), "gross_loss": _money(gross_loss),
+        "average_win": _ratio(gross_win, Decimal(wins), "0.01") if wins else None,
+        "average_loss": _ratio(gross_loss, Decimal(losses), "0.01") if losses else None,
+        "profit_factor": pf, "profit_factor_undefined_reason": pf_note,
+        "commission_total": _money(Decimal(row["commission"] or 0)), "swap_total": _money(Decimal(row["swap"] or 0)),
+        "first_close_time": _iso(row["first_close"]), "last_close_time": _iso(row["last_close"]),
+    }
+
+
+COUNTING_RULES = {
+    "entry": "One closing fill (uid). A position closed in parts counts once per part.",
+    "position": "Entries grouped by position id, net results added up.",
+    "net_profit": "The broker's net result per entry; commission and swap are already included and shown separately for information only.",
+    "win_rate": "Winning entries divided by entries with a net result. Breakeven (exactly zero) counts as not winning.",
+    "profit_factor": "Gross wins divided by the absolute gross losses. Undefined when there are no losses.",
+    "averages": "Rounded to 2 decimal places. Profit factor to 2, percentages to 1.",
+    "excluded": "Cash ledger entries (deposits, withdrawals, CLOSE_POSITION adjustments) are not counted as trade results.",
+    "daily": "Grouped by the calendar day of the close time in the stated time zone.",
+    "cumulative": "Running total of realized net results by day. It is not an account-equity or balance curve.",
+}
 
 
 def interpret_sync_outcome(outcome: dict) -> dict:

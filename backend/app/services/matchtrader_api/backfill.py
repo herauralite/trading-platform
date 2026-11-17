@@ -17,6 +17,11 @@ HISTORY_LIMIT = 500
 ATOMIC_SPAN_MS = 2  # a range this small cannot be split into two strictly smaller overlapping halves
 
 COMPLETE, SPLIT, POINTS, GAP = "complete", "split", "points", "gap"
+# The broker refused the request itself (4xx) for a long range. The documented contract has no
+# per-request date limit, but if a broker enforces one, the range is split by TIME and retried:
+# a refused request is a window limit, never evidence that the range is empty.
+WINDOW = "window"
+WINDOW_SPLIT_MIN_MS = 2 * 86_400_000     # below this a refusal is not treated as a window limit
 
 
 def evaluate(range_from: int, range_to: int, returned: int, limit: int = HISTORY_LIMIT) -> str:

@@ -34,6 +34,7 @@ class FakeBroker:
     def __init__(self):
         self.accounts = {}
         self.requests = []          # (method, path, params, token)
+        self.queries = []           # (path, raw query string): exact request encoding
         self.fail = {}              # path -> (status, headers) applied to every token
         self.add_account(TOKEN_A, login="700001", platform_url="https://mtr.broker-one.example")
 
@@ -44,6 +45,7 @@ class FakeBroker:
                         "currencyPrecision": 2, "leverage": 100, "createTime": 1_600_000_000_000, "retail": True, "accessRight": "FULL"},
             "summary": {"balance": 10000.12, "credit": 0, "equity": 10010.62, "margin": 0, "freeFunds": 10010.62, "marginLevel": 0, "profit": 10.5},
             "positions": [], "pending": [], "closed": [], "ledgers": [],
+            "symbols": [], "quotes": {}, "candles": {},      # market data: instruments, symbol -> quote, (symbol, interval) -> candles
         }
         return self.accounts[token]
 
@@ -52,6 +54,7 @@ class FakeBroker:
         path = request.url.path
         params = dict(request.url.params)
         self.requests.append((request.method, path, params, token))
+        self.queries.append((path, request.url.query.decode()))
         if request.method != "GET":
             return httpx.Response(405, json={"type": "method-not-allowed"})
         if path in self.fail:
@@ -75,6 +78,25 @@ class FakeBroker:
             key, time_field, envelope = ("closed", "closeTime", "closedPositions") if path == "/v1/closed-positions" else ("ledgers", "timestamp", "ledgers")
             rows = sorted((r for r in account[key] if lo <= r[time_field] <= hi), key=lambda r: r[time_field], reverse=True)
             return httpx.Response(200, json={envelope: rows[:limit]})  # newest first, capped, no cursor
+        if path == "/v1/symbols":
+            return httpx.Response(200, json={"symbols": account["symbols"]})
+        if path == "/v1/quotes":
+            wanted = request.url.params.get_list("symbol")
+            if not wanted:
+                return httpx.Response(400, json={"type": "error://trader-api/validation"})
+            return httpx.Response(200, json={"quotes": [account["quotes"][s] for s in wanted if s in account["quotes"]]})   # unknown symbols are omitted
+        if path == "/v1/candles":
+            symbol, interval = params.get("symbol"), params.get("interval")
+            if symbol not in {s["symbol"] for s in account["symbols"]}:
+                return httpx.Response(404, json={"type": "error://trader-api/symbol-not-found"})
+            rows = sorted(account["candles"].get((symbol, interval), []), key=lambda c: c["timestamp"])
+            if "to" in params:
+                rows = [c for c in rows if c["timestamp"] <= int(params["to"])]
+            if "from" in params:
+                rows = [c for c in rows if c["timestamp"] >= int(params["from"])]
+            limit = int(params.get("limit", 100))
+            rows = rows[-limit:] if "to" in params or "from" not in params else rows[:limit]   # bounded by ``to``: the most recent part
+            return httpx.Response(200, json={"candles": rows, "interval": interval, "symbol": symbol})
         return httpx.Response(404, json={"type": "not-found"})
 
     def transport(self):
@@ -82,3 +104,19 @@ class FakeBroker:
 
     def calls(self, path=None):
         return [r for r in self.requests if path is None or r[1] == path]
+
+
+def market_symbol(symbol, alias=None, type_="FOREX", base="EUR", quote="USD", precision=5, session_open=True, **extra):
+    return {"symbol": symbol, "alias": alias or symbol, "description": f"{symbol} synthetic", "type": type_, "baseCurrency": base, "quoteCurrency": quote,
+            "pricePrecision": precision, "volumePrecision": 2, "volumeMin": 0.01, "volumeMax": 50, "volumeStep": 0.01, "contractSize": 100000,
+            "sizeOfOnePoint": 0.00001, "leverage": 100, "fixedLeverage": False, "swapType": "PIPS", "buySwap": -1.0, "sellSwap": 0.2,
+            "commissionMin": None, "multiplier": 1, "divider": 1, "terminationType": "UNDEFINED", "terminationDate": None,
+            "sessionOpen": session_open, **extra}
+
+
+def market_quote(symbol, bid, ask, timestamp, alias=None):
+    return {"symbol": symbol, "alias": alias or symbol, "bid": bid, "ask": ask, "timestamp": timestamp}
+
+
+def market_candle(timestamp, open_, high, low, close, ticks=10):
+    return {"timestamp": timestamp, "open": open_, "high": high, "low": low, "close": close, "tickCount": ticks}

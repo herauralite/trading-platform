@@ -81,6 +81,8 @@ from app.core import admin_auth
 from app.core import ingest_auth
 from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
 from app.services.matchtrader_api.store import SqlStore as MtApiStore
+from app.services.account_setup import config as setup_config, routes as setup_routes
+from app.services.account_setup.store import SetupStore
 from app.core.ingest_auth import Principal
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
@@ -1306,6 +1308,8 @@ async def lifespan(app: FastAPI):
     if mt_api_config.api_enabled():
         # Match-Trader API integration is opt-in: its tables are created only when enabled.
         await MtApiStore().ensure_schema()
+    if setup_config.enabled():
+        await SetupStore().ensure_schema()
     await backfill_legacy_prop_accounts_to_trading_accounts()
     await ensure_waitlist_table()
     await ensure_demo_scores_table()
@@ -1372,6 +1376,7 @@ app.include_router(accounts.router)
 from app.routers import ingest
 app.include_router(ingest.router)
 app.include_router(mt_api_routes.router)
+app.include_router(setup_routes.router)
 from app.core.database import engine
 
 logger.info(
@@ -1649,8 +1654,8 @@ async def deactivate_account(account_id: str, session_user_id: str = Depends(get
     from app.core.database import engine
     async with engine.begin() as conn:
         updated = await conn.execute(text("UPDATE prop_accounts SET is_active = FALSE, is_primary = FALSE WHERE telegram_user_id = :uid AND account_id = :acct_id AND is_active = TRUE"), {"uid": resolved_uid, "acct_id": account_id})
-        await conn.execute(text("UPDATE trading_accounts SET is_active = FALSE, updated_at = NOW() WHERE user_id = :uid AND external_account_id = :acct_id AND is_active = TRUE"), {"uid": resolved_uid, "acct_id": account_id})
-        if (updated.rowcount or 0) == 0:
+        canonical = await conn.execute(text("UPDATE trading_accounts SET is_active = FALSE, updated_at = NOW() WHERE user_id = :uid AND external_account_id = :acct_id AND is_active = TRUE"), {"uid": resolved_uid, "acct_id": account_id})
+        if not updated.rowcount and not canonical.rowcount:
             return JSONResponse(status_code=404, content={"detail": "Account not found"})
         await conn.execute(text("WITH first_account AS (SELECT MIN(id) AS id FROM prop_accounts WHERE telegram_user_id = :uid AND is_active = TRUE) UPDATE prop_accounts SET is_primary = TRUE WHERE id = (SELECT id FROM first_account)"), {"uid": resolved_uid})
     accounts = await db_get_user_accounts(resolved_uid)

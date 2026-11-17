@@ -67,6 +67,34 @@ def initial_backfill_days() -> int:
     return _int("TALITRADE_MT_API_INITIAL_BACKFILL_DAYS", 7, 0)
 
 
+def market_data_enabled() -> bool:
+    """Market ticker and price chart (symbols, quotes, candles). Off => routes answer 404, no
+    market tables are created and the worker never polls market endpoints."""
+    return api_enabled() and _flag("TALITRADE_MT_API_MARKET_DATA_ENABLED")
+
+
+def market_quote_interval_seconds() -> int:
+    return _int("TALITRADE_MT_API_MARKET_QUOTE_INTERVAL_SECONDS", 15, 10)
+
+
+def market_candle_interval_seconds() -> int:
+    return _int("TALITRADE_MT_API_MARKET_CANDLE_INTERVAL_SECONDS", 60, 30)
+
+
+def market_symbols_interval_seconds() -> int:
+    return _int("TALITRADE_MT_API_MARKET_SYMBOLS_INTERVAL_SECONDS", 300, 60)
+
+
+def market_interest_seconds() -> int:
+    """How long one dashboard read keeps market polling alive. Nobody reading => polling stops."""
+    return _int("TALITRADE_MT_API_MARKET_INTEREST_SECONDS", 45, 20)
+
+
+def market_candle_window() -> int:
+    """Candles loaded for a chart (the provider allows at most 750 per request)."""
+    return min(750, _int("TALITRADE_MT_API_MARKET_CANDLE_WINDOW", 300, 50))
+
+
 def connect_enabled() -> bool:
     """Whether NEW connections may be created (and the dashboard may show the token form).
 
@@ -83,6 +111,9 @@ def service_status(user_id: str | None = None) -> dict:
     pilot = bool(user_id) and api_enabled() and str(user_id) in {s.strip() for s in pilot_ids}
     status = {"secure_storage": crypto.is_configured(), "worker": worker_enabled(), "connect_enabled": connect_enabled() or pilot}
     status["accepting_connections"] = all(status.values())
+    status["market_data"] = market_data_enabled() and worker_enabled()   # informational; not part of accepting_connections
+    from app.services.account_setup import config as setup_config
+    status["account_setup"] = setup_config.enabled()                     # the dashboard offers account setup only when this is on
     return status
 
 

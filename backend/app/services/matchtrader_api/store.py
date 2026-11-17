@@ -26,7 +26,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from app.services.matchtrader_api import schemas
-from app.services.matchtrader_api.backfill import COMPLETE, GAP, SPLIT
+from app.services.matchtrader_api.backfill import COMPLETE, GAP, SPLIT, WINDOW
 
 RESOURCES = ("summary", "positions", "pending_orders", "closed_positions", "ledgers")
 HISTORY_RESOURCES = ("closed_positions", "ledgers")
@@ -48,6 +48,18 @@ def _default_engine():
 
 def _dt(ms: int | None) -> datetime | None:
     return schemas.ms_to_datetime(ms)
+
+
+EARLIEST_PLAUSIBLE_MS = 946_684_800_000          # 2000-01-01 UTC
+
+
+def plausible_creation_ms(value) -> int | None:
+    """The broker's account creation time, or None if it is missing or not believable."""
+    try:
+        ms = int(value)
+    except (TypeError, ValueError):
+        return None
+    return ms if EARLIEST_PLAUSIBLE_MS <= ms <= time.time() * 1000 + 86_400_000 else None
 
 
 def _raw(model) -> str:
@@ -107,6 +119,11 @@ DDL = [
     """CREATE UNIQUE INDEX IF NOT EXISTS uq_mtapi_connections_identity
        ON mtapi_connections (platform_host, external_login) WHERE status <> 'disconnected'""",
     "CREATE INDEX IF NOT EXISTS idx_mtapi_connections_user ON mtapi_connections (user_id)",
+    # When the broker says the trading account was created (GET /v1/account createTime). A candidate
+    # lower bound for "all available history"; it is not proof the broker keeps every trade since then.
+    "ALTER TABLE mtapi_connections ADD COLUMN IF NOT EXISTS account_created_at TIMESTAMPTZ",
+    # When the user last asked for (more) history: a pass that is finishing then keeps it due now.
+    "ALTER TABLE mtapi_connections ADD COLUMN IF NOT EXISTS history_requested_at TIMESTAMPTZ",
     """CREATE TABLE IF NOT EXISTS mtapi_credentials (
         connection_id INTEGER PRIMARY KEY REFERENCES mtapi_connections(id) ON DELETE CASCADE,
         ciphertext TEXT NOT NULL,
@@ -185,6 +202,19 @@ DDL = [
     "CREATE INDEX IF NOT EXISTS idx_mtapi_intervals_queue ON mtapi_history_intervals (connection_id, status, kind)",
     # One durable "refresh now" request per connection. state: queued | running | completed | partial | failed | cancelled.
     # The worker runs it under the normal lease; ``generation`` ties it to the credential it was asked for.
+    # One "import all available trade history" request per connection (the one-tap import).
+    # The work itself is ordinary backfill intervals; this row records what was asked for and why.
+    # basis: account_created_at (the broker reported when the account was opened) | not_reported.
+    """CREATE TABLE IF NOT EXISTS mtapi_history_imports (
+        connection_id INTEGER PRIMARY KEY REFERENCES mtapi_connections(id) ON DELETE CASCADE,
+        requested_by TEXT NOT NULL,
+        target_from_ms BIGINT NOT NULL,
+        target_to_ms BIGINT NOT NULL,
+        basis TEXT NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 1,
+        requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_retry_at TIMESTAMPTZ
+    )""",
     """CREATE TABLE IF NOT EXISTS mtapi_sync_requests (
         connection_id INTEGER PRIMARY KEY REFERENCES mtapi_connections(id) ON DELETE CASCADE,
         request_id INTEGER NOT NULL DEFAULT 1,
@@ -202,7 +232,7 @@ DDL = [
 _CANCEL_REQUESTS = """UPDATE mtapi_sync_requests SET state = 'cancelled', detail = :why, finished_at = NOW()
                       WHERE connection_id = :id AND state IN ('queued', 'running')"""
 
-DROP_ORDER = ["mtapi_sync_requests", "mtapi_history_intervals", "mtapi_ledgers", "mtapi_closed_positions", "mtapi_pending_orders",
+DROP_ORDER = ["mtapi_history_imports", "mtapi_market_feeds", "mtapi_market_candles", "mtapi_market_quotes", "mtapi_market_symbols", "mtapi_sync_requests", "mtapi_history_intervals", "mtapi_ledgers", "mtapi_closed_positions", "mtapi_pending_orders",
               "mtapi_positions", "mtapi_account_summary", "mtapi_sync_state", "mtapi_credentials", "mtapi_connections"]
 
 
@@ -411,7 +441,7 @@ class FastOps:
             raise StaleWriter()
 
     async def close_pass(self, connection_id: int, owner: str, *, live_in: float | None = None, history_in: float | None = None,
-                         finish_request: dict | None = None) -> None:
+                         finish_request: dict | None = None, pass_seconds: float | None = None) -> None:
         """Last statement of a pass: release the lease (only if still ours), set the next due
         times, and record the refresh request's outcome if one is still open."""
         request = finish_request or {}
@@ -421,6 +451,9 @@ class FastOps:
                     next_live_sync_at = CASE WHEN CAST(:live_in AS double precision) IS NULL THEN c.next_live_sync_at
                                              ELSE NOW() + make_interval(secs => CAST(:live_in AS double precision)) END,
                     next_history_sync_at = CASE WHEN CAST(:history_in AS double precision) IS NULL THEN c.next_history_sync_at
+                                                -- history the user asked for while this pass ran starts now, not an interval later
+                                                WHEN CAST(:pass_seconds AS double precision) IS NOT NULL
+                                                     AND c.history_requested_at >= NOW() - make_interval(secs => CAST(:pass_seconds AS double precision)) THEN NOW()
                                                 ELSE NOW() + make_interval(secs => CAST(:history_in AS double precision)) END
                 WHERE c.id = :id AND c.lease_owner = :o RETURNING 1),
             fin AS (
@@ -430,7 +463,7 @@ class FastOps:
                   AND EXISTS (SELECT 1 FROM rel)       -- only the lease holder reports; otherwise the next holder re-runs it
                 RETURNING 1)
             SELECT (SELECT COUNT(*) FROM rel) AS released, (SELECT COUNT(*) FROM fin) AS finished
-        """, {"id": connection_id, "o": owner, "live_in": live_in, "history_in": history_in,
+        """, {"id": connection_id, "o": owner, "live_in": live_in, "history_in": history_in, "pass_seconds": pass_seconds,
               "req_id": request.get("request_id"), "req_state": request.get("state"), "req_detail": request.get("detail"),
               "req_resources": json.dumps(request.get("resources") or {})})
 
@@ -530,6 +563,9 @@ class SqlStore(FastOps):
         async with self.engine.begin() as conn:
             for statement in DDL:
                 await conn.execute(text(statement))
+        from app.services.matchtrader_api import config, market   # local import: market builds on this module
+        if config.market_data_enabled():                           # market tables exist only when that feature is on
+            await market.ensure_schema(self)
 
     # ── connections ──────────────────────────────────────────────────────────
     async def create_connection(self, *, user_id: str, identity: dict, capabilities: dict, status: str, status_detail: str | None,
@@ -542,11 +578,12 @@ class SqlStore(FastOps):
             async with self.engine.begin() as conn:
                 row = (await conn.execute(text("""
                     INSERT INTO mtapi_connections (user_id, platform_host, external_login, broker_name, platform_url,
-                        account_currency, account_type, status, status_detail, capabilities, linked_external_account_id, token_hint)
+                        account_currency, account_type, status, status_detail, capabilities, linked_external_account_id, token_hint, account_created_at)
                     VALUES (:user_id, :platform_host, :external_login, :broker_name, :platform_url,
-                        :account_currency, :account_type, :status, :status_detail, CAST(:capabilities AS jsonb), :linked, :token_hint)
+                        :account_currency, :account_type, :status, :status_detail, CAST(:capabilities AS jsonb), :linked, :token_hint,
+                        CASE WHEN CAST(:account_created_ms AS bigint) IS NULL THEN NULL ELSE to_timestamp(CAST(:account_created_ms AS bigint) / 1000.0) END)
                     RETURNING *
-                """), {**identity, "user_id": user_id, "status": status, "status_detail": status_detail,
+                """), {**identity, "account_created_ms": plausible_creation_ms(identity.get("account_created_ms")), "user_id": user_id, "status": status, "status_detail": status_detail,
                        "capabilities": json.dumps(capabilities), "linked": linked_external_account_id, "token_hint": token_hint})).mappings().first()
                 blob = encrypt(row["id"])
                 active = row["status"] == "active"
@@ -609,15 +646,18 @@ class SqlStore(FastOps):
                 await conn.execute(text(_CANCEL_REQUESTS), {"id": connection_id, "why": "connection_changed"})
         return bool(result.rowcount)
 
-    async def rotate_credential(self, connection_id: int, *, encrypt: Callable[[int], str], key_version: Callable[[str], str], token_hint: str, capabilities: dict) -> dict:
+    async def rotate_credential(self, connection_id: int, *, encrypt: Callable[[int], str], key_version: Callable[[str], str], token_hint: str, capabilities: dict,
+                                account_created_ms: int | None = None) -> dict:
         async with self.engine.begin() as conn:
             row = (await conn.execute(text("""
                 UPDATE mtapi_connections
                 SET generation = generation + 1, status = 'active', status_detail = NULL, token_hint = :hint,
+                    account_created_at = COALESCE(CASE WHEN CAST(:created AS bigint) IS NULL THEN NULL ELSE to_timestamp(CAST(:created AS bigint) / 1000.0) END,
+                                                  account_created_at),
                     capabilities = CAST(:caps AS jsonb), lease_owner = NULL, lease_expires_at = NULL,
                     next_live_sync_at = NOW(), next_history_sync_at = NOW(), updated_at = NOW()
                 WHERE id = :id AND status <> 'disconnected' RETURNING *
-            """), {"id": connection_id, "hint": token_hint, "caps": json.dumps(capabilities)})).mappings().first()
+            """), {"id": connection_id, "hint": token_hint, "caps": json.dumps(capabilities), "created": plausible_creation_ms(account_created_ms)})).mappings().first()
             if not row:
                 raise StaleWriter()
             blob = encrypt(connection_id)
@@ -870,8 +910,52 @@ class SqlStore(FastOps):
                 VALUES (:id, :r, :f, :t, 'backfill') ON CONFLICT (connection_id, resource, range_from, range_to) DO NOTHING
             """), {"id": connection_id, "r": resource, "f": range_from, "t": range_to})
             # Start on it at the next worker round instead of waiting out the normal history interval.
-            await conn.execute(text("UPDATE mtapi_connections SET next_history_sync_at = NOW() WHERE id = :id AND status = 'active'"), {"id": connection_id})
+            await conn.execute(text("UPDATE mtapi_connections SET next_history_sync_at = NOW(), history_requested_at = NOW() WHERE id = :id AND status = 'active'"), {"id": connection_id})
         return True
+
+    async def request_older_history(self, connection_id: int, user_id: str, from_ms: int, to_ms: int, resources: list[str]) -> list[dict] | None:
+        """Ask for history back to ``from_ms`` for a connection this user owns (one statement).
+
+        Only the part that is not requested yet is queued: from ``from_ms`` up to the earliest
+        backfill already requested for that resource (1 ms overlap on each side; rows are
+        de-duplicated by uid). Nothing is queued when the range is already covered. A first
+        request for a resource queues ``from_ms`` to ``to_ms``. Existing rows are never removed.
+        Returns None when the connection is not this user's active connection; otherwise one
+        entry per resource: {resource, queued, range_from, range_to}."""
+        rows = await self._one("""
+            WITH c AS (
+                SELECT id FROM mtapi_connections WHERE id = :id AND user_id = :user AND status = 'active' FOR UPDATE),
+            r AS (
+                SELECT x.resource,
+                       (SELECT MIN(h.range_from) FROM mtapi_history_intervals h
+                        WHERE h.connection_id = :id AND h.resource = x.resource AND h.kind = 'backfill' AND h.status <> 'cancelled') AS earliest
+                FROM c, jsonb_array_elements_text(CAST(:resources AS jsonb)) AS x(resource)),
+            plan AS (
+                SELECT r.resource, CAST(:from_ms AS bigint) - 1 AS range_from,
+                       CASE WHEN r.earliest IS NULL THEN CAST(:to_ms AS bigint) + 1 ELSE r.earliest + 1 END AS range_to
+                FROM r WHERE r.earliest IS NULL OR CAST(:from_ms AS bigint) - 1 < r.earliest),
+            ins AS (
+                INSERT INTO mtapi_history_intervals (connection_id, resource, range_from, range_to, kind)
+                SELECT CAST(:id AS integer), plan.resource, plan.range_from, plan.range_to, 'backfill' FROM plan WHERE plan.range_from < plan.range_to
+                ON CONFLICT (connection_id, resource, range_from, range_to) DO NOTHING
+                RETURNING resource, range_from, range_to),
+            wake AS (
+                UPDATE mtapi_connections SET next_history_sync_at = NOW(), history_requested_at = NOW() WHERE id = :id AND EXISTS (SELECT 1 FROM ins) RETURNING 1)
+            SELECT r.resource, (i.resource IS NOT NULL) AS queued, i.range_from, i.range_to, r.earliest
+            FROM r LEFT JOIN ins i ON i.resource = r.resource
+            UNION ALL SELECT NULL, FALSE, NULL, NULL, NULL FROM c WHERE NOT EXISTS (SELECT 1 FROM r)
+        """, {"id": connection_id, "user": user_id, "from_ms": int(from_ms), "to_ms": int(to_ms), "resources": json.dumps(resources)})
+        if not rows:
+            return None
+        return [row for row in rows if row["resource"] is not None]
+
+    async def save_account_created(self, connection_id: int, generation: int, owner: str, created_ms: int | None) -> None:
+        """Fill in the creation time once, for connections stored before it was recorded."""
+        await self._one(f"""
+            WITH {_GUARD}
+            UPDATE mtapi_connections c SET account_created_at = to_timestamp(CAST(:ms AS bigint) / 1000.0)
+            FROM g WHERE c.id = g.id AND c.account_created_at IS NULL AND CAST(:ms AS bigint) IS NOT NULL RETURNING 1
+        """, {"id": connection_id, "gen": generation, "o": owner, "ms": plausible_creation_ms(created_ms)})
 
     async def enqueue_reconcile_if_due(self, connection_id: int, resource: str, range_from: int, range_to: int, every_seconds: int) -> bool:
         """Periodically re-read a wider recent window so late corrections outside the overlap are picked up."""
@@ -951,7 +1035,7 @@ class SqlStore(FastOps):
                     entry_type = EXCLUDED.entry_type, amount = EXCLUDED.amount, entry_time = EXCLUDED.entry_time,
                     comment = EXCLUDED.comment, raw = EXCLUDED.raw, last_seen_at = NOW()
                 RETURNING 1"""
-        status = {COMPLETE: "done", SPLIT: "split", GAP: "gap"}[verdict]
+        status = {COMPLETE: "done", SPLIT: "split", GAP: "gap", WINDOW: "split_window"}[verdict]
         result = await self._one(f"""
             WITH {_GUARD},
             up AS ({upsert}),

@@ -51,8 +51,10 @@
           try { data = raw ? JSON.parse(raw) : null; } catch { data = null; }
           if (!res.ok) {
             // Only the server's own short message is surfaced; never the request or its body.
-            var detail = data && typeof data.detail === 'string' ? data.detail : 'Request failed (' + res.status + ').';
-            throw new ApiError(res.status, detail, res.status === 404 ? 'not_found' : null);
+            // detail is a string, or {reason, message} for errors the page can act on (e.g. start_date_required)
+            var structured = data && data.detail && typeof data.detail === 'object' && typeof data.detail.message === 'string' ? data.detail : null;
+            var detail = structured ? structured.message : data && typeof data.detail === 'string' ? data.detail : 'Request failed (' + res.status + ').';
+            throw new ApiError(res.status, detail, structured && typeof structured.reason === 'string' ? structured.reason : res.status === 404 ? 'not_found' : null);
           }
           return data || {};
         });
@@ -73,11 +75,28 @@
       // Queues a refresh (HTTP 202). It has NOT synchronized anything yet: follow up with getSyncStatus().
       sync: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/sync', o); },
       getSyncStatus: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/sync', o); },
+      // Market data: cached broker prices read from TaliTrade (never from the broker directly).
+      getTicker: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/market/ticker', o); },
+      getCandles: function (connectionId, o) {
+        var query = 'interval=' + encodeURIComponent(String((o && o.interval) || 'M5')) + (o && o.symbol ? '&symbol=' + encodeURIComponent(String(o.symbol)) : '');
+        return request('GET', '/connections/' + id(connectionId) + '/market/candles?' + query, o);
+      },
       getSnapshot: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/snapshot', o); },
       listTrades: function (connectionId, o) {
         o = o || {};
         var query = '?limit=' + encodeURIComponent(String(o.limit || 20)) + (o.cursor ? '&cursor=' + encodeURIComponent(o.cursor) : '');
         return request('GET', '/connections/' + id(connectionId) + '/trades' + query, o);
+      },
+      // range: 30d | 90d | all | custom (custom needs fromMs). Queues only the part not requested yet.
+      requestHistory: function (connectionId, o) {
+        var body = { range: String(o.range) };
+        if (o.fromMs !== undefined && o.fromMs !== null) body.from_ms = Math.floor(Number(o.fromMs));
+        return request('POST', '/connections/' + id(connectionId) + '/backfill', { body: body, signal: o.signal });
+      },
+      getAnalytics: function (connectionId, o) {
+        o = o || {};
+        var query = 'tz=' + encodeURIComponent(String(o.tz || 'UTC')) + (o.fromMs ? '&from_ms=' + Math.floor(Number(o.fromMs)) : '') + (o.toMs ? '&to_ms=' + Math.floor(Number(o.toMs)) : '');
+        return request('GET', '/connections/' + id(connectionId) + '/analytics?' + query, o);
       },
       startRecentBackfill: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/backfill', { body: { from_ms: o.fromMs }, signal: o.signal }); },
       rotate: function (connectionId, o) { return request('POST', '/connections/' + id(connectionId) + '/rotate', { body: { token: o.token }, signal: o.signal }); },
@@ -197,7 +216,9 @@
     var stats = history.period_stats;
     var coverage = history.coverage_status;
     var coverageNote = coverage === 'complete_for_requested_range' ? '' : coverage === 'in_progress' ? ' · still importing' : coverage === 'partial_gaps' ? ' · incomplete (gaps)' : '';
-    var since = stats && stats.first_close_time ? new Date(stats.first_close_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null;
+    var shortDate = function (iso) { return iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : null; };
+    var since = stats ? shortDate(stats.first_close_time) : null;          // first closed trade in the imported history
+    var importedFrom = shortDate(history.requested_from);                   // where the imported history starts
     var analytics = {
       dailyPnl: null, dailyPnlText: '—', dailySub: 'Not available for API accounts yet', dailyTone: 'txt-dim',
       overallPnl: null, overallPnlText: '—', overallSub: coverage === 'not_permitted' ? 'Trade history not permitted by this token' : 'Imported period · waiting for trades', overallTone: 'txt-dim',
@@ -207,7 +228,7 @@
       var net = toNumber(stats.net_profit);
       analytics.overallPnl = net;
       analytics.overallPnlText = formatMoney(stats.net_profit, currency, { signed: true });
-      analytics.overallSub = 'Imported period' + (since ? ' since ' + since : '') + ' · net of fees' + coverageNote;
+      analytics.overallSub = 'Net of fees' + (since ? ' · closed trades from ' + since : '') + (importedFrom ? ' · history imported from ' + importedFrom : '') + coverageNote;
       analytics.overallTone = net > 0 ? 'txt-green' : net < 0 ? 'txt-red' : 'txt-dim';
       analytics.winRate = Math.round((stats.winning_entries / stats.closed_entries) * 100);
       analytics.winRateSub = stats.winning_entries + ' of ' + stats.closed_entries + ' closed entries' + coverageNote;
@@ -244,6 +265,7 @@
         accountType: '', accountSize: null,             // never a default size or prop stage for API accounts
         connectorType: 'matchtrader_api', apiConnectionId: card.id,
         displayId: card.masked_login || '…', currency: card.currency || 'USD',
+        displayName: card.display_label || ((card.broker_name || 'Match-Trader') + ' · ' + (card.masked_login || '…')),
         providerAccountType: card.provider_account_type || '', apiStatus: card.status, apiDisplayState: card.display_state,
         balanceText: card.balance != null ? formatMoney(card.balance, card.currency) : null,
         lastSyncedAt: card.last_synced_at || null,
@@ -298,7 +320,56 @@
     }
   }
 
-  var pure = { formatMoney: formatMoney, relativeTime: relativeTime, deriveDisplayState: deriveDisplayState, mergeAccounts: mergeAccounts,
+  // ── analytics (imported closed entries of ONE account) ──
+  function shortDate(iso) {
+    var d = iso ? new Date(iso) : null;
+    return d && !isNaN(d.getTime()) ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+  }
+  function coverageText(coverage) {
+    var c = coverage || {};
+    var since = c.requested_from ? ' since ' + shortDate(c.requested_from) : '';
+    switch (c.status) {
+      case 'complete_for_requested_range': return 'Imported history' + since + ' · complete for the requested range';
+      case 'in_progress': return 'Importing older history' + since + ' · figures may change as it arrives';
+      case 'partial_gaps': return 'Imported history' + since + ' · ' + (c.gap_count || 0) + ' period(s) could not be fully imported';
+      case 'pending': return 'Trade history has not been imported yet';
+      case 'not_permitted': return 'Trade history is not permitted by this API token';
+      default: return 'Imported trades only · the import range is not known';
+    }
+  }
+  function analyticsView(payload) {
+    var p = payload || {};
+    var s = p.summary || {};
+    var cur = p.currency || 'USD';
+    var hasResults = (s.entries_with_result || 0) > 0;
+    var winsLabel = (s.winning_entries || 0) + ' of ' + (s.entries_with_result || 0) + ' closed entries' + (s.breakeven_entries ? ' (' + s.breakeven_entries + ' breakeven)' : '');
+    var pf = s.profit_factor !== null && s.profit_factor !== undefined ? s.profit_factor
+      : s.profit_factor_undefined_reason === 'no_losses' ? 'No losses' : '—';
+    var points = (p.cumulative_realized || []).map(function (d) { return toNumber(d.cumulative_net); }).filter(function (v) { return v !== null; });
+    var streak = p.positive_day_streak || 0;
+    return {
+      meta: 'Imported closed entries · ' + (p.time_zone || 'UTC') + ' days',
+      coverage: coverageText(p.coverage) + (s.entries_without_result ? ' · ' + s.entries_without_result + ' entr' + (s.entries_without_result === 1 ? 'y' : 'ies') + ' without a reported result not counted' : ''),
+      wr: s.entry_win_rate_percent !== null && s.entry_win_rate_percent !== undefined ? s.entry_win_rate_percent + '%' : '—',
+      wrTone: !hasResults ? 'txt-dim' : Number(s.entry_win_rate_percent) >= 50 ? 'txt-green' : 'txt-red',
+      wrSub: hasResults ? winsLabel : 'No closed entries in this range',
+      pf: pf,
+      netpl: formatMoney(s.net_profit, cur, { signed: true }),
+      netTone: toNumber(s.net_profit) === null ? 'txt-dim' : toNumber(s.net_profit) >= 0 ? 'txt-green' : 'txt-red',
+      totalTrades: String(s.closed_entries || 0),
+      wlSub: 'W:' + (s.winning_entries || 0) + ' L:' + (s.losing_entries || 0) + ' BE:' + (s.breakeven_entries || 0) + ' · ' + (s.positions || 0) + ' positions',
+      avgWin: s.average_win ? formatMoney(s.average_win, cur, { signed: true }) : '—',
+      avgLoss: s.average_loss ? formatMoney(s.average_loss, cur, { signed: true }) : '—',
+      bestSym: p.best_symbol ? p.best_symbol.symbol : '—',
+      bestSymPnl: p.best_symbol ? formatMoney(p.best_symbol.net_profit, cur, { signed: true }) + ' net' : '—',
+      greenStreak: streak + 'd',
+      greenStreakSub: streak ? 'positive trading days in a row' : 'no positive day streak',
+      curveLabel: 'Cumulative realized P&L (closed entries, not account equity)',
+      curve: points
+    };
+  }
+
+  var pure = { formatMoney: formatMoney, analyticsView: analyticsView, coverageText: coverageText, relativeTime: relativeTime, deriveDisplayState: deriveDisplayState, mergeAccounts: mergeAccounts,
                tradeToHistoryRow: tradeToHistoryRow, interpretSyncRequest: interpretSyncRequest, isApiAccountKey: isApiAccountKey, connectionIdFromKey: connectionIdFromKey,
                toNumber: toNumber, CONNECTION_STATUS_TEXT: CONNECTION_STATUS_TEXT,
                SNAPSHOT_MIN_INTERVAL_MS: SNAPSHOT_MIN_INTERVAL_MS, IMPORT_POLL_MS: IMPORT_POLL_MS, IMPORT_POLL_MAX: IMPORT_POLL_MAX, SYNC_POLL_MS: SYNC_POLL_MS, SYNC_POLL_MAX: SYNC_POLL_MAX, RECENT_BACKFILL_DAYS: RECENT_BACKFILL_DAYS };

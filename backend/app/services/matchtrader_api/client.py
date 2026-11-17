@@ -26,7 +26,11 @@ BASE_URL = "https://trader-api.match-trader.com"
 ALLOWED_PATHS = frozenset({
     "/v1/platform-details", "/v1/account", "/v1/account-summary", "/v1/positions",
     "/v1/pending-orders", "/v1/closed-positions", "/v1/ledgers",
+    # market data (read-only): instruments, bid/ask snapshots, OHLC candles
+    "/v1/symbols", "/v1/quotes", "/v1/candles",
 })
+CANDLE_INTERVALS = ("M1", "M5", "M15", "M30", "H1", "H4", "D1", "W1", "MN1")
+CANDLE_LIMIT_MAX = 750
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
 TIMEOUT = httpx.Timeout(connect=5.0, read=15.0, write=5.0, pool=5.0)
 
@@ -208,3 +212,32 @@ class MatchTraderApiClient:
         params = [("from", int(range_from)), ("to", int(range_to)), ("limit", int(limit))]
         payload = await self._get("/v1/ledgers", params, low_priority=low_priority)
         return self._parse("/v1/ledgers", schemas.parse_envelope, payload, "ledgers", schemas.LedgerEntry)
+
+    # ── market data ──────────────────────────────────────────────────────────
+    async def symbols(self, *, low_priority: bool = True) -> list[schemas.MarketSymbol]:
+        """Every instrument this account offers (unfiltered)."""
+        return self._parse("/v1/symbols", schemas.parse_envelope, await self._get("/v1/symbols", low_priority=low_priority), "symbols", schemas.MarketSymbol)
+
+    async def quotes(self, symbols: list[str], *, low_priority: bool = True) -> list[schemas.MarketQuote]:
+        """Bid/ask snapshots for one or more symbols in ONE request (repeated ``symbol`` keys).
+        Symbols the account does not offer are simply absent from the answer."""
+        wanted = [str(s) for s in symbols if s]
+        if not wanted:
+            raise ValueError("at least one symbol is required")
+        payload = await self._get("/v1/quotes", [("symbol", s) for s in wanted], low_priority=low_priority)
+        return self._parse("/v1/quotes", schemas.parse_envelope, payload, "quotes", schemas.MarketQuote)
+
+    async def candles(self, symbol: str, interval: str, *, range_from: int | None = None, range_to: int | None = None, limit: int = 100,
+                      low_priority: bool = True) -> list[schemas.MarketCandle]:
+        """Candles for one symbol and interval, ascending by opening time. With ``range_to`` and a
+        limit the provider returns the most recent ``limit`` candles ending there."""
+        if interval not in CANDLE_INTERVALS:
+            raise ValueError("unsupported candle interval")
+        params: list[tuple[str, Any]] = [("symbol", str(symbol)), ("interval", interval)]
+        if range_from is not None:
+            params.append(("from", int(range_from)))
+        if range_to is not None:
+            params.append(("to", int(range_to)))
+        params.append(("limit", max(1, min(int(limit), CANDLE_LIMIT_MAX))))
+        payload = await self._get("/v1/candles", params, low_priority=low_priority)
+        return self._parse("/v1/candles", schemas.parse_envelope, payload, "candles", schemas.MarketCandle)
