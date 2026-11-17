@@ -513,6 +513,7 @@ button.tf-btn{cursor:pointer;line-height:inherit;}
 .depth-mid{border-top:1px solid var(--border);padding:6px 14px;display:flex;align-items:center;justify-content:space-between;background:var(--s2);}
 .depth-mid-price{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;}
 .depth-mid-lbl{font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;}
+.profile-hero{text-align:center;padding:24px 18px;margin-bottom:16px;background:radial-gradient(ellipse at 50% 0%,rgba(42,171,238,.12),transparent 72%),var(--s1)}.profile-avatar{width:104px;height:104px;margin:16px auto 12px;border-radius:26px;display:grid;place-items:center;background:var(--s2);outline:1px solid var(--border2);outline-offset:3px;color:var(--blue);font-size:38px;font-weight:700}.profile-avatar img{width:100%;height:100%;object-fit:contain;border-radius:inherit}.profile-hero h1{font-size:24px;overflow-wrap:anywhere}.profile-hero p{color:var(--t2);overflow-wrap:anywhere}.profile-hero button{margin-top:16px;min-height:44px}.profile-details{border-bottom:1px solid var(--border);margin-bottom:8px}.profile-details summary{padding:15px 4px;cursor:pointer;font-weight:600;color:var(--text)}.profile-exit{display:block;margin:16px auto;min-height:44px}.settings-group [role=switch]:focus-visible,.settings-group [role=button]:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
 </style>
 </head>
 <body>
@@ -1490,7 +1491,18 @@ function applyUserToTopbar(user) {
   const btnProfile = document.getElementById('btnProfile');
   if (btnProfile) {
     btnProfile.title = 'Open profile';
-    document.getElementById('profileName').textContent = displayName;
+    const fullName = [user.firstName,user.lastName].filter(Boolean).join(' ') || displayName;
+    document.getElementById('profileName').textContent = fullName;
+    const avatar = document.getElementById('profileAvatar');
+    const initials = [user.firstName,user.lastName].filter(Boolean).map(n=>Array.from(n)[0]).join('') || Array.from(displayName)[0];
+    avatar.textContent = initials.toUpperCase();
+    if (user.photoUrl) {
+      const photo = new Image();
+      photo.alt = '';
+      photo.onload = () => { if (avatar.dataset.photo === user.photoUrl) avatar.replaceChildren(photo); };
+      avatar.dataset.photo = user.photoUrl;
+      photo.src = user.photoUrl;
+    } else { delete avatar.dataset.photo; }
     document.getElementById('profileHandle').textContent = user.username ? '@' + user.username : '';
     document.getElementById('profileSignOut').onclick = (e) => {
       e.stopPropagation();
@@ -1765,7 +1777,24 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
 
 <!-- ACCOUNT -->
 <div id="page-account" class="page">
-  <section class="card card-p" aria-label="Your profile" style="margin-bottom:16px"><div class="sec-label">Your profile</div><h2 id="profileName">Trader</h2><p id="profileHandle"></p><button type="button" class="btn btn-blue" onclick="openAcctSheet()">Manage accounts</button> <button type="button" id="profileSignOut" class="btn btn-ghost">Sign out</button></section>
+  <section class="profile-hero card" aria-label="Your profile">
+    <div class="sec-label">Your profile</div>
+    <div class="profile-avatar" id="profileAvatar" aria-hidden="true">T</div>
+    <h1 id="profileName">Trader</h1><p id="profileHandle"></p>
+    <button type="button" class="btn btn-blue" onclick="openAcctSheet()">Manage accounts</button>
+  </section>
+  <div id="accountActionStatus" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--s2);font-size:11px;color:var(--t2)"></div>
+  <div class="sec-head"><div class="sec-label">Preferences</div></div>
+  <div class="settings-group">
+    <div class="sg-item rip" id="prefCompactRow" role="switch" tabindex="0"><div class="sg-ico" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="15" x2="14" y2="15"/></svg></div><div class="sg-info"><div class="sg-title">Compact display</div><div class="sg-sub" id="prefCompactSub">Default spacing</div></div><div class="toggle" data-pref-toggle="compact" id="prefCompactToggle"></div></div>
+    <div class="sg-item rip" id="prefChartRow" role="button" tabindex="0"><div class="sg-ico" style="background:var(--green-dim);color:var(--green)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="sg-info"><div class="sg-title">Chart style</div><div class="sg-sub" id="prefChartSub">Preferred style for market charts</div></div><div class="sg-right" id="prefChartMode" style="color:var(--t2);font-size:11px">Candle</div></div>
+    <div class="sg-item rip" id="prefHistoryRow" role="switch" tabindex="0"><div class="sg-ico" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">History filters</div><div class="sg-sub" id="prefHistorySub">Remember selected filter and date range</div></div><div class="tag" id="prefHistoryTag">Saved</div></div>
+    <div class="sg-item rip" id="openRulesRow" role="button" tabindex="0"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
+  </div>
+  <button type="button" id="profileSignOut" class="btn btn-ghost profile-exit">Sign out</button>
+</div>
+
+<div id="page-payout" class="page">
   <div class="sec-head">
     <div class="sec-label">Payout</div>
     <div class="sec-meta" id="payoutMeta" style="color:var(--t3)">—</div>
@@ -1859,59 +1888,6 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     </div>
   </div>
 
-  <div class="sec-head"><div class="sec-label">Account & Settings</div><div class="sec-meta" id="accountSettingsMeta">Live management</div></div>
-  <div id="accountActionStatus" style="display:none;margin-bottom:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--border);background:var(--s2);font-size:11px;color:var(--t2)"></div>
-
-  <div class="card card-p" style="margin-bottom:10px">
-    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
-      <div>
-        <div style="font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:var(--t3);font-weight:600">Session</div>
-        <div style="font-size:13px;color:var(--text);font-weight:600;margin-top:5px" id="acctIdentityUser">Telegram session unavailable</div>
-        <div style="font-size:11px;color:var(--t3);margin-top:4px" id="acctIdentitySession">Sign in to view Telegram identity context.</div>
-      </div>
-      <div class="tag" id="acctIdentityPrimary">Primary unknown</div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Active account</div><div style="font-size:12px;color:var(--text);margin-top:4px" id="acctIdentityActive">No active account</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Account model</div><div style="font-size:12px;color:var(--text);margin-top:4px" id="acctIdentityType">Unavailable</div></div>
-    </div>
-  </div>
-
-  <div class="card card-p" style="margin-bottom:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Linked Accounts</div><div class="h-r" id="linkedAccountsMeta">0 linked</div></div>
-    <div id="linkedAccountsList" style="display:flex;flex-direction:column;gap:8px"></div>
-    <div style="display:flex;gap:8px;margin-top:10px">
-      <button class="btn btn-ghost rip" style="flex:1" onclick="openAddAccountFlow()">Add account</button>
-      <button class="btn btn-ghost rip" style="flex:1" onclick="refreshAccountSettingsSurface('manual')">Refresh</button>
-    </div>
-  </div>
-
-  <div class="card card-p" style="margin-bottom:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Connector Health</div><div class="h-r" id="syncHealthMeta">Read-only status</div></div>
-    <div id="accountSyncHealthList" style="display:flex;flex-direction:column;gap:8px"></div>
-  </div>
-
-  <div class="card card-p" style="margin-bottom:10px">
-    <div class="card-h" style="margin-bottom:8px"><div class="h-l">Rules / Payout / Challenge</div><div class="h-r" id="quickAccessMeta">Quick actions</div></div>
-    <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px">
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="openRules()">Trading rules</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('account');fetchPayout();">Payout</button>
-      <button class="btn btn-ghost rip" style="padding:8px 6px;font-size:11px" onclick="showPage('challenges');fetchChallenges();fetchLeaderboard();">Challenge</button>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Model</div><div id="quickAccessModel" style="font-size:12px;margin-top:4px">Unavailable</div></div>
-      <div style="background:var(--s2);border:1px solid var(--border);border-radius:9px;padding:9px"><div style="font-size:10px;color:var(--t3)">Progress</div><div id="quickAccessProgress" style="font-size:12px;margin-top:4px">Waiting for account data</div></div>
-    </div>
-  </div>
-
-  <div class="sec-head"><div class="sec-label">Preferences</div></div>
-  <div class="settings-group">
-    <div class="sg-item rip" id="prefCompactRow"><div class="sg-ico" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="15" x2="14" y2="15"/></svg></div><div class="sg-info"><div class="sg-title">Compact display</div><div class="sg-sub" id="prefCompactSub">Default spacing</div></div><div class="toggle" data-pref-toggle="compact" id="prefCompactToggle"></div></div>
-    <div class="sg-item rip" id="prefChartRow"><div class="sg-ico" style="background:var(--green-dim);color:var(--green)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="sg-info"><div class="sg-title">Chart style</div><div class="sg-sub" id="prefChartSub">Remember current chart renderer</div></div><div class="sg-right" id="prefChartMode" style="color:var(--t2);font-size:11px">Candle</div></div>
-    <div class="sg-item rip" id="prefHistoryRow"><div class="sg-ico" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">History filters</div><div class="sg-sub" id="prefHistorySub">Remember selected filter and date range</div></div><div class="tag" id="prefHistoryTag">Saved</div></div>
-    <div class="sg-item rip" id="openRulesRow"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
-  </div>
-  <div class="footer-card"><span>TaliTrade v3.2</span><span></span><span>Account</span></div>
 </div>
 
 <!-- CHALLENGES -->
@@ -2058,14 +2034,14 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
     showPage(p);
     if(p==='chart')setTimeout(initChart,200);
     if(p==='analytics'){fetchAnalytics();fetchJournal();}
-    if(p==='account')fetchPayout();
+    if(p==='payout')fetchPayout();
     if(p==='news')fetchNews();
   });
 });
 // Topbar: profile → account page (restored)
 document.getElementById('btnProfile').addEventListener('click',()=>{
   document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
-  showPage('account');fetchPayout();
+  showPage('account');
 });
 
 // ── ACCOUNT SWITCHER ──────────────────────────────────────────────────────────
@@ -2240,7 +2216,12 @@ function applyAccountPreferences(){
   const compactSub=document.getElementById('prefCompactSub');
   if(compactSub)compactSub.textContent=compact?'Compact spacing enabled':'Default spacing';
 
-  const chartStyle=localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'candle';
+  document.getElementById('prefCompactRow').setAttribute('aria-checked',String(compact));
+  const remember=localStorage.getItem('tali_pref_remember_history')!=='0';
+  document.getElementById('prefHistoryRow').setAttribute('aria-checked',String(remember));
+  document.getElementById('prefHistoryTag').textContent=remember?'On':'Off';
+  const chartStyle=localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line';
+  if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.setMode(chartStyle);
   const modeEl=document.getElementById('prefChartMode');
   if(modeEl)modeEl.textContent=chartStyle==='line'?'Line':'Candle';
 
@@ -2254,6 +2235,7 @@ function applyAccountPreferences(){
 }
 
 function persistHistoryPrefs(){
+  if(localStorage.getItem('tali_pref_remember_history')==='0')return;
   try{
     localStorage.setItem(ACCOUNT_PREF_KEYS.history,JSON.stringify({
       filter:historyState.filter,
@@ -2905,17 +2887,19 @@ document.getElementById('prefCompactRow')?.addEventListener('click',()=>{
   applyAccountPreferences();
 });
 document.getElementById('prefChartRow')?.addEventListener('click',()=>{
-  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
-  const lineBtn=document.getElementById('toolLine');
-  const candleBtn=document.getElementById('toolCandle');
-  if(lineBtn&&candleBtn){
-    lineBtn.classList.add('active');
-    candleBtn.classList.remove('active');
-  }
-  showAccountActionStatus('Equity chart uses line mode until market candles are wired.','info');
+  const next=(localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line')==='line'?'candle':'line';
+  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,next);
   applyAccountPreferences();
-  refreshChartForActiveAccount('pref');
 });
+document.getElementById('prefHistoryRow').addEventListener('click',()=>{
+  const enable=localStorage.getItem('tali_pref_remember_history')==='0';
+  localStorage.setItem('tali_pref_remember_history',enable?'1':'0');
+  if(enable) persistHistoryPrefs(); else localStorage.removeItem(ACCOUNT_PREF_KEYS.history);
+  applyAccountPreferences();
+});
+document.querySelectorAll('#page-account .settings-group [tabindex]').forEach(row=>row.addEventListener('keydown',e=>{
+  if(e.key==='Enter'||e.key===' '){e.preventDefault();row.click();}
+}));
 document.getElementById('openRulesRow')?.addEventListener('click',openRules);
 
 // HELPERS
@@ -3992,7 +3976,7 @@ function mkCheck(ok, label, subtext, pct){
 }
 
 // Poll payout every 30s when visible
-setInterval(()=>{if(document.getElementById('page-account').classList.contains('active'))fetchPayout();},30000);
+setInterval(()=>{if(document.getElementById('page-payout').classList.contains('active'))fetchPayout();},30000);
 
 // ── PAYOUT COUNTDOWN TRACKER ──────────────────────────────────────────────────
 // We track the first-trade date and last-reset date in localStorage per account.
@@ -4437,12 +4421,14 @@ function resetHistoryState(clearRows=false){
 }
 function setHistoryFilter(v){
   historyState.filter=v;
+  persistHistoryPrefs();
   resetHistoryState(true);
   renderHistoryPanel();
   loadHistoryPage(true);
 }
 function setHistoryDatePreset(v){
   historyState.datePreset=v;
+  persistHistoryPrefs();
   resetHistoryState(true);
   renderHistoryPanel();
   loadHistoryPage(true);
@@ -4453,6 +4439,7 @@ function applyCustomHistoryRange(){
   historyState.customStart=start;
   historyState.customEnd=end;
   historyState.datePreset='custom';
+  persistHistoryPrefs();
   resetHistoryState(true);
   renderHistoryPanel();
   loadHistoryPage(true);
@@ -5021,7 +5008,7 @@ document.querySelectorAll('#chartIntervalRow .tf-btn').forEach(btn=>{
   btn.addEventListener('click',()=>{ if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.setInterval(btn.dataset.interval); });
 });
 document.getElementById('toolCandle').addEventListener('click',function(){
-  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ TaliMatchTraderMarket.setMode('candle'); return; }   // real OHLC candles
+  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'candle'); applyAccountPreferences(); return; }   // real OHLC candles
   this.classList.add('active');
   document.getElementById('toolLine').classList.remove('active');
   showChartState('Candle view unavailable','Market OHLC feed is not connected in this shell. Showing equity line instead.');
@@ -5034,7 +5021,7 @@ document.getElementById('toolCandle').addEventListener('click',function(){
   applyAccountPreferences();
 });
 document.getElementById('toolLine').addEventListener('click',function(){
-  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ TaliMatchTraderMarket.setMode('line'); return; }     // candle closes
+  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line'); applyAccountPreferences(); return; }     // candle closes
   this.classList.add('active');
   document.getElementById('toolCandle').classList.remove('active');
   localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
@@ -5045,7 +5032,7 @@ document.getElementById('toolLine').addEventListener('click',function(){
   const el=document.getElementById(id);
   if(el) el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); el.click(); } });
 });
-if((localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line')!=='line'){localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');}
+
 document.getElementById('toolLine').classList.add('active');
 document.getElementById('toolCandle').classList.remove('active');
 
