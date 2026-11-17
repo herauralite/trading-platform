@@ -454,10 +454,26 @@ if(window.IntersectionObserver){const observer=new IntersectionObserver(entries=
     ctx.beginPath();ctx.ellipse(px,py,Math.max(.45,1.56*depth),1.42,0,0,tau);ctx.fill()}
    ctx.restore();
  }
+ let seed=761;function random(){seed=seed*16807%2147483647;return seed/2147483647}
+ const stars=Array.from({length:148},()=>({x:random()*700,y:random()*525,r:.35+random()**3*1.45,phase:random()*tau}));
+ function sky(){
+  ctx.save();
+  for(const star of stars){
+   const edge=Math.min(1,star.x/65,(700-star.x)/65,star.y/55,(525-star.y)/55);
+   ctx.globalAlpha=edge*(.46+.27*Math.sin(t*.58+star.phase));
+   ctx.fillStyle=star.r>1.4?'#b4ebff':'#74abd2';ctx.beginPath();ctx.arc(star.x,star.y,star.r,0,tau);ctx.fill();
+   if(star.r>1.65){ctx.fillRect(star.x-.45,star.y-3.8,.9,7.6);ctx.fillRect(star.x-3.8,star.y-.45,7.6,.9)}
+  }
+  const cycle=Math.floor((t+1)/8),u=((t+1)%8)/1.25;
+  if(u<1){const x=350+135*Math.sin(cycle*2.43)+170*u,y=38+52*(1+Math.sin(cycle*3.7))+66*u;
+   const g=ctx.createLinearGradient(x-64,y-25,x,y);g.addColorStop(0,'transparent');g.addColorStop(.82,'#48baff');g.addColorStop(1,'#daffff');
+   ctx.globalAlpha=Math.sin(u*Math.PI)*.85;ctx.strokeStyle=g;ctx.lineWidth=1.8;ctx.beginPath();ctx.moveTo(x-64,y-25);ctx.lineTo(x,y);ctx.stroke()}
+  ctx.restore()
+ }
  function paint(){
  const w=canvas.clientWidth,h=canvas.clientHeight;if(!w||!h)return;
  const d=Math.min(devicePixelRatio||1,2);if(canvas.width!==Math.round(w*d)||canvas.height!==Math.round(h*d)){canvas.width=Math.round(w*d);canvas.height=Math.round(h*d)}
- ctx.setTransform(d*w/700,0,0,d*h/525,0,0);ctx.clearRect(0,0,700,525);ctx.translate(350,262.5);ctx.scale(1.22,1.22);ctx.translate(-350,-262.5);
+ ctx.setTransform(d*w/700,0,0,d*h/525,0,0);ctx.clearRect(0,0,700,525);sky();ctx.translate(350,262.5);ctx.scale(1.22,1.22);ctx.translate(-350,-262.5);
  const project=(a,r,lift)=>{let x=r*Math.cos(a),z=r*Math.sin(a),y=.41*z-lift;return [350+x*.95+y*.31,261-x*.31+y*.95,z/r]};
  function path(points,color,width){ctx.beginPath();points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.strokeStyle=color;ctx.lineWidth=width;ctx.stroke()}
  for(let j=0;j<6;j++)path(Array.from({length:161},(_,i)=>project(i*tau/160,173+j*20,-38)), 'rgba(74,162,210,'+(.045+j*.007)+')',1);
