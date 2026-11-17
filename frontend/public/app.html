@@ -3130,6 +3130,15 @@ function matchTraderSheetButtons(id){
   return reconnect+`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:var(--red)" onclick="event.stopPropagation();TaliMatchTrader.disconnect('${id}')">${label}</button>`;
 }
 
+// The Challenge / payout tile opens the setup step that would let it measure something.
+function wireProgressTile(action){
+  const box=document.getElementById('ovProgress')&&document.getElementById('ovProgress').parentNode; if(!box) return;
+  if(action&&window.TaliAccountSetup&&TaliAccountSetup.isEnabled()){
+    box.setAttribute('role','button'); box.tabIndex=0; box.style.cursor='pointer'; box.setAttribute('aria-label','Challenge / payout: '+action.label);
+    box.onclick=()=>TaliAccountSetup.runAction(activeAcct,action);
+    box.onkeydown=(e)=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); TaliAccountSetup.runAction(activeAcct,action); } };
+  } else { box.removeAttribute('role'); box.removeAttribute('tabindex'); box.removeAttribute('aria-label'); box.style.cursor=''; box.onclick=null; box.onkeydown=null; }
+}
 // Widgets that need prop-firm rules or stage data are shown as unavailable, never guessed.
 function renderMatchTraderUnavailable(kind){
   if(kind==='payout'){
@@ -3163,8 +3172,11 @@ if(window.TaliMatchTrader){
     getSessionToken:()=>{ try{ return localStorage.getItem('tali_session_token_v1')||''; }catch(e){ return ''; } },
     getApiBase:()=>TaliApiBase.resolveApiBase(),
     onSessionRejected:()=>handleSessionRejected(),
+    getProgress:(key)=>TaliMatchTrader.progressFor(key),
+    onProfileSaved:(key)=>{ if(key===activeAcct) TaliMatchTrader.refreshProgress(key,true); },
   });
   TaliMatchTrader.attach({
+    onProgress:(key)=>{ if(window.TaliAccountSetup) TaliAccountSetup.refreshCard(key); },
     onFirstSnapshot:(key,snapshot)=>{ if(window.TaliAccountSetup) TaliAccountSetup.onFirstSnapshot(key,snapshot); },
     renderSetupCard:(node,key)=>{ if(window.TaliAccountSetup) TaliAccountSetup.renderCard(node,key); },
     hideHistoryRangeControls:()=>!!(window.TaliAccountSetup&&TaliAccountSetup.isEnabled()),
@@ -3232,6 +3244,8 @@ if(window.TaliMatchTrader){
       if(view.overviewStatus){ overviewState.status=view.overviewStatus; dashboardState.status={...view.overviewStatus,lastSyncLabel:view.overviewStatus.syncSub}; }
       if(view.analytics){ overviewState.analytics=view.analytics; dashboardState.analytics=view.analytics; }
       if(view.payout){ overviewState.payout=view.payout; dashboardState.payout=view.payout; }
+      wireProgressTile(view.payout&&view.payout.action);
+      { const dBox=document.getElementById('ovDailyPnl'); if(dBox&&dBox.parentNode){ if(view.analytics&&view.analytics.dailyTitle) dBox.parentNode.title=view.analytics.dailyTitle; else dBox.parentNode.removeAttribute('title'); } }
       dashboardState.alerts=[];
       showOnboardingCard(false);
       renderOverviewCards();

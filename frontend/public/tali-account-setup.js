@@ -232,7 +232,7 @@
     high_water:        { label: 'highest balance reached', known: function () { return null; } },
     high_water_equity: { label: 'highest equity reached',  known: function () { return null; } }
   };
-  var FLOW_TITLES = { basics: 'Personalize this account', phase: 'Phase target', payout: 'Payout target', growth: 'Growth target', firm: 'Firm rules', personal: 'Personal risk limits' };
+  var FLOW_TITLES = { basics: 'Personalize this account', phase: 'Phase target', payout: 'Payout target', growth: 'Growth target', firm: 'Firm rules', personal: 'Personal risk limits', phaseStart: 'Phase starting balance', cycle: 'Payout cycle start' };
   function stepsFor(flow, p) {
     var d = p.draft;
     if (flow === 'basics' || flow === 'phase') {
@@ -246,6 +246,8 @@
     if (flow === 'payout') return ['payoutTarget', 'firmMin'];
     if (flow === 'growth') return ['growthTarget'];
     if (flow === 'firm') return ['firmDaily', 'firmOverall'];
+    if (flow === 'phaseStart') return ['phaseStart'];
+    if (flow === 'cycle') return ['cycleStart'];
     return ['personal', 'refine'];
   }
 
@@ -262,6 +264,92 @@
     var c = cur(key, p), baseLabel = BASES[entry.base] ? BASES[entry.base].label : 'reference', other = convert(entry, p);
     if (entry.unit === 'amount') return money(entry.value, c) + (other ? ' (' + trim(other.value) + '% of ' + baseLabel + ')' : '');
     return trim(entry.value) + '% of ' + baseLabel + (other ? ' (' + money(other.value, c) + ')' : '');
+  }
+
+  function phaseNow(p) { var ev = p.evaluation || {}; return ev.phaseCount === 1 ? 1 : (ev.currentPhase || 1); }
+  function shortDate(iso) { try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (e) { return ''; } }
+  function deviceZone() { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; } }
+  var ZONES = [['UTC', 'UTC'], ['Europe/Athens', 'Europe/Athens (UTC+2, +3 in summer)'], ['Europe/London', 'London'], ['America/New_York', 'New York'], ['America/Chicago', 'Chicago'], ['Asia/Dubai', 'Dubai (UTC+4)']];
+  function zoneLabel(z) { var hit = ZONES.filter(function (x) { return x[0] === z; })[0]; return hit ? hit[1] : z; }
+  function resetFields(d) {
+    var dz = deviceZone(), list = (dz && !ZONES.some(function (x) { return x[0] === dz; }) ? [[dz, 'This device (' + dz + ')']] : []).concat(ZONES);
+    if (d.firmDailyZone && !list.some(function (x) { return x[0] === d.firmDailyZone; })) list.unshift([d.firmDailyZone, d.firmDailyZone]);
+    return '<div class="su-field"><label class="su-label" for="su-reset">Daily reset time</label><input class="su-input su-input-text" id="su-reset" type="time" data-act="reset" value="' + esc(d.firmDailyReset || '') + '"></div>' +
+      '<div class="su-field"><label class="su-label" for="su-zone">Reset time zone</label><select class="su-select" id="su-zone" data-act="zone"><option value="">Choose…</option>' +
+      list.map(function (z) { return '<option value="' + esc(z[0]) + '"' + (d.firmDailyZone === z[0] ? ' selected' : '') + '>' + esc(z[1]) + '</option>'; }).join('') + '</select>' +
+      '<div class="su-note">Your firm\'s server time. Optional, but the daily limit can only be measured with a reset time and its time zone.</div></div>';
+  }
+  function amountField(name, label, value, c) {
+    return '<div class="su-field"><label class="su-label" for="su-amt-' + name + '">' + esc(label) + ' (' + esc(c) + ')</label><div class="su-input-wrap"><span class="su-affix">' + esc(c) +
+      '</span><input class="su-input" id="su-amt-' + name + '" inputmode="decimal" autocomplete="off" data-act="plainAmount" data-name="' + name + '" value="' + esc(value || '') + '" placeholder="0"></div></div>';
+  }
+
+  // ── progress rows (figures come from the server: /progress) ──
+  function entryShort(e, c) {
+    if (!e) return '';
+    var v = num(e.value);
+    return e.unit === 'amount' ? money(v, c) : trim(v) + '% of ' + (BASES[e.base] ? BASES[e.base].label : 'reference');
+  }
+  function sm(v, c) { var n = num(v); return n == null ? '—' : (n < 0 ? '−' + money(-n, c) : money(n, c)); }
+  function rowNote(r, c) {
+    var out = [], b = r.baseline || {}, ref = r.reference || {};
+    if (r.kind === 'target' && r.measurable) {
+      out.push(b.kind === 'confirmed_phase_start' ? 'Balance above the ' + money(num(b.amount), c) + ' this phase started from.' :
+               b.kind === 'confirmed_cycle_start' ? 'Balance above the ' + money(num(b.amount), c) + ' this payout cycle started from.' :
+               'Balance above your ' + money(num(b.amount), c) + ' starting size.');
+      out.push('Open trades not counted.');
+      (r.notes || []).forEach(function (n) {
+        if (n === 'deposit') out.push('Deposits after funding are left out.');
+        if (n === 'ledger_incomplete') out.push('Deposits and withdrawals are checked only as far back as your imported history.');
+        if (n === 'other_cash') out.push('Includes a balance entry of another type.');
+      });
+      if (r.id === 'phase_target') out.push('Your firm decides when the phase is passed.');
+      else if (r.eligibility_note) out.push('Profit before your firm\'s split. Reaching it doesn\'t confirm payout eligibility.');
+    } else if (r.id === 'daily_loss' && r.measurable) {
+      out.push('Counted from today\'s start-of-day balance, ' + money(num(ref.amount), c) + ' (resets ' + esc(r.reset) + ' ' + zoneLabel(r.reset_zone) + '). Open trades count: ' + sm(r.open_pnl, c) + ' now.');
+      if (r.delayed) out.push('Recent closes may still be syncing.');
+    } else if (r.id === 'overall_drawdown' && r.measurable) {
+      out.push(r.mode === 'trailing' ? 'Floor ' + money(num(r.floor), c) + ' = highest balance ' + money(num(ref.amount), c) + (ref.at ? ' (' + shortDate(ref.at) + ')' : '') + ' minus the limit. Measured on balance.'
+                                     : 'Floor ' + money(num(r.floor), c) + ' = starting size minus the limit. Measured on ' + r.measured_on + '.');
+      if ((r.notes || []).indexOf('withdrawal_lowers_balance') >= 0) out.push('Withdrawals lower the balance too.');
+    } else if (r.id === 'risk_per_trade' && r.measurable) {
+      out.push('Largest stop-loss risk: ' + r.worst_symbol + ', valued from its current P&L (approximate).');
+      if (r.unmeasured_count) out.push(r.unmeasured_count + ' open trade' + (r.unmeasured_count === 1 ? '' : 's') + ' without a stop loss or price movement not measured.');
+    }
+    if (r.stale) out.push('Balance is delayed.');
+    return out.join(' ');
+  }
+  function rowHtml(r, i, c) {
+    var tone = r.tone || 'neutral';
+    var src = r.source + (r.entered ? ' · ' + entryShort(r.entered, c) : '') + (r.also ? ' · also ' + r.also.map(function (a) { return a.title.charAt(0).toLowerCase() + a.title.slice(1); }).join(', ') : '');
+    var html = '<div class="pg-row" role="group" aria-label="' + esc(r.title) + '"><div class="pg-top"><span class="pg-title">' + esc(r.title) + '</span><span class="pg-badge pg-' + tone + '">' + esc(r.status_label) + '</span></div>' +
+      '<div class="pg-src">' + esc(src) + '</div>';
+    if (r.measurable) {
+      var w = Math.round(Math.max(0, Math.min(1, Number(r.fraction) || 0)) * 100), ratio = r.ratio_percent != null ? trim(num(r.ratio_percent)) + '%' : '';
+      var left, right;
+      if (r.kind === 'target') {
+        left = sm(r.current, c) + ' of ' + money(num(r.target), c);
+        right = r.status === 'reached' ? (num(r.over_by) ? money(num(r.over_by), c) + ' over' : 'Reached') : money(num(r.remaining), c) + ' to go';
+      } else {
+        left = (r.id === 'risk_per_trade' ? 'Risk ' : 'Used ') + money(num(r.used), c) + ' of ' + money(num(r.limit), c);
+        right = num(r.remaining) >= 0 ? money(num(r.remaining), c) + ' left' : money(-num(r.remaining), c) + ' past the limit';
+      }
+      html += '<div class="pg-bar" role="progressbar" aria-label="' + esc(r.title) + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + w + '" aria-valuetext="' + esc(left + (ratio ? ', ' + ratio : '') + ', ' + right + ', ' + r.status_label) + '"><span class="pg-fill pg-' + tone + '" style="width:' + w + '%"></span></div>' +
+        '<div class="pg-vals"><span>' + esc(left) + (ratio ? ' · <b>' + esc(ratio) + '</b>' : '') + '</span><span>' + esc(right) + '</span></div>';
+      var note = rowNote(r, c);
+      if (note) html += '<div class="pg-note">' + esc(note) + '</div>';
+    } else {
+      html += '<div class="pg-why">' + esc(r.reason || '') + '</div>';
+    }
+    if (r.action) html += '<button type="button" class="su-link pg-act" data-setup="act" data-i="' + i + '">' + esc(r.action.label) + '</button>';
+    return html + '</div>';
+  }
+  function progressBlock(key, p) {
+    var data = host.getProgress && host.getProgress(key);
+    if (!data || !Array.isArray(data.rows)) return null;
+    var c = data.currency || cur(key, p);
+    var rows = data.rows.map(function (r, i) { return rowHtml(r, i, c); }).join('');
+    return { html: rows ? '<div class="su-src">Progress</div><div class="pg-list">' + rows + '</div>' : '', labels: data.labels || [] };
   }
 
   // ── widgets (HTML strings; every trader-supplied value goes through esc) ──
@@ -318,7 +406,7 @@
   // ── steps ──
   var MONEY_STEPS = { phaseTarget: 'evaluation', payoutTarget: 'master', firmMin: 'master', growthTarget: 'master' };
   var DRAFT_KEYS = { type: ['type'], size: ['size'], goal: ['goal'], phaseCount: ['phaseCount'], currentPhase: ['currentPhase'], phaseTarget: ['phaseTarget'],
-    payoutTarget: ['payoutTarget'], firmMin: ['firmMin'], growthTarget: ['growthTarget'], firmDaily: ['firmDaily', 'firmDailyBase', 'firmDailyReset'],
+    payoutTarget: ['payoutTarget'], firmMin: ['firmMin'], growthTarget: ['growthTarget'], firmDaily: ['firmDaily', 'firmDailyBase', 'firmDailyReset', 'firmDailyZone', 'firmDailyFrom'], phaseStart: ['phaseStartPick', 'phaseStartOther'], cycleStart: ['cyclePick', 'cycleOther', 'cycleAfter', 'cycleWithdrawal'],
     firmOverall: ['firmOverall', 'overallMode', 'overallRef'], personal: ['sessionBudget', 'riskPerTrade'], refine: ['style', 'reminder', 'alerts', 'previewShown'] };
   function seed(step, p) {                  // entering a step shows the answer already saved for it
     var d = p.draft, ev = p.evaluation, ms = p.master, fr = p.firmRules, pr = p.personal;
@@ -329,7 +417,15 @@
     else if (step === 'phaseCount') put('phaseCount', ev.phaseCount);
     else if (step === 'currentPhase') put('currentPhase', ev.currentPhase);
     else if (MONEY_STEPS[step]) put(step, fromEntry(p[MONEY_STEPS[step]][step]));
-    else if (step === 'firmDaily') { put('firmDaily', fromEntry(fr.dailyLoss)); put('firmDailyBase', fr.dailyLoss && fr.dailyLoss.base); put('firmDailyReset', fr.dailyReset); }
+    else if (step === 'firmDaily') { put('firmDaily', fromEntry(fr.dailyLoss)); put('firmDailyBase', fr.dailyLoss && fr.dailyLoss.base); put('firmDailyReset', fr.dailyReset); put('firmDailyZone', fr.dailyResetZone); put('firmDailyFrom', fr.dailyFrom); }
+    else if (step === 'phaseStart') {
+      var ps = ev.phaseStart, ph = phaseNow(p);
+      if (ps && Number(ps.phase) === ph) { var same = p.size && num(ps.amount) === p.size.amount; put('phaseStartPick', same ? 'size' : 'other'); if (!same) put('phaseStartOther', String(num(ps.amount))); }
+    }
+    else if (step === 'cycleStart') {
+      var cs = ms.cycleStart;
+      if (cs && d.cycleAfter && Date.parse(cs.after) === Date.parse(d.cycleAfter)) { var eq = p.size && num(cs.amount) === p.size.amount; put('cyclePick', eq ? 'size' : 'other'); if (!eq) put('cycleOther', String(num(cs.amount))); }
+    }
     else if (step === 'firmOverall') { put('firmOverall', fromEntry(fr.overall)); put('overallMode', fr.overallMode); put('overallRef', fr.overallRef); }
     else if (step === 'personal') { put('sessionBudget', fromEntry(pr.sessionBudget)); put('riskPerTrade', fromEntry(pr.riskPerTrade)); }
     else if (step === 'refine') { put('style', pr.style); put('reminder', pr.reminder); put('alerts', pr.alerts ? { daily: !!pr.alerts.daily, budget: !!pr.alerts.budget } : undefined); }
@@ -343,7 +439,12 @@
     if (step === 'currentPhase') return !!d.currentPhase && d.currentPhase <= (d.phaseCount || p.evaluation.phaseCount || 1);
     if (MONEY_STEPS[step]) { var e = draftEntry(step, p); return !!e && (e.unit !== 'percent' || e.value <= 1000); }
     if (step === 'firmDaily') return !!draftEntry('firmDaily', p) && !!d.firmDailyBase;
-    if (step === 'firmOverall') return !!draftEntry('firmOverall', p) && !!d.overallMode && (d.overallMode === 'static' || !!d.overallRef);
+    if (step === 'firmOverall') return !!draftEntry('firmOverall', p) && !!d.overallMode && !!d.overallRef;
+    if (step === 'phaseStart' || step === 'cycleStart') {
+      var k = step === 'phaseStart' ? 'phaseStart' : 'cycle', pick = d[k + 'Pick'], other = num(d[k + 'Other']);
+      var okAmount = (pick === 'size' && !!p.size) || (pick === 'other' && other > 0 && other <= 1e10);
+      return okAmount && (step !== 'cycleStart' || !!d.cycleAfter);
+    }
     if (step === 'personal') return !!draftEntry('sessionBudget', p) || !!draftEntry('riskPerTrade', p);
     return true;
   }
@@ -363,8 +464,16 @@
     else if (step === 'phaseCount') { ev.phaseCount = d.phaseCount; if (ev.phaseCount === 1 || ev.currentPhase > ev.phaseCount) delete ev.currentPhase; drop('phaseCount'); if (ev.phaseCount === 1) drop('currentPhase'); }
     else if (step === 'currentPhase') { ev.currentPhase = d.currentPhase; drop('currentPhase'); }
     else if (MONEY_STEPS[step]) { p[MONEY_STEPS[step]][step] = draftEntry(step, p); drop(step); }
-    else if (step === 'firmDaily') { fr.dailyLoss = draftEntry('firmDaily', p); if (d.firmDailyBase !== 'starting' && d.firmDailyReset) fr.dailyReset = d.firmDailyReset; else delete fr.dailyReset; drop('firmDaily', 'firmDailyBase', 'firmDailyReset'); }
-    else if (step === 'firmOverall') { fr.overall = draftEntry('firmOverall', p); fr.overallMode = d.overallMode; if (d.overallMode === 'trailing') fr.overallRef = d.overallRef; else delete fr.overallRef; drop('firmOverall', 'overallMode', 'overallRef'); }
+    else if (step === 'firmDaily') {
+      fr.dailyLoss = draftEntry('firmDaily', p);
+      if (d.firmDailyReset) { fr.dailyReset = d.firmDailyReset; if (d.firmDailyZone) fr.dailyResetZone = d.firmDailyZone; else delete fr.dailyResetZone; }
+      else { delete fr.dailyReset; delete fr.dailyResetZone; }
+      if (d.firmDailyBase === 'starting' && d.firmDailyFrom) fr.dailyFrom = d.firmDailyFrom; else delete fr.dailyFrom;
+      drop('firmDaily', 'firmDailyBase', 'firmDailyReset', 'firmDailyZone', 'firmDailyFrom');
+    }
+    else if (step === 'phaseStart') { ev.phaseStart = { phase: phaseNow(p), amount: d.phaseStartPick === 'size' ? p.size.amount : num(d.phaseStartOther) }; drop('phaseStartPick', 'phaseStartOther'); }
+    else if (step === 'cycleStart') { p.master.cycleStart = { amount: d.cyclePick === 'size' ? p.size.amount : num(d.cycleOther), after: d.cycleAfter }; drop('cyclePick', 'cycleOther', 'cycleAfter', 'cycleWithdrawal'); }
+    else if (step === 'firmOverall') { fr.overall = draftEntry('firmOverall', p); fr.overallMode = d.overallMode; fr.overallRef = d.overallRef; drop('firmOverall', 'overallMode', 'overallRef'); }
     else if (step === 'personal') {
       var b = draftEntry('sessionBudget', p), r = draftEntry('riskPerTrade', p);
       if (b) pr.sessionBudget = b; if (r) pr.riskPerTrade = r; drop('sessionBudget', 'riskPerTrade');
@@ -417,11 +526,24 @@
       case 'firmDaily': return { title: "What's your firm's daily loss limit?", sub: 'Only the daily rule here. Overall drawdown is the next question.',
         body: moneyField('firmDaily', 'Daily loss limit', p, key) + '<div class="su-label su-gap">Measured from</div>' +
           choices('firmDailyBase', 'Daily limit measured from', [{ id: 'starting', label: 'Starting size' }, { id: 'sod_balance', label: 'Start-of-day balance' }, { id: 'sod_equity', label: 'Start-of-day equity' }], d.firmDailyBase, true) +
-          (d.firmDailyBase && d.firmDailyBase !== 'starting' ? '<div class="su-field"><label class="su-label" for="su-reset">Daily reset time (your firm\'s server time, optional)</label><input class="su-input su-input-text" id="su-reset" type="time" data-act="reset" value="' + esc(d.firmDailyReset || '') + '"></div>' : '') };
+          (d.firmDailyBase === 'starting' ? '<div class="su-label su-gap">Each day\'s loss is counted from</div>' + choices('firmDailyFrom', 'Daily loss counted from', [{ id: 'sod_balance', label: 'Start-of-day balance' }, { id: 'sod_equity', label: 'Start-of-day equity' }], d.firmDailyFrom, true) : '') +
+          (d.firmDailyBase ? resetFields(d) : '') };
       case 'firmOverall': return { title: "What's your firm's overall drawdown limit?", sub: 'The most the account may lose in total.',
         body: moneyField('firmOverall', 'Overall drawdown', p, key) + '<div class="su-label su-gap">How it moves</div>' +
           choices('overallMode', 'Drawdown type', [{ id: 'static', label: 'Static' }, { id: 'trailing', label: 'Trailing' }], d.overallMode, true) +
-          (d.overallMode === 'trailing' ? '<div class="su-label su-gap">Trails the highest</div>' + choices('overallRef', 'Trailing reference', [{ id: 'balance', label: 'Balance' }, { id: 'equity', label: 'Equity' }], d.overallRef, true) : '') };
+          (d.overallMode ? '<div class="su-label su-gap">' + (d.overallMode === 'trailing' ? 'Trails the highest' : 'Measured on') + '</div>' + choices('overallRef', d.overallMode === 'trailing' ? 'Trailing reference' : 'Measured on', [{ id: 'balance', label: 'Balance' }, { id: 'equity', label: 'Equity' }], d.overallRef, true) : '') };
+      case 'phaseStart': {
+        var ph = phaseNow(p);
+        return { title: 'Where did Phase ' + ph + ' start?', sub: 'Phase progress is measured from the balance the phase started with. Some firms start each phase at the starting size, others carry the balance over. Check your firm\'s dashboard.',
+          body: choices('phaseStartPick', 'Phase ' + ph + ' starting balance', (p.size ? [{ id: 'size', label: 'At my starting size', sub: money(p.size.amount, c) }] : []).concat([{ id: 'other', label: 'Another balance' }]), d.phaseStartPick) +
+            (d.phaseStartPick === 'other' ? amountField('phaseStartOther', 'Phase ' + ph + ' starting balance', d.phaseStartOther, c) : '') };
+      }
+      case 'cycleStart': {
+        var w = num(d.cycleWithdrawal);
+        return { title: 'Where did this payout cycle start?', sub: (w ? 'Your history shows a withdrawal of ' + money(w, c) + (d.cycleAfter ? ' on ' + shortDate(d.cycleAfter) : '') + '. ' : '') + 'Payout progress is measured from the balance right after it. Many firms reset the account to the starting size after a payout.',
+          body: choices('cyclePick', 'Payout cycle start', (p.size ? [{ id: 'size', label: 'Back at my starting size', sub: money(p.size.amount, c) }] : []).concat([{ id: 'other', label: 'Another balance' }]), d.cyclePick) +
+            (d.cyclePick === 'other' ? amountField('cycleOther', 'Balance after the withdrawal', d.cycleOther, c) : '') };
+      }
       case 'personal': return { title: 'What are your own limits?', sub: "Yours, not the firm's. Fill in either one or both.",
         body: moneyField('sessionBudget', 'Loss budget per session', p, key) + moneyField('riskPerTrade', 'Risk per trade', p, key) };
       default: {
@@ -475,6 +597,16 @@
     '.su-sec{display:flex;gap:6px 14px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}' +
     '.su-sec .su-link{padding:4px 0;text-align:left}.su-sec-state{color:var(--t3);font-size:11.5px;margin-left:4px;text-decoration:none}' +
     '.btn[disabled]{opacity:.45;cursor:default}' +
+    '.pg-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}.pg-row{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:10px 12px}' +
+    '.pg-top{display:flex;justify-content:space-between;align-items:center;gap:8px}.pg-title{font-size:13px;font-weight:600;color:var(--text)}' +
+    '.pg-badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;flex:none}' +
+    '.pg-green{color:var(--green)}.pg-amber{color:var(--orange)}.pg-red{color:var(--red)}.pg-cyan{color:var(--blue)}.pg-neutral{color:var(--t3)}' +
+    '.pg-src{font-size:11px;color:var(--t3);margin-top:2px;line-height:1.4}.pg-bar{height:6px;border-radius:4px;background:var(--s3);overflow:hidden;margin:9px 0 6px}' +
+    '.pg-fill{display:block;height:100%;border-radius:inherit;background:currentColor;transition:width .4s var(--out)}' +
+    '.pg-vals{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--t2);font-family:"JetBrains Mono",monospace}.pg-vals b{color:var(--text);font-weight:600}' +
+    '.pg-why,.pg-note{font-size:11.5px;color:var(--t2);line-height:1.45;margin-top:5px}.pg-act{display:block;margin-top:4px;padding:4px 0;color:var(--blue)}' +
+    '.pg-labels{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.pg-chip{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--s3);color:var(--t2)}' +
+    '@media(prefers-reduced-motion:reduce){.pg-fill{transition:none}}' +
     '@media(max-width:480px){#setup-sheet .su-stack{flex-direction:column-reverse}#setup-sheet .su-stack .btn{flex:none;width:100%}}' +
     '@media(min-width:900px){#setup-sheet{bottom:auto;top:50%;left:50%;right:auto;width:520px;max-height:84vh;border-radius:16px;border:1px solid var(--border);transform:translate(-50%,-46%);opacity:0;transition:transform .25s var(--out),opacity .2s;padding-bottom:16px}#setup-sheet.open{transform:translate(-50%,-50%);opacity:1}#setup-sheet .as-handle{display:none}}' +
     '@media(prefers-reduced-motion:reduce){#setup-sheet,#setup-overlay{transition:none}.su-card-flash{animation:none}}';
@@ -700,6 +832,7 @@
       if (here) ui.saving = false;
       if (r.ok) {
         e.working = normalize(r.profile); e.failed = null;
+        if (host.onProfileSaved) host.onProfileSaved(key);
         if (here && attempt.onSaved) attempt.onSaved(); else refresh(key, false);
         return true;
       }
@@ -806,6 +939,8 @@
     else if (a === 'goalText') { d.goal = d.goal || { id: 'other', text: '' }; d.goal.text = t.value; }
     else if (a === 'reminder') d.reminder = t.value;
     else if (a === 'reset') d.firmDailyReset = t.value;
+    else if (a === 'zone') { if (t.value) d.firmDailyZone = t.value; else delete d.firmDailyZone; }
+    else if (a === 'plainAmount') d[t.getAttribute('data-name')] = t.value;
     else if (a === 'alert') { d.alerts = d.alerts || { daily: false, budget: false }; d.alerts[t.getAttribute('data-name')] = !!t.checked; }
     busyState();
   }
@@ -910,9 +1045,9 @@
     var a = account(key), bal = brokerBalance(key), kind = reportedKind(a.accountType);
     return [kind, a.currency, bal ? 'balance ' + money(bal.amount, a.currency) + ' · ' + when(bal.at) : 'not synced yet'].filter(Boolean).join(' · ');
   }
-  function cardLines(p, key) {
+  function cardLines(p, key, measured) {
     var out = [], c = cur(key, p), ev = p.evaluation, ms = p.master, fr = p.firmRules, pr = p.personal;
-    function line(label, e, extra) { if (e) out.push(esc(label) + ' · <b>' + esc(entryText(e, p, key)) + '</b>' + (extra ? esc(extra) : '')); }
+    function line(label, e, extra) { if (e && !measured) out.push(esc(label) + ' · <b>' + esc(entryText(e, p, key)) + '</b>' + (extra ? esc(extra) : '')); }
     var head = [p.type ? TYPES[p.type] : null, p.size ? money(p.size.amount, c) + ' starting size' : null].filter(Boolean).join(' · ');
     if (head) out.push('<b>' + esc(head) + '</b>');
     var g = goalOf(p);
@@ -922,14 +1057,14 @@
     if (p.type !== 'evaluation') {
       line('My payout target', ms.payoutTarget);
       line('Firm minimum for payout', ms.firmMin);
-      if (ms.payoutTarget || ms.firmMin) out.push('<span style="color:var(--t3)">Reaching these numbers does not confirm payout eligibility.</span>');
+      if ((ms.payoutTarget || ms.firmMin) && !measured) out.push('<span style="color:var(--t3)">Reaching these numbers does not confirm payout eligibility.</span>');
       line('Growth target', ms.growthTarget);
     }
-    line('Firm daily loss', fr.dailyLoss, (fr.dailyReset ? ' · resets ' + fr.dailyReset : '') + (fr.dailyLoss && fr.dailyLoss.base && fr.dailyLoss.base !== 'starting' ? ' · needs each day’s reference' : ''));
+    line('Firm daily loss', fr.dailyLoss, (fr.dailyReset ? ' · resets ' + fr.dailyReset + (fr.dailyResetZone ? ' ' + zoneLabel(fr.dailyResetZone) : '') : '') + (fr.dailyLoss && fr.dailyLoss.base && fr.dailyLoss.base !== 'starting' ? ' · needs each day’s reference' : ''));
     line('Firm overall drawdown', fr.overall, fr.overallMode ? ' · ' + fr.overallMode + (fr.overallRef ? ' on ' + fr.overallRef : '') : '');
     line('My session loss budget', pr.sessionBudget);
     line('My risk per trade', pr.riskPerTrade);
-    if (pr.style) out.push('Style · <b>' + esc(pr.style) + '</b>');
+    if (pr.style && !measured) out.push('Style · <b>' + esc(pr.style) + '</b>');
     if (pr.reminder) out.push('Reminder · <b>“' + esc(pr.reminder) + '”</b>');
     var other = p.type === 'evaluation' ? branchSummary(p, 'master') : p.type === 'master' ? branchSummary(p, 'evaluation') : [];
     if (other.length) out.push('<span style="color:var(--t3)">' + esc(TYPES[p.type === 'evaluation' ? 'master' : 'evaluation']) + ' answers are set aside on this account.</span>');
@@ -967,11 +1102,12 @@
     var e = entry(key);
     container.setAttribute('data-setup-key', key);
     if (!e.loaded) { container.innerHTML = '<div class="su-card-title">' + esc(accountTitle(key)) + '</div><div class="su-card-line">' + esc(e.loadError || 'Loading account setup…') + '</div>'; bindCard(container); return; }
-    var p = work(key), next = nextAction(p), lines = cardLines(p, key);
+    var p = work(key), next = nextAction(p), prog = p.status === 'saved' ? progressBlock(key, p) : null, lines = cardLines(p, key, !!prog);
     var html = '<div class="su-card-title">' + esc(accountTitle(key)) + '</div>' +
-      '<div class="su-src">From your broker</div><div class="su-card-line">' + esc(brokerLine(key)) + '</div>' +
+      '<div class="su-src">From your broker</div><div class="su-card-line">' + esc(brokerLine(key)) + '</div>' + (prog ? prog.html : '') +
       '<div class="su-src">You entered</div>' + (lines.length ? lines.map(function (l) { return '<div class="su-card-line">' + l + '</div>'; }).join('') :
         '<div class="su-card-line">' + (p.status === 'in_progress' ? 'Setup started. Your answers so far are saved on this account.' : 'Nothing yet. Tell TaliTrade what kind of account this is, so targets and limits are measured your way.') + '</div>');
+    if (prog && prog.labels.length) html += '<div class="pg-labels">' + prog.labels.map(function (l) { return '<span class="pg-chip">' + esc(l.title) + ' · ' + esc(l.value) + '</span>'; }).join('') + '</div>';
     if (e.failed) html += '<div class="su-error" role="alert" style="margin-top:10px"><span>Your latest answers for this account are not saved yet.</span><button type="button" class="btn btn-blue rip" data-setup="retry">Retry</button></div>';
 
     html += '<div class="su-card-actions">' + (next ? '<button type="button" class="btn ' + 'btn-blue' + ' rip" id="setupNextAction" data-setup="next">' + esc(next.label) + '</button>' : '') +
@@ -992,11 +1128,25 @@
       if (what === 'retry') { if (e.failed) { var a = e.failed; a.onSaved = null; send(a).then(function () { refresh(k, false); }); } return; }
       if (what === 'import') { if (!(imports[k] && imports[k].starting)) { ui.key = k; ui.mode = 'import'; ui.confirm = null; ui.error = null; show(); startImport(k, false).then(keepPolling); } return; }
       if (what === 'viewImport') return openImport(k);
+      if (what === 'act') { var pd = host.getProgress && host.getProgress(k), ra = pd && pd.rows[Number(t.getAttribute('data-i'))]; return runAction(k, ra && ra.action); }
       var p = work(k), n = nextAction(p);
       if (what === 'edit') return open(k, 'basics', 'type');
       if (what === 'firm' || what === 'personal') return open(k, what);
       if (n) open(k, n.flow, n.step);
     });
+  }
+  // A setup action named by the server (a progress row or the Challenge / payout tile).
+  function runAction(key, a) {
+    if (!a || !host || !enabled() || !entry(key).loaded) return;
+    if (a.id === 'import') {
+      var im = imports[key];
+      if (im && im.status && im.status.state !== 'not_requested' && im.status.state !== 'unavailable') return openImport(key);
+      ui.key = key; ui.mode = 'import'; ui.confirm = null; ui.error = null; show();
+      return startImport(key, false).then(keepPolling);
+    }
+    if (!a.flow || !FLOW_TITLES[a.flow]) return;
+    if (a.flow === 'cycle') { var w = work(key); if (a.after) w.draft.cycleAfter = a.after; if (a.withdrawal) w.draft.cycleWithdrawal = a.withdrawal; }
+    open(key, a.flow, a.step);
   }
   function refresh(key, flash) {
     var card = $('mtApiSetupCard');
@@ -1021,7 +1171,8 @@
   global.TaliAccountSetup = {
     attach: function (h) { host = h; },
     onFirstSnapshot: onFirstSnapshot, onContextChange: onContextChange, renderCard: renderCard, switcherLine: switcherLine,
-    open: open, isOpen: function () { return ui.open; }, isEnabled: enabled,
+    open: open, isOpen: function () { return ui.open; }, isEnabled: enabled, runAction: runAction,
+    refreshCard: function (key) { if (host && host.getActiveAccount() === key && !ui.open) refresh(key, false); },
     hasPendingInvite: function (key) { return !!pendingInvite[key]; },
     profile: function (key) { return cache[key] && cache[key].loaded ? clone(toServer(work(key))) : null; },
     _internals: { convert: convert, nextAction: nextAction, stepsFor: stepsFor, goalChoices: goalChoices, normalize: normalize, toServer: toServer }

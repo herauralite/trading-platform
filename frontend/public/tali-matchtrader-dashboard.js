@@ -13,7 +13,7 @@
     var state = freshState();
 
     function freshState() {
-      return { available: null, service: null, syncWatch: {}, lastConnectTimings: null, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null, historyRequest: null };
+      return { available: null, service: null, syncWatch: {}, lastConnectTimings: null, cards: [], snapshots: {}, lastFetch: {}, generation: 0, controller: null, historyCursor: {}, pollTimer: null, pollCount: 0, listError: null, pendingDisconnect: null, historyRequest: null, progress: {}, progressInFlight: {}, rolloverTimer: null };
     }
     function now() { return deps.now ? deps.now() : Date.now(); }
     function controller() {
@@ -107,6 +107,7 @@
         if (!snapshot.connection || snapshot.connection.id !== id || snapshot.connection.account_key !== accountKey) return;   // identity check
         state.snapshots[accountKey] = snapshot;
         render(snapshot);
+        refreshProgress(accountKey, false);
       }, function (err) {
         if (!isCurrent(context) || (err && err.name === 'AbortError')) return;
         if (err && err.status === 404) { loadConnections(); return; }
@@ -120,6 +121,7 @@
 
     function render(snapshot) {
       var view = core.deriveDisplayState(snapshot, now());
+      overlayProgress(view, snapshot.connection.account_key);
       host.setTopStatus(view.topStatus.text, view.topStatus.color);
       host.applyApiState({ overviewStatus: view.overviewStatus, analytics: view.analytics, payout: view.payout, tiles: view.tiles,
                            balanceText: view.balanceText, accountKey: snapshot.connection.account_key, label: snapshot.connection.display_label });
@@ -330,6 +332,66 @@
         state.analyticsAt = 0;
         host.applyAnalytics({ error: (err && err.message) || 'Could not load analytics.' });
       });
+    }
+
+    // ── overview progress: Daily P&L, Challenge / payout, the setup card's progress rows ──
+    // Fetched after a snapshot only when something it depends on changed (balance, equity, closed
+    // trades, history coverage, open positions), at least once a minute, and when the calendar day
+    // ends. A response is applied only to the account, session and context it was asked for.
+    function timeZone() {
+      if (deps.timeZone) return deps.timeZone;
+      try { return (global.Intl && Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC'; } catch { return 'UTC'; }
+    }
+    function progressSig(snapshot) {
+      var s = snapshot.summary || {}, h = snapshot.history || {}, st = h.period_stats || {}, fr = (snapshot.freshness || {}).closed_positions || {};
+      return [s.fetched_at, s.balance, s.equity, h.closed_entry_count, st.last_close_time, fr.last_success_at, h.coverage_status, h.queued_intervals,
+              (snapshot.positions || []).map(function (p) { return p.id + ':' + p.sl_price + ':' + p.profit; }).join(',')].join('|');
+    }
+    function overlayProgress(view, accountKey) {
+      var entry = state.progress[accountKey];
+      if (!entry || !entry.data) return view;
+      var tiles = core.progressTiles(entry.data, view.currency);
+      if (tiles.analytics) Object.assign(view.analytics, tiles.analytics);
+      if (tiles.payout) view.payout = tiles.payout;
+      return view;
+    }
+    function applyTiles(accountKey) {
+      var snapshot = state.snapshots[accountKey];
+      if (!snapshot || !host || host.getActiveAccount() !== accountKey) return;
+      var view = overlayProgress(core.deriveDisplayState(snapshot, now()), accountKey);
+      host.applyApiState({ overviewStatus: view.overviewStatus, analytics: view.analytics, payout: view.payout });
+    }
+    function scheduleRollover(accountKey) {
+      var entry = state.progress[accountKey], setT = deps.setTimeout || global.setTimeout, clearT = deps.clearTimeout || global.clearTimeout;
+      if (state.rolloverTimer) { clearT(state.rolloverTimer); state.rolloverTimer = null; }
+      if (!entry || !entry.dayEnd) return;
+      var wait = Math.min(Math.max(entry.dayEnd - now() + 1500, 1000), 6 * 3600 * 1000);
+      state.rolloverTimer = setT(function () {
+        state.rolloverTimer = null;
+        if (host && host.getActiveAccount() === accountKey) refreshProgress(accountKey, true);
+      }, wait);
+    }
+    function refreshProgress(accountKey, force) {
+      var id = connectionIdForAccount(accountKey);
+      if (id === null || !host || host.getActiveAccount() !== accountKey) return Promise.resolve();
+      var entry = state.progress[accountKey], snapshot = state.snapshots[accountKey];
+      var sig = snapshot ? progressSig(snapshot) : '';
+      var dayOver = entry && entry.dayEnd && now() >= entry.dayEnd;
+      if (!force && entry && entry.sig === sig && now() - entry.at < 60000 && !dayOver) return Promise.resolve();
+      if (state.progressInFlight[accountKey] && !force) return state.progressInFlight[accountKey];
+      var context = captureContext(accountKey);
+      var request = api.getProgress(id, { tz: timeZone(), signal: context.signal }).then(function (body) {
+        if (!isCurrent(context) || !body || body.connection_id !== id) return;          // late answer for another account or session
+        state.progress[accountKey] = { data: body, at: now(), sig: sig, dayEnd: Date.parse(body.daily_pnl && body.daily_pnl.day_end) || null };
+        scheduleRollover(accountKey);
+        applyTiles(accountKey);
+        if (host.onProgress) host.onProgress(accountKey, body);
+      }, function (err) {
+        if (!isCurrent(context) || (err && err.name === 'AbortError')) return;
+        if (state.progress[accountKey]) state.progress[accountKey].at = 0;                // keep the last figures; the next snapshot retries
+      }).then(function () { if (state.progressInFlight[accountKey] === request) delete state.progressInFlight[accountKey]; });
+      state.progressInFlight[accountKey] = request;
+      return request;
     }
 
     // ── history / journal ──
@@ -593,7 +655,9 @@
       isDisconnectPending: function (accountKey) { return state.pendingDisconnect === accountKey; },
       needsReconnect: function (accountKey) { var c = card(accountKey); return !!c && (c.status === 'needs_reauth' || c.status === 'error' || c.status === 'forbidden'); },
       cardFor: card,
-      snapshotFor: function (accountKey) { return state.snapshots[accountKey] || null; }
+      snapshotFor: function (accountKey) { return state.snapshots[accountKey] || null; },
+      progressFor: function (accountKey) { var e = state.progress[accountKey]; return e ? e.data : null; },
+      refreshProgress: function (accountKey, force) { return refreshProgress(accountKey, force !== false); }
     };
   }
 
