@@ -476,6 +476,8 @@ async def ensure_waitlist_table():
                 joined_at         TIMESTAMPTZ DEFAULT NOW()
             )
         """))
+        await conn.execute(text("""CREATE TABLE IF NOT EXISTS verified_waitlist (
+            telegram_user_id TEXT PRIMARY KEY, joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"""))
     logger.info("waitlist table ready")
 
 
@@ -1419,16 +1421,30 @@ async def join_waitlist(data: WaitlistJoin):
             VALUES (:u)
             ON CONFLICT (telegram_username) DO NOTHING
         """), {"u": username})
-        result = await conn.execute(text("SELECT COUNT(*) FROM waitlist"))
+        result = await conn.execute(text("SELECT (SELECT COUNT(*) FROM waitlist) + (SELECT COUNT(*) FROM verified_waitlist)"))
         count = result.scalar()
     logger.info(f"Waitlist join: @{username} — total {count}")
     return {"ok": True, "count": int(count)}
+
+class VerifiedWaitlistJoin(BaseModel):
+    alerts: bool = False
+
+
+@app.post("/waitlist/verified")
+async def join_verified_waitlist(data: VerifiedWaitlistJoin, uid: str = Depends(get_required_telegram_user_id)):
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        await conn.execute(text("INSERT INTO verified_waitlist(telegram_user_id) VALUES (:u) ON CONFLICT DO NOTHING"), {"u":uid})
+        if data.alerts:
+            await conn.execute(text("INSERT INTO telegram_alert_preferences(user_id) VALUES (:u) ON CONFLICT DO NOTHING"), {"u":uid})
+    return {"ok": True}
+
 
 @app.get("/waitlist/count")
 async def waitlist_count():
     from app.core.database import engine
     async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT COUNT(*) FROM waitlist"))
+        result = await conn.execute(text("SELECT (SELECT COUNT(*) FROM waitlist) + (SELECT COUNT(*) FROM verified_waitlist)"))
         count = result.scalar()
     return {"count": int(count or 0)}
 
@@ -2425,20 +2441,6 @@ async def telegram_webhook(request: Request):
             url, title, period, brief = latest[0]
             return reply(f"{title} · {period}\n{brief}\n{url}\n\n{calendar}")
         return reply(calendar)
-    if telegram_command_matches(command, "/start") and payload.strip() == "waitlist":
-        if message.get("chat", {}).get("type") == "private" and chat_id == tg_uid and tg_from.get("id"):
-            # Telegram executes this Bot API method as the webhook response.
-            return {
-                "method": "sendMessage",
-                "chat_id": chat_id,
-                "text": "Welcome to TaliTrade! Send /alerts for private account and market notifications. Join our channel for beta updates and maintenance notices.",
-                "reply_markup": {"inline_keyboard": [[{
-                    "text": "Join the TaliTrade channel",
-                    "url": "https://t.me/talitrade",
-                }]]},
-            }
-        return {"ok": True}
-
     if name == "start":
         await db_upsert_user({key: tg_from.get(key) for key in ("id","username","first_name","last_name")})
         return {
