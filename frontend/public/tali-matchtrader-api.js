@@ -243,7 +243,7 @@
       currency: currency,
       overviewStatus: overviewStatus,
       analytics: analytics,
-      payout: { progressVal: '—', progressSub: 'Prop rules are not set up for API accounts yet', progressTone: 'txt-dim' },
+      payout: { progressVal: '—', progressSub: snapshot.service && snapshot.service.account_setup ? 'Checking your targets…' : 'Prop rules are not set up for API accounts yet', progressTone: 'txt-dim' },
       topStatus: { text: topText, color: topColor },
       balanceText: s ? formatMoney(s.balance, currency) : null,
       tiles: stats && stats.closed_entries > 0

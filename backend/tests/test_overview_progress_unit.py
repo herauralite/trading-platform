@@ -219,6 +219,8 @@ def test_growth_goal_without_a_number_offers_to_set_it():
 def test_profit_split_keeps_the_traders_share_separate_from_gross_profit():
     r = row(pg.build(facts(master(goal={"id": "payout"}, payoutTarget=money(6000), profitSplit="80")), "UTC"), "payout_target")
     assert (r["current"], r["your_share"], r["target"], r["target_share"], r["basis"]) == ("4200.00", "3360.00", "6000.00", "4800.00", "gross_profit")
+    out = pg.build(facts(master(goal={"id": "payout"}, payoutTarget=money(6000), firmMin=money(500), profitSplit="80")), "UTC")
+    assert "your_share" not in row(out, "firm_min")                                  # the firm minimum is a gross-profit rule
 
 
 def test_a_withdrawal_needs_the_cycle_start_and_later_cash_is_taken_out():
@@ -227,6 +229,9 @@ def test_a_withdrawal_needs_the_cycle_start_and_later_cash_is_taken_out():
     f.cash.append({"id": "W1", "type": "WITHDRAWAL", "amount": Decimal("-3200"), "at": w_at})
     r = row(pg.build(f, "UTC"), "payout_target")
     assert not r["measurable"] and r["action"]["flow"] == "cycle" and r["action"]["withdrawal"] == "3200.00"
+    f.profile["master"]["firmMin"] = money(500)
+    assert [x["id"] for x in pg.build(f, "UTC")["rows"]] == ["payout_target"]          # one row asks for the cycle start
+    del f.profile["master"]["firmMin"]
     f.profile["master"]["cycleStart"] = {"amount": "100000", "after": pg.iso(w_at)}
     f.cash.append({"id": "D1", "type": "DEPOSIT", "amount": Decimal("500"), "at": NOW - timedelta(days=5)})
     r = row(pg.build(f, "UTC"), "payout_target")
@@ -401,6 +406,8 @@ def test_risk_is_definite_only_when_the_instrument_is_priced_in_the_account_curr
     assert r["status_label"] == "Estimate only"                       # converted at today's rate
     r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2385", "200")])   # estimate 750 over a 500 limit
     assert r["status_label"] == "Estimate over limit" and r["tone"] == "amber"
+    r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2390", "200")])   # estimate exactly at the 500 limit
+    assert r["status_label"] == "Estimate at limit" and r["tone"] == "amber"
     r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2390", "200")], quotes={"XAUUSD": "USD"})
     assert r["status_label"] == "Limit reached" and r["tone"] == "red"
 
