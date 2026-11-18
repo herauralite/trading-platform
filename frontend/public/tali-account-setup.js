@@ -243,7 +243,7 @@
       }
       return flow === 'basics' ? steps.concat(['goal']) : ['phaseCount', 'phaseTarget'];
     }
-    if (flow === 'payout') return ['payoutTarget', 'firmMin'];
+    if (flow === 'payout') return ['payoutTarget', 'firmMin', 'profitSplit'];
     if (flow === 'growth') return ['growthTarget'];
     if (flow === 'firm') return ['firmDaily', 'firmOverall'];
     if (flow === 'phaseStart') return ['phaseStart'];
@@ -294,32 +294,30 @@
   function rowNote(r, c) {
     var out = [], b = r.baseline || {}, ref = r.reference || {};
     if (r.kind === 'target' && r.measurable) {
-      out.push(b.kind === 'confirmed_phase_start' ? 'Balance above the ' + money(num(b.amount), c) + ' this phase started from.' :
-               b.kind === 'confirmed_cycle_start' ? 'Balance above the ' + money(num(b.amount), c) + ' this payout cycle started from.' :
-               'Balance above your ' + money(num(b.amount), c) + ' starting size.');
-      out.push('Open trades not counted.');
-      (r.notes || []).forEach(function (n) {
-        if (n === 'deposit') out.push('Deposits after funding are left out.');
-        if (n === 'ledger_incomplete') out.push('Deposits and withdrawals are checked only as far back as your imported history.');
-        if (n === 'other_cash') out.push('Includes a balance entry of another type.');
-      });
+      out.push((b.kind === 'confirmed_phase_start' ? 'From the ' + money(num(b.amount), c) + ' this phase started at' :
+                b.kind === 'confirmed_cycle_start' ? 'From the ' + money(num(b.amount), c) + ' this payout cycle started at' :
+                'From your ' + money(num(b.amount), c) + ' starting size') + ', open trades not counted.');
+      if (r.cash_excluded) out.push('Deposits and withdrawals (' + sm(r.cash_excluded, c) + ') are left out.');
+      if (r.your_share) out.push('Your ' + trim(num(r.profit_split)) + '% share: ' + money(num(r.your_share), c) + ' of ' + money(num(r.target_share), c) + '.');
       if (r.id === 'phase_target') out.push('Your firm decides when the phase is passed.');
-      else if (r.eligibility_note) out.push('Profit before your firm\'s split. Reaching it doesn\'t confirm payout eligibility.');
+      else if (r.eligibility_note) out.push('Gross profit; reaching it doesn\'t confirm payout eligibility.');
     } else if (r.id === 'daily_loss' && r.measurable) {
-      out.push('Counted from today\'s start-of-day balance, ' + money(num(ref.amount), c) + ' (resets ' + esc(r.reset) + ' ' + zoneLabel(r.reset_zone) + '). Open trades count: ' + sm(r.open_pnl, c) + ' now.');
-      if (r.delayed) out.push('Recent closes may still be syncing.');
+      out.push('Since the ' + esc(r.reset) + ' ' + zoneLabel(r.reset_zone) + ' reset: closed ' + sm(r.realized_since_reset, c) + ', open ' + sm(r.open_pnl, c) + '.');
+      if (ref.amount) out.push('Start-of-day balance ' + money(num(ref.amount), c) + '.');
+      if (r.cash_since_reset) out.push('Deposits and withdrawals since the reset aren\'t counted.');
     } else if (r.id === 'overall_drawdown' && r.measurable) {
-      out.push(r.mode === 'trailing' ? 'Floor ' + money(num(r.floor), c) + ' = highest balance ' + money(num(ref.amount), c) + (ref.at ? ' (' + shortDate(ref.at) + ')' : '') + ' minus the limit. Measured on balance.'
-                                     : 'Floor ' + money(num(r.floor), c) + ' = starting size minus the limit. Measured on ' + r.measured_on + '.');
-      if ((r.notes || []).indexOf('withdrawal_lowers_balance') >= 0) out.push('Withdrawals lower the balance too.');
+      out.push(r.mode === 'trailing' ? 'Floor ' + money(num(r.floor), c) + ': highest balance ' + money(num(ref.amount), c) + (ref.at ? ' (' + shortDate(ref.at) + ')' : '') + ' minus the limit.'
+                                     : 'Floor ' + money(num(r.floor), c) + ': starting size minus the limit, on ' + r.measured_on + '.');
+      if (r.cash_excluded) out.push('Deposits and withdrawals (' + sm(r.cash_excluded, c) + ') are left out.');
     } else if (r.id === 'risk_per_trade' && r.measurable) {
-      out.push('Largest stop-loss risk: ' + r.worst_symbol + ', valued from its current P&L (approximate).');
-      if (r.unmeasured_count) out.push(r.unmeasured_count + ' open trade' + (r.unmeasured_count === 1 ? '' : 's') + ' without a stop loss or price movement not measured.');
+      out.push('Largest: ' + r.worst_symbol + (r.estimate ? ' (estimate: not priced in ' + c + ', or its currency is unknown)' : '') + '.');
+      if (r.unmeasured_count) out.push(r.unmeasured.map(function (u) { return u.symbol + ': ' + u.reason_text; }).join(' · ') + '.');
     }
+    if (r.unconfirmed_reason) out.push(r.unconfirmed_reason);
     if (r.stale) out.push('Balance is delayed.');
     return out.join(' ');
   }
-  function rowHtml(r, i, c) {
+  function rowHtml(r, i, c, defs) {
     var tone = r.tone || 'neutral';
     var src = r.source + (r.entered ? ' · ' + entryShort(r.entered, c) : '') + (r.also ? ' · also ' + r.also.map(function (a) { return a.title.charAt(0).toLowerCase() + a.title.slice(1); }).join(', ') : '');
     var html = '<div class="pg-row" role="group" aria-label="' + esc(r.title) + '"><div class="pg-top"><span class="pg-title">' + esc(r.title) + '</span><span class="pg-badge pg-' + tone + '">' + esc(r.status_label) + '</span></div>' +
@@ -342,13 +340,14 @@
       html += '<div class="pg-why">' + esc(r.reason || '') + '</div>';
     }
     if (r.action) html += '<button type="button" class="su-link pg-act" data-setup="act" data-i="' + i + '">' + esc(r.action.label) + '</button>';
+    if (r.definition && defs && defs[r.definition]) html += '<details class="pg-help"><summary>How it\'s measured</summary><p>' + esc(defs[r.definition]) + '</p></details>';
     return html + '</div>';
   }
   function progressBlock(key, p) {
     var data = host.getProgress && host.getProgress(key);
     if (!data || !Array.isArray(data.rows)) return null;
     var c = data.currency || cur(key, p);
-    var rows = data.rows.map(function (r, i) { return rowHtml(r, i, c); }).join('');
+    var rows = data.rows.map(function (r, i) { return rowHtml(r, i, c, data.definitions); }).join('');
     return { html: rows ? '<div class="su-src">Progress</div><div class="pg-list">' + rows + '</div>' : '', labels: data.labels || [] };
   }
 
@@ -406,7 +405,7 @@
   // ── steps ──
   var MONEY_STEPS = { phaseTarget: 'evaluation', payoutTarget: 'master', firmMin: 'master', growthTarget: 'master' };
   var DRAFT_KEYS = { type: ['type'], size: ['size'], goal: ['goal'], phaseCount: ['phaseCount'], currentPhase: ['currentPhase'], phaseTarget: ['phaseTarget'],
-    payoutTarget: ['payoutTarget'], firmMin: ['firmMin'], growthTarget: ['growthTarget'], firmDaily: ['firmDaily', 'firmDailyBase', 'firmDailyReset', 'firmDailyZone', 'firmDailyFrom'], phaseStart: ['phaseStartPick', 'phaseStartOther'], cycleStart: ['cyclePick', 'cycleOther', 'cycleAfter', 'cycleWithdrawal'],
+    payoutTarget: ['payoutTarget'], firmMin: ['firmMin'], growthTarget: ['growthTarget'], firmDaily: ['firmDaily', 'firmDailyBase', 'firmDailyReset', 'firmDailyZone', 'firmDailyFrom'], phaseStart: ['phaseStartPick', 'phaseStartOther'], profitSplit: ['profitSplit'], cycleStart: ['cyclePick', 'cycleOther', 'cycleAfter', 'cycleWithdrawal'],
     firmOverall: ['firmOverall', 'overallMode', 'overallRef'], personal: ['sessionBudget', 'riskPerTrade'], refine: ['style', 'reminder', 'alerts', 'previewShown'] };
   function seed(step, p) {                  // entering a step shows the answer already saved for it
     var d = p.draft, ev = p.evaluation, ms = p.master, fr = p.firmRules, pr = p.personal;
@@ -418,6 +417,7 @@
     else if (step === 'currentPhase') put('currentPhase', ev.currentPhase);
     else if (MONEY_STEPS[step]) put(step, fromEntry(p[MONEY_STEPS[step]][step]));
     else if (step === 'firmDaily') { put('firmDaily', fromEntry(fr.dailyLoss)); put('firmDailyBase', fr.dailyLoss && fr.dailyLoss.base); put('firmDailyReset', fr.dailyReset); put('firmDailyZone', fr.dailyResetZone); put('firmDailyFrom', fr.dailyFrom); }
+    else if (step === 'profitSplit') put('profitSplit', ms.profitSplit != null ? String(num(ms.profitSplit)) : undefined);
     else if (step === 'phaseStart') {
       var ps = ev.phaseStart, ph = phaseNow(p);
       if (ps && Number(ps.phase) === ph) { var same = p.size && num(ps.amount) === p.size.amount; put('phaseStartPick', same ? 'size' : 'other'); if (!same) put('phaseStartOther', String(num(ps.amount))); }
@@ -440,6 +440,7 @@
     if (MONEY_STEPS[step]) { var e = draftEntry(step, p); return !!e && (e.unit !== 'percent' || e.value <= 1000); }
     if (step === 'firmDaily') return !!draftEntry('firmDaily', p) && !!d.firmDailyBase;
     if (step === 'firmOverall') return !!draftEntry('firmOverall', p) && !!d.overallMode && !!d.overallRef;
+    if (step === 'profitSplit') { var ps0 = String(d.profitSplit || '').trim(); return !ps0 || (num(ps0) > 0 && num(ps0) <= 100); }
     if (step === 'phaseStart' || step === 'cycleStart') {
       var k = step === 'phaseStart' ? 'phaseStart' : 'cycle', pick = d[k + 'Pick'], other = num(d[k + 'Other']);
       var okAmount = (pick === 'size' && !!p.size) || (pick === 'other' && other > 0 && other <= 1e10);
@@ -471,6 +472,7 @@
       if (d.firmDailyBase === 'starting' && d.firmDailyFrom) fr.dailyFrom = d.firmDailyFrom; else delete fr.dailyFrom;
       drop('firmDaily', 'firmDailyBase', 'firmDailyReset', 'firmDailyZone', 'firmDailyFrom');
     }
+    else if (step === 'profitSplit') { if (num(d.profitSplit) > 0) p.master.profitSplit = num(d.profitSplit); else delete p.master.profitSplit; drop('profitSplit'); }
     else if (step === 'phaseStart') { ev.phaseStart = { phase: phaseNow(p), amount: d.phaseStartPick === 'size' ? p.size.amount : num(d.phaseStartOther) }; drop('phaseStartPick', 'phaseStartOther'); }
     else if (step === 'cycleStart') { p.master.cycleStart = { amount: d.cyclePick === 'size' ? p.size.amount : num(d.cycleOther), after: d.cycleAfter }; drop('cyclePick', 'cycleOther', 'cycleAfter', 'cycleWithdrawal'); }
     else if (step === 'firmOverall') { fr.overall = draftEntry('firmOverall', p); fr.overallMode = d.overallMode; fr.overallRef = d.overallRef; drop('firmOverall', 'overallMode', 'overallRef'); }
@@ -532,6 +534,8 @@
         body: moneyField('firmOverall', 'Overall drawdown', p, key) + '<div class="su-label su-gap">How it moves</div>' +
           choices('overallMode', 'Drawdown type', [{ id: 'static', label: 'Static' }, { id: 'trailing', label: 'Trailing' }], d.overallMode, true) +
           (d.overallMode ? '<div class="su-label su-gap">' + (d.overallMode === 'trailing' ? 'Trails the highest' : 'Measured on') + '</div>' + choices('overallRef', d.overallMode === 'trailing' ? 'Trailing reference' : 'Measured on', [{ id: 'balance', label: 'Balance' }, { id: 'equity', label: 'Equity' }], d.overallRef, true) : '') };
+      case 'profitSplit': return { title: 'What\'s your profit split? (optional)', sub: 'Your share of profit when you withdraw. Targets stay measured on gross profit; your share is shown beside them.',
+        body: '<div class="su-field"><label class="su-label" for="su-amt-profitSplit">Your share</label><div class="su-input-wrap"><span class="su-affix">%</span><input class="su-input" id="su-amt-profitSplit" inputmode="decimal" autocomplete="off" data-act="plainAmount" data-name="profitSplit" value="' + esc(d.profitSplit || '') + '" placeholder="e.g. 80"></div></div>' };
       case 'phaseStart': {
         var ph = phaseNow(p);
         return { title: 'Where did Phase ' + ph + ' start?', sub: 'Phase progress is measured from the balance the phase started with. Some firms start each phase at the starting size, others carry the balance over. Check your firm\'s dashboard.',
@@ -605,6 +609,7 @@
     '.pg-fill{display:block;height:100%;border-radius:inherit;background:currentColor;transition:width .4s var(--out)}' +
     '.pg-vals{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--t2);font-family:"JetBrains Mono",monospace}.pg-vals b{color:var(--text);font-weight:600}' +
     '.pg-why,.pg-note{font-size:11.5px;color:var(--t2);line-height:1.45;margin-top:5px}.pg-act{display:block;margin-top:4px;padding:4px 0;color:var(--blue)}' +
+    '.pg-help{margin-top:4px}.pg-help summary{font-size:11px;color:var(--t3);cursor:pointer;list-style:none}.pg-help summary::-webkit-details-marker{display:none}.pg-help summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.pg-help p{font-size:11px;color:var(--t2);line-height:1.45;margin:4px 0 0}' +
     '.pg-labels{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.pg-chip{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--s3);color:var(--t2)}' +
     '@media(prefers-reduced-motion:reduce){.pg-fill{transition:none}}' +
     '@media(max-width:480px){#setup-sheet .su-stack{flex-direction:column-reverse}#setup-sheet .su-stack .btn{flex:none;width:100%}}' +
@@ -1059,6 +1064,7 @@
       line('Firm minimum for payout', ms.firmMin);
       if ((ms.payoutTarget || ms.firmMin) && !measured) out.push('<span style="color:var(--t3)">Reaching these numbers does not confirm payout eligibility.</span>');
       line('Growth target', ms.growthTarget);
+      if (ms.profitSplit && !measured) out.push('Profit split · <b>' + esc(trim(num(ms.profitSplit))) + '%</b>');
     }
     line('Firm daily loss', fr.dailyLoss, (fr.dailyReset ? ' · resets ' + fr.dailyReset + (fr.dailyResetZone ? ' ' + zoneLabel(fr.dailyResetZone) : '') : '') + (fr.dailyLoss && fr.dailyLoss.base && fr.dailyLoss.base !== 'starting' ? ' · needs each day’s reference' : ''));
     line('Firm overall drawdown', fr.overall, fr.overallMode ? ' · ' + fr.overallMode + (fr.overallRef ? ' on ' + fr.overallRef : '') : '');

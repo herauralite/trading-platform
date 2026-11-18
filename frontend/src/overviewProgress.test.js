@@ -58,3 +58,11 @@ test('challenge / payout: no number means an action, never a percentage', () => 
   assert.match(u.progressSub, /Confirm Phase 2 starting balance/)
   assert.equal(core.progressTiles({ currency: 'USD', overview: null }).payout, null)
 })
+
+test('challenge / payout: unconfirmed figures show the number without a settled status', () => {
+  const p = core.progressTiles({ currency: 'USD', overview: { state: 'unconfirmed', label: 'Phase 1 profit target', target: '8000.00', current: '8100.00', ratio_percent: '101.3' } }).payout
+  assert.equal(p.progressVal, '101.3%')
+  assert.notEqual(p.progressVal, 'Target reached')
+  assert.match(p.progressSub, /unconfirmed$/)
+  assert.equal(p.progressTone, 'txt-dim')
+})

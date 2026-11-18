@@ -291,10 +291,10 @@
     if (o) {
       var p = { progressTone: 'txt-dim', action: o.action || null };
       if (o.target !== undefined && o.current !== undefined && o.state !== 'unavailable') {
-        var reached = o.state === 'reached', ratio = toNumber(o.ratio_percent);
+        var reached = o.state === 'reached', unconfirmed = o.state === 'unconfirmed', ratio = toNumber(o.ratio_percent);
         p.progressVal = reached ? 'Target reached' : (ratio === null ? '—' : (Math.round(ratio * 10) / 10) + '%');
-        p.progressSub = o.label + ' · ' + formatMoney(o.current, cur) + ' of ' + formatMoney(o.target, cur);
-        p.progressTone = reached ? 'txt-green' : o.state === 'below_start' ? 'txt-red' : 'txt-blue';
+        p.progressSub = o.label + ' · ' + formatMoney(o.current, cur) + ' of ' + formatMoney(o.target, cur) + (unconfirmed ? ' · unconfirmed' : '');
+        p.progressTone = reached ? 'txt-green' : unconfirmed ? 'txt-dim' : o.state === 'below_start' ? 'txt-red' : 'txt-blue';
       } else if (o.state === 'setup' || o.state === 'no_type') {
         p.progressVal = '—'; p.progressSub = o.action ? o.action.label : 'Set up account';
       } else {

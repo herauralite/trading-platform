@@ -99,6 +99,7 @@ class Master(_Doc):
     firmMin: Money | None = None               # the firm's minimum profit for a withdrawal, kept separately
     growthTarget: Money | None = None
     cycleStart: CycleStart | None = None
+    profitSplit: Decimal | None = Field(default=None, gt=0, le=100)   # the trader's share of profit, in percent; targets stay gross
 
 
 class FirmRules(_Doc):
