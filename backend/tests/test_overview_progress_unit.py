@@ -158,13 +158,37 @@ def test_unknown_phase_and_missing_size_offer_the_matching_action():
     assert not r["measurable"] and r["action"]["step"] == "size"
 
 
-def test_deposit_after_funding_is_not_counted_as_progress_and_losses_show_below_start():
+def test_cash_after_funding_never_counts_as_progress():
     f = facts(evaluation(target=money(10000)), balance=Decimal("105000"))
     f.cash.append({"id": "L1", "type": "DEPOSIT", "amount": Decimal("2000"), "at": NOW - timedelta(days=3)})
     r = row(pg.build(f, "UTC"), "phase_target")
-    assert r["current"] == "3000.00" and "deposit" in r["notes"]            # 105,000 - 100,000 - 2,000
+    assert r["current"] == "3000.00" and r["cash_excluded"] == "2000.00"              # 105,000 - 100,000 - 2,000 deposited
+    f = facts(evaluation(target=money(10000)), balance=Decimal("103000"))
+    f.cash.append({"id": "W1", "type": "WITHDRAWAL", "amount": Decimal("-1500"), "at": NOW - timedelta(days=3)})
+    assert row(pg.build(f, "UTC"), "phase_target")["current"] == "4500.00"           # the 1,500 withdrawn was not a trading loss
     r = row(pg.build(facts(evaluation(target=money(10000)), balance=Decimal("98500")), "UTC"), "phase_target")
     assert r["current"] == "-1500.00" and r["status_label"] == "Below starting point" and r["fraction"] == 0.0
+
+
+def test_the_funding_deposit_is_the_opening_balance_not_a_later_deposit():
+    f = facts(evaluation(target=money(10000)), balance=Decimal("104000"))
+    f.cash = [{"id": "L0", "type": "DEPOSIT", "amount": Decimal("100000"), "at": CREATED + timedelta(days=5)}]   # too late to be the funding
+    r = row(pg.build(f, "UTC"), "phase_target")
+    assert r["cash_excluded"] == "100000.00"
+
+
+def test_targets_are_unconfirmed_without_the_cash_history_behind_them():
+    f = facts(evaluation(target=money(4000)), ledgers=cov(earliest_ms=ms(NOW - timedelta(days=7))), balance=Decimal("104500"))
+    r = row(pg.build(f, "UTC"), "phase_target")
+    assert r["measurable"] and r["status_label"] == "Unconfirmed" and r["action"]["id"] == "import" and r["current"] == "4500.00"
+    out = pg.build(f, "UTC")
+    assert out["overview"]["state"] == "unconfirmed"                                # never "Target reached" on incomplete cash history
+    f = facts(evaluation(target=money(4000)), balance=Decimal("104500"))
+    f.cash.append({"id": "X", "type": "ADJUSTMENT", "amount": Decimal("12"), "at": NOW - timedelta(days=1)})
+    assert row(pg.build(f, "UTC"), "phase_target")["status_label"] == "Unconfirmed"
+    f = facts(evaluation(current=2, phaseStart={"phase": 2, "amount": "100000"}, target=money(4000)), balance=Decimal("104500"))
+    f.cash.append({"id": "D2", "type": "DEPOSIT", "amount": Decimal("500"), "at": NOW - timedelta(days=4)})
+    assert row(pg.build(f, "UTC"), "phase_target")["status_label"] == "Unconfirmed"  # cash during an evaluation with an unknown phase start date
 
 
 # ───────── Master ─────────
@@ -173,7 +197,7 @@ def test_master_shows_the_traders_own_payout_target_first():
     assert [r["id"] for r in out["rows"]] == ["payout_target", "firm_min"]
     assert out["overview"]["label"] == "Your payout target" and out["overview"]["ratio_percent"] == "70.0"   # 4,200 / 6,000
     fm = row(out, "firm_min")
-    assert fm["target"] == "1000.00" and fm["status_label"] == "Target reached"                             # 1% of 100,000
+    assert fm["target"] == "1000.00" and fm["status_label"] == "Target reached" and fm["eligibility_note"]
 
 
 def test_master_falls_back_to_the_firm_minimum_and_says_so():
@@ -192,23 +216,29 @@ def test_growth_goal_without_a_number_offers_to_set_it():
     assert out["rows"] == [] and out["overview"]["state"] == "no_target" and out["overview"]["action"]["flow"] == "growth"
 
 
-def test_a_withdrawal_needs_the_cycle_start_before_payout_progress():
-    f = facts(master(goal={"id": "payout"}, payoutTarget=money(4000)), balance=Decimal("101000"))
+def test_profit_split_keeps_the_traders_share_separate_from_gross_profit():
+    r = row(pg.build(facts(master(goal={"id": "payout"}, payoutTarget=money(6000), profitSplit="80")), "UTC"), "payout_target")
+    assert (r["current"], r["your_share"], r["target"], r["target_share"], r["basis"]) == ("4200.00", "3360.00", "6000.00", "4800.00", "gross_profit")
+
+
+def test_a_withdrawal_needs_the_cycle_start_and_later_cash_is_taken_out():
+    f = facts(master(goal={"id": "payout"}, payoutTarget=money(4000)), balance=Decimal("101500"))
     w_at = NOW - timedelta(days=20)
     f.cash.append({"id": "W1", "type": "WITHDRAWAL", "amount": Decimal("-3200"), "at": w_at})
     r = row(pg.build(f, "UTC"), "payout_target")
     assert not r["measurable"] and r["action"]["flow"] == "cycle" and r["action"]["withdrawal"] == "3200.00"
     f.profile["master"]["cycleStart"] = {"amount": "100000", "after": pg.iso(w_at)}
+    f.cash.append({"id": "D1", "type": "DEPOSIT", "amount": Decimal("500"), "at": NOW - timedelta(days=5)})
     r = row(pg.build(f, "UTC"), "payout_target")
-    assert r["measurable"] and r["current"] == "1000.00" and r["baseline"]["kind"] == "confirmed_cycle_start"
+    assert r["measurable"] and r["current"] == "1000.00" and r["baseline"]["kind"] == "confirmed_cycle_start"   # 101,500 - 100,000 - 500
     f.cash.append({"id": "W2", "type": "WITHDRAWAL", "amount": Decimal("-500"), "at": NOW - timedelta(days=1)})
     assert not row(pg.build(f, "UTC"), "payout_target")["measurable"]       # a newer withdrawal: confirm again
 
 
-def test_incomplete_cash_history_is_flagged_not_hidden():
+def test_master_payout_is_unconfirmed_until_withdrawals_are_imported():
     f = facts(master(goal={"id": "payout"}, payoutTarget=money(6000)), ledgers=cov(earliest_ms=ms(NOW - timedelta(days=7))))
     r = row(pg.build(f, "UTC"), "payout_target")
-    assert r["measurable"] and "ledger_incomplete" in r["notes"]
+    assert r["measurable"] and r["status_label"] == "Unconfirmed" and "imported" in r["unconfirmed_reason"]
 
 
 # ───────── firm daily loss ─────────
@@ -218,48 +248,74 @@ def daily_profile(**fr):
     return p
 
 
-def test_daily_loss_from_start_of_day_balance_counts_open_losses():
+def firm_day(f, net="0", unvalued=0):
     start, _ = pg.last_reset(NOW, NY, "17:00")
-    f = facts(daily_profile(), balance=Decimal("104200"), equity=Decimal("103400"))
-    f.firm_day = {"net": Decimal("-1300"), "entries": 4, "positions": 3, "unvalued": 0, "start": start, "cut": f.summary_at}
+    f.firm_day = {"net": Decimal(net), "entries": 4, "positions": 3, "unvalued": unvalued, "start": start, "cut": f.summary_at}
+    return f
+
+
+def test_daily_loss_counts_realized_and_open_results_since_the_reset():
+    f = firm_day(facts(daily_profile(), balance=Decimal("104200"), equity=Decimal("103400"), floating=Decimal("-800")), "-1300")
     r = row(pg.build(f, "UTC"), "daily_loss")
-    # SOD balance = 104,200 - (-1,300) = 105,500; limit = 5% x 105,500 = 5,275; used = 105,500 - 103,400 = 2,100
+    # used = -(-1,300 - 800) = 2,100; start-of-day balance = 104,200 + 1,300 = 105,500; limit 5% = 5,275
     assert r["reference"] == {"kind": "sod_balance", "amount": "105500.00"}
     assert (r["limit"], r["used"], r["remaining"], r["floor"], r["ratio_percent"]) == ("5275.00", "2100.00", "3175.00", "100225.00", "39.8")
-    assert r["status_label"] == "Within limit" and r["tone"] == "green" and r["open_pnl"] == "-800.00" and r["measured_on"] == "equity"
+    assert r["status_label"] == "Within limit" and r["open_pnl"] == "-800.00" and r["definition"] == "daily_loss"
+
+
+def test_cash_during_the_day_is_neither_a_gain_nor_a_loss():
+    start, _ = pg.last_reset(NOW, NY, "17:00")
+    for kind, amount in (("WITHDRAWAL", "-1000"), ("DEPOSIT", "1000")):
+        bal = Decimal("104200") + Decimal(amount)
+        f = firm_day(facts(daily_profile(), balance=bal, equity=bal - 800, floating=Decimal("-800")), "-1300")
+        f.cash.append({"id": "C", "type": kind, "amount": Decimal(amount), "at": start + timedelta(hours=2)})
+        r = row(pg.build(f, "UTC"), "daily_loss")
+        assert r["used"] == "2100.00" and r["reference"]["amount"] == "105500.00" and r["cash_since_reset"] == pg.money(Decimal(amount))
 
 
 def test_daily_loss_near_and_breached():
-    start, _ = pg.last_reset(NOW, NY, "17:00")
-    # SOD balance 104,200 (nothing closed since the reset); limit 5,000
-    for equity, used, label, tone in (("100500", "3700.00", "Close to limit", "amber"), ("99200", "5000.00", "Limit reached", "red"), ("99000", "5200.00", "Limit breached", "red")):
-        f = facts(daily_profile(dailyLoss=money(5000, "amount", "sod_balance")), balance=Decimal("104200"), equity=Decimal(equity))
-        f.firm_day = {"net": Decimal("0"), "entries": 0, "positions": 0, "unvalued": 0, "start": start, "cut": f.summary_at}
+    # limit 5,000 (amount); nothing closed since the reset
+    for floating, used, label, tone in (("-3700", "3700.00", "Close to limit", "amber"), ("-5000", "5000.00", "Limit reached", "red"), ("-5200", "5200.00", "Limit breached", "red")):
+        f = firm_day(facts(daily_profile(dailyLoss=money(5000, "amount", "sod_balance")), floating=Decimal(floating)))
         r = row(pg.build(f, "UTC"), "daily_loss")
         assert (r["used"], r["status_label"], r["tone"]) == (used, label, tone)
     assert r["fraction"] == 1.0 and r["ratio_percent"] == "104.0" and r["remaining"] == "-200.00"
+
+
+def test_a_starting_size_limit_does_not_need_cash_history_but_a_start_of_day_percent_does():
+    p = daily_profile(dailyLoss=money(4, "percent", "starting"), dailyFrom="sod_balance")
+    f = firm_day(facts(p, floating=Decimal("-500"), ledgers=cov(earliest_ms=ms(NOW))), "-300")
+    r = row(pg.build(f, "UTC"), "daily_loss")
+    assert r["measurable"] and r["limit"] == "4000.00" and r["used"] == "800.00" and r["reference"] is None
+    f = firm_day(facts(daily_profile(), floating=Decimal("-500"), ledgers=cov(earliest_ms=ms(NOW))), "-300")
+    assert not row(pg.build(f, "UTC"), "daily_loss")["measurable"]
 
 
 def test_daily_loss_needs_reset_time_zone_and_what_it_counts_from():
     p = daily_profile()
     del p["firmRules"]["dailyResetZone"]
     assert row(pg.build(facts(p), "UTC"), "daily_loss")["action"]["step"] == "firmDaily"
-    p = daily_profile(dailyLoss=money(5, "percent", "starting"))
-    r = row(pg.build(facts(p), "UTC"), "daily_loss")
+    r = row(pg.build(facts(daily_profile(dailyLoss=money(5, "percent", "starting"))), "UTC"), "daily_loss")
     assert not r["measurable"] and "counted from" in r["reason"]
     r = row(pg.build(facts(daily_profile(dailyLoss=money(5, "percent", "sod_equity"))), "UTC"), "daily_loss")
-    assert not r["measurable"] and "equity" in r["reason"]
+    assert not r["measurable"] and "start-of-day equity" in r["reason"]
 
 
-def test_daily_loss_refuses_a_start_of_day_balance_it_cannot_rebuild():
+def test_daily_loss_waits_for_trade_history_covering_the_day():
     start, _ = pg.last_reset(NOW, NY, "17:00")
-    f = facts(daily_profile(), closed=cov(queued=[(ms(start) - 5, ms(start) + 5)]))
-    f.firm_day = {"net": Decimal("0"), "entries": 0, "positions": 0, "unvalued": 0, "start": start, "cut": f.summary_at}
+    f = firm_day(facts(daily_profile(), closed=cov(queued=[(ms(start) - 5, ms(start) + 5)])))
     assert row(pg.build(f, "UTC"), "daily_loss")["status_label"] == "Updating"
-    f = facts(daily_profile())
-    f.firm_day = {"net": Decimal("0"), "entries": 0, "positions": 0, "unvalued": 0, "start": start, "cut": f.summary_at}
-    f.cash.append({"id": "X", "type": "ADJUSTMENT", "amount": Decimal("12"), "at": NOW - timedelta(hours=1)})
+    f = firm_day(facts(daily_profile(), closed=cov(synced_at=NOW - timedelta(minutes=10))))
+    assert row(pg.build(f, "UTC"), "daily_loss")["status_label"] == "Updating"       # trades syncing far behind the balance
+    f = firm_day(facts(daily_profile()), unvalued=1)
     assert not row(pg.build(f, "UTC"), "daily_loss")["measurable"]
+
+
+def test_daily_loss_day_follows_the_reset_zone_across_daylight_saving():
+    # 17:00 New York is 21:00 UTC in summer and 22:00 UTC in winter; the day starts there either way
+    for now, expect in ((datetime(2026, 7, 1, 23, 0, tzinfo=UTC), datetime(2026, 7, 1, 21, 0, tzinfo=UTC)),
+                        (datetime(2026, 12, 1, 23, 0, tzinfo=UTC), datetime(2026, 12, 1, 22, 0, tzinfo=UTC))):
+        assert pg.last_reset(now, NY, "17:00")[0] == expect
 
 
 # ───────── overall drawdown ─────────
@@ -269,31 +325,47 @@ def overall(mode, ref, value=money(10, "percent", "starting")):
     return p
 
 
-def test_static_drawdown_on_equity_and_on_balance():
+def test_static_drawdown_on_equity_and_balance_with_cash_taken_out():
     f = facts(overall("static", "equity"), balance=Decimal("96000"), equity=Decimal("94500"))
     r = row(pg.build(f, "UTC"), "overall_drawdown")
-    # limit 10% x 100,000 = 10,000; floor 90,000; used = 100,000 - 94,500 = 5,500; room = 94,500 - 90,000
     assert (r["limit"], r["floor"], r["used"], r["remaining"]) == ("10000.00", "90000.00", "5500.00", "4500.00")
-    r = row(pg.build(facts(overall("static", "balance"), balance=Decimal("96000"), equity=Decimal("94500")), "UTC"), "overall_drawdown")
-    assert r["used"] == "4000.00"
+    assert r["definition"] == "static_drawdown"
+    f = facts(overall("static", "balance"), balance=Decimal("94000"), equity=Decimal("94000"))
+    f.cash.append({"id": "W", "type": "WITHDRAWAL", "amount": Decimal("-2000"), "at": NOW - timedelta(days=2)})
+    r = row(pg.build(f, "UTC"), "overall_drawdown")
+    assert r["used"] == "4000.00" and r["cash_excluded"] == "-2000.00"               # the 2,000 payout is not drawdown
     r = row(pg.build(facts(overall("static", None)), "UTC"), "overall_drawdown")
     assert not r["measurable"] and r["action"]["step"] == "firmOverall"
 
 
-def test_trailing_balance_uses_the_rebuilt_peak_only_when_history_adds_up():
+def test_trailing_balance_peak_is_rebuilt_from_trades_in_time_order():
     f = facts(overall("trailing", "balance", money(5, "percent", "high_water")), balance=Decimal("104200"), equity=Decimal("104000"))
-    # history: +100,000 funding, up to +8,000 at the peak, now +4,200
-    f.peak = {"total": Decimal("104200"), "nulls": 0, "events": 40, "max_cum": Decimal("108000"), "peak_at": NOW - timedelta(days=5)}
+    f.peak = {"total": Decimal("4200"), "nulls": 0, "events": 40, "max_cum": Decimal("8000"), "peak_at": NOW - timedelta(days=5)}
     r = row(pg.build(f, "UTC"), "overall_drawdown")
-    # peak 108,000; limit 5% x 108,000 = 5,400; floor 102,600; used 3,800
+    # funding 100,000; trades peaked at +8,000 -> 108,000; limit 5% = 5,400; floor 102,600; used 3,800
     assert (r["reference"]["amount"], r["limit"], r["floor"], r["used"], r["remaining"]) == ("108000.00", "5400.00", "102600.00", "3800.00", "1600.00")
-    assert r["status_label"] == "Close to limit"
-    f.peak["total"] = Decimal("90000")                                  # history leaves 14,200 unexplained
-    assert not row(pg.build(f, "UTC"), "overall_drawdown")["measurable"]
-    f.peak["total"] = Decimal("104200")
-    f.closed = cov(earliest_ms=ms(NOW - timedelta(days=7)))             # only a week imported
+    assert r["status_label"] == "Close to limit" and r["definition"] == "trailing_drawdown"
+
+
+def test_trailing_balance_ignores_payouts_when_finding_the_peak():
+    f = facts(overall("trailing", "balance", money(5000, "amount", "high_water")), balance=Decimal("101200"), equity=Decimal("101200"))
+    f.cash.append({"id": "W", "type": "WITHDRAWAL", "amount": Decimal("-3000"), "at": NOW - timedelta(days=10)})
+    f.peak = {"total": Decimal("4200"), "nulls": 0, "events": 40, "max_cum": Decimal("4200"), "peak_at": NOW - timedelta(days=1)}
+    r = row(pg.build(f, "UTC"), "overall_drawdown")
+    assert r["used"] == "0.00" and r["reference"]["amount"] == "104200.00"          # the payout is not a 3,000 drawdown
+
+
+def test_trailing_balance_needs_coverage_even_when_totals_add_up():
+    f = facts(overall("trailing", "balance", money(5, "percent", "high_water")), balance=Decimal("104200"))
+    f.peak = {"total": Decimal("4200"), "nulls": 0, "events": 40, "max_cum": Decimal("8000"), "peak_at": NOW}
+    f.closed = cov(earliest_ms=ms(NOW - timedelta(days=7)))           # the arithmetic still adds up, the history doesn't reach the opening
     r = row(pg.build(f, "UTC"), "overall_drawdown")
     assert not r["measurable"] and r["action"]["id"] == "import"
+    f = facts(overall("trailing", "balance", money(5, "percent", "high_water")), balance=Decimal("104200"))
+    f.peak = {"total": Decimal("3000"), "nulls": 0, "events": 40, "max_cum": Decimal("8000"), "peak_at": NOW}   # 1,200 unexplained
+    assert "doesn't add back" in row(pg.build(f, "UTC"), "overall_drawdown")["reason"]
+    f.peak = {"total": Decimal("4200"), "nulls": 1, "events": 40, "max_cum": Decimal("8000"), "peak_at": NOW}
+    assert not row(pg.build(f, "UTC"), "overall_drawdown")["measurable"]
 
 
 def test_trailing_equity_is_not_measured():
@@ -308,18 +380,60 @@ def personal(**pr):
     return p
 
 
-def test_risk_per_trade_values_the_stop_with_the_brokers_pnl():
-    pos = [{"symbol": "EURUSD", "alias": None, "side": "BUY", "volume": "1", "open_price": "1.1000", "current_price": "1.1010", "sl_price": "1.0950", "profit": "100"},
-           {"symbol": "US30", "alias": None, "side": "SELL", "volume": "1", "open_price": "40000", "current_price": "40000", "sl_price": "40100", "profit": "0"},
-           {"symbol": "XAUUSD", "alias": None, "side": "BUY", "volume": "1", "open_price": "2000", "current_price": "1990", "sl_price": None, "profit": "-100"}]
-    r = row(pg.build(facts(personal(riskPerTrade=money(0.5, "percent")), positions=pos), "UTC"), "risk_per_trade")
-    # EURUSD: 100 per 0.0010 -> stop 0.0050 below entry = 500 at risk; limit 0.5% x 100,000 = 500 -> exactly at the limit
-    assert r["used"] == "500.00" and r["limit"] == "500.00" and r["status_label"] == "Limit reached" and r["unmeasured_count"] == 2
-    none = row(pg.build(facts(personal(riskPerTrade=money(300))), "UTC"), "risk_per_trade")
+def pos(symbol, side, o, c, sl, profit):
+    return {"symbol": symbol, "alias": None, "side": side, "volume": "1", "open_price": o, "current_price": c, "sl_price": sl, "profit": profit}
+
+
+def risk(positions, limit=money(500), quotes=None, **kw):
+    return row(pg.build(facts(personal(riskPerTrade=limit), positions=positions, quotes=quotes or {}, **kw), "UTC"), "risk_per_trade")
+
+
+def test_risk_is_definite_only_when_the_instrument_is_priced_in_the_account_currency():
+    long_ = pos("XAUUSD", "BUY", "2400", "2404", "2392", "200")       # 50 per unit; stop 8 below: 400
+    short = pos("US30", "SELL", "40000", "39960", "40030", "40")      # 1 per unit; stop 30 above: 30
+    r = risk([long_, short], quotes={"XAUUSD": "USD", "US30": "USD"})
+    assert (r["used"], r["worst_symbol"], r["status_label"], r["tone"]) == ("400.00", "XAUUSD", "Close to limit", "amber")   # 80 % of 500
+    r = risk([long_, short], limit=money(1000), quotes={"XAUUSD": "USD", "US30": "USD"})
+    assert r["status_label"] == "Within limit" and r["tone"] == "green"
+    r = risk([long_, short])                                          # quote currency unknown: estimate only
+    assert r["used"] == "400.00" and r["status_label"] == "Estimate only" and r["tone"] == "neutral" and r["estimate"]
+    r = risk([pos("USDJPY", "BUY", "150", "150.5", "149", "333.33")], limit=money(1000), quotes={"USDJPY": "JPY"})
+    assert r["status_label"] == "Estimate only"                       # converted at today's rate
+    r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2385", "200")])   # estimate 750 over a 500 limit
+    assert r["status_label"] == "Estimate over limit" and r["tone"] == "amber"
+    r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2390", "200")], quotes={"XAUUSD": "USD"})
+    assert r["status_label"] == "Limit reached" and r["tone"] == "red"
+
+
+def test_risk_unavailable_cases_say_why():
+    r = risk([pos("XAUUSD", "BUY", "2400", "2396", None, "-200")])
+    assert not r["measurable"] and r["status_label"] == "Risk unavailable" and "no stop loss" in r["reason"]
+    r = risk([pos("XAUUSD", "BUY", "2400", "2400", "2390", "0")])
+    assert "too close to entry" in r["reason"]
+    r = risk([pos("XAUUSD", "BUY", "2400", "2400.2", "2390", "1.00")])   # 0.008 % move, 1.00 P&L
+    assert "too close to entry" in r["reason"]
+    r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2390", None)])
+    assert "no P&L" in r["reason"]
+    r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2390", "-200")])     # P&L disagrees with the price move
+    assert not r["measurable"]
+
+
+def test_a_stop_beyond_breakeven_has_no_risk_and_partial_coverage_is_not_within_limit():
+    r = risk([pos("XAUUSD", "BUY", "2400", "2410", "2405", "500"), pos("US30", "SELL", "40000", "39900", "39950", "100")])
+    assert r["used"] == "0.00" and all(p["stop_in_profit"] for p in r["positions"]) and r["status_label"] == "Within limit"
+    r = risk([pos("XAUUSD", "BUY", "2400", "2404", "2392", "200"), pos("US30", "SELL", "40000", "39960", None, "40")], quotes={"XAUUSD": "USD"})
+    assert r["status_label"] == "Partly measured" and r["unmeasured_count"] == 1
+
+
+def test_risk_uses_gross_profit_so_fees_do_not_skew_the_value_per_unit():
+    p = pos("XAUUSD", "BUY", "2400", "2404", "2392", "200")
+    p["net_profit"] = "190"                                           # ignored: commission is not a price move
+    assert risk([p], quotes={"XAUUSD": "USD"})["used"] == "400.00"
+
+
+def test_no_open_trades_and_session_budget():
+    none = risk([])
     assert not none["measurable"] and none["status_label"] == "No open trades"
-
-
-def test_session_budget_is_shown_as_not_measured():
     r = row(pg.build(facts(personal(sessionBudget=money(500))), "UTC"), "session_budget")
     assert not r["measurable"] and r["action"]["flow"] == "personal"
 
