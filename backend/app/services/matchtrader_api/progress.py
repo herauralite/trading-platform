@@ -536,7 +536,7 @@ def rows_for(f: Facts, p: dict) -> tuple[list[dict], list[dict]]:
             else:
                 flows = cash.after(since)
                 r = target_row(row, f.balance - start - flow_sum(flows), amount, percent, start, start_note, flows, f)
-                if split and key != "growthTarget":
+                if split and key == "payoutTarget":
                     gross = D(r["current"])
                     r["profit_split"] = pct(split)
                     r["your_share"] = money(max(gross, Decimal(0)) * split / 100)
@@ -582,8 +582,9 @@ def combine(rows: list[dict]) -> list[dict]:
     """Rows measuring the same thing to the same amount become one row that keeps every meaning."""
     out: list[dict] = []
     for r in rows:
-        twin = next((o for o in out if o.get("measurable") and r.get("measurable") and o["target"] == r["target"]
-                     and o["baseline"] == r["baseline"]), None)
+        twin = next((o for o in out if (o.get("measurable") and r.get("measurable") and o["target"] == r["target"] and o["baseline"] == r["baseline"])
+                     or (not o.get("measurable") and not r.get("measurable") and o.get("reason") == r.get("reason")
+                         and (o.get("action") or {}).get("flow") == (r.get("action") or {}).get("flow"))), None)
         if twin:
             twin.setdefault("also", []).append({"id": r["id"], "title": r["title"], "source": r["source"], "entered": r["entered"]})
             twin["eligibility_note"] = twin.get("eligibility_note") or r.get("eligibility_note")
@@ -794,6 +795,8 @@ def risk_row(f: Facts, e: dict, size: Decimal | None) -> dict:
         status, label, tone = _status_limit(max(m["risk"] for m in exact_over), limit)
     elif over:
         status, label, tone = "estimate_over", "Estimate over limit", "amber"
+    elif any(not m["exact"] and m["risk"] == limit for m in measured):
+        status, label, tone = "estimate_at", "Estimate at limit", "amber"
     elif all(m["exact"] for m in measured) and not unmeasured:
         status, label, tone = _status_limit(worst["risk"], limit)
     elif not all(m["exact"] for m in measured):

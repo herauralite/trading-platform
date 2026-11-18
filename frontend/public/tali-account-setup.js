@@ -337,7 +337,8 @@
       var note = rowNote(r, c);
       if (note) html += '<div class="pg-note">' + esc(note) + '</div>';
     } else {
-      html += '<div class="pg-why">' + esc(r.reason || '') + '</div>';
+      var why = r.action && r.action.flow === 'cycle' && r.action.withdrawal ? 'A ' + money(num(r.action.withdrawal), c) + ' withdrawal on ' + shortDate(r.action.after) + ' is in this account\'s history. Confirm where the current payout cycle started.' : r.reason;
+      html += '<div class="pg-why">' + esc(why || '') + '</div>';
     }
     if (r.action) html += '<button type="button" class="su-link pg-act" data-setup="act" data-i="' + i + '">' + esc(r.action.label) + '</button>';
     if (r.definition && defs && defs[r.definition]) html += '<details class="pg-help"><summary>How it\'s measured</summary><p>' + esc(defs[r.definition]) + '</p></details>';

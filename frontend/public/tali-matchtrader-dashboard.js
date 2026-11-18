@@ -376,7 +376,8 @@
       if (id === null || !host || host.getActiveAccount() !== accountKey) return Promise.resolve();
       var entry = state.progress[accountKey], snapshot = state.snapshots[accountKey];
       var sig = snapshot ? progressSig(snapshot) : '';
-      var dayOver = entry && entry.dayEnd && now() >= entry.dayEnd;
+      // A new calendar day is asked for once; if the server's day hasn't moved yet (clock skew), at most every 15 s.
+      var dayOver = entry && entry.dayEnd && now() >= entry.dayEnd && now() - entry.at > 15000;
       if (!force && entry && entry.sig === sig && now() - entry.at < 60000 && !dayOver) return Promise.resolve();
       if (state.progressInFlight[accountKey] && !force) return state.progressInFlight[accountKey];
       var context = captureContext(accountKey);
