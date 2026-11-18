@@ -291,6 +291,18 @@
     return e.unit === 'amount' ? money(v, c) : trim(v) + '% of ' + (BASES[e.base] ? BASES[e.base].label : 'reference');
   }
   function sm(v, c) { var n = num(v); return n == null ? '—' : (n < 0 ? '−' + money(-n, c) : money(n, c)); }
+  // Notes that change how a figure should be read. They stay visible in the details; the rest is behind "How it's measured".
+  function rowFlags(r, c) {
+    var out = [];
+    if (r.unconfirmed_reason) out.push(r.unconfirmed_reason);
+    if (r.stale) out.push('Your broker balance is delayed, so this figure may be behind.');
+    if (r.id === 'risk_per_trade' && r.measurable && r.estimate) out.push('Estimate: ' + r.worst_symbol + ' isn\'t priced in ' + c + ', or its currency is unknown.');
+    if (r.id === 'risk_per_trade' && r.unmeasured_count) out.push('Not measured: ' + r.unmeasured.map(function (u) { return u.symbol + ' (' + u.reason_text + ')'; }).join(', ') + '.');
+    if (r.your_share) out.push('Your ' + trim(num(r.profit_split)) + '% share: ' + money(num(r.your_share), c) + ' of ' + money(num(r.target_share), c) + '.');
+    if (r.status === 'reached') out.push(r.id === 'phase_target' ? 'Your firm decides when the phase is passed.' : 'Reaching it doesn\'t confirm payout eligibility.');
+    return out;
+  }
+  // The longer explanation: where the numbers come from.
   function rowNote(r, c) {
     var out = [], b = r.baseline || {}, ref = r.reference || {};
     if (r.kind === 'target' && r.measurable) {
@@ -298,11 +310,10 @@
                 b.kind === 'confirmed_cycle_start' ? 'From the ' + money(num(b.amount), c) + ' this payout cycle started at' :
                 'From your ' + money(num(b.amount), c) + ' starting size') + ', open trades not counted.');
       if (r.cash_excluded) out.push('Deposits and withdrawals (' + sm(r.cash_excluded, c) + ') are left out.');
-      if (r.your_share) out.push('Your ' + trim(num(r.profit_split)) + '% share: ' + money(num(r.your_share), c) + ' of ' + money(num(r.target_share), c) + '.');
-      if (r.id === 'phase_target') out.push('Your firm decides when the phase is passed.');
-      else if (r.eligibility_note) out.push('Gross profit; reaching it doesn\'t confirm payout eligibility.');
+      if (r.id === 'phase_target' && r.status !== 'reached') out.push('Your firm decides when the phase is passed.');
+      else if (r.eligibility_note && r.status !== 'reached') out.push('Gross profit; reaching it doesn\'t confirm payout eligibility.');
     } else if (r.id === 'daily_loss' && r.measurable) {
-      out.push('Since the ' + esc(r.reset) + ' ' + zoneLabel(r.reset_zone) + ' reset: closed ' + sm(r.realized_since_reset, c) + ', open ' + sm(r.open_pnl, c) + '.');
+      out.push('Since the ' + r.reset + ' ' + zoneLabel(r.reset_zone) + ' reset: closed ' + sm(r.realized_since_reset, c) + ', open ' + sm(r.open_pnl, c) + '.');
       if (ref.amount) out.push('Start-of-day balance ' + money(num(ref.amount), c) + '.');
       if (r.cash_since_reset) out.push('Deposits and withdrawals since the reset aren\'t counted.');
     } else if (r.id === 'overall_drawdown' && r.measurable) {
@@ -310,46 +321,123 @@
                                      : 'Floor ' + money(num(r.floor), c) + ': starting size minus the limit, on ' + r.measured_on + '.');
       if (r.cash_excluded) out.push('Deposits and withdrawals (' + sm(r.cash_excluded, c) + ') are left out.');
     } else if (r.id === 'risk_per_trade' && r.measurable) {
-      out.push('Largest: ' + r.worst_symbol + (r.estimate ? ' (estimate: not priced in ' + c + ', or its currency is unknown)' : '') + '.');
-      if (r.unmeasured_count) out.push(r.unmeasured.map(function (u) { return u.symbol + ': ' + u.reason_text; }).join(' · ') + '.');
+      out.push('The largest risk on one open trade: what it loses if its stop loss is hit, from the broker\'s own P&L.');
     }
-    if (r.unconfirmed_reason) out.push(r.unconfirmed_reason);
-    if (r.stale) out.push('Balance is delayed.');
     return out.join(' ');
   }
-  function rowHtml(r, i, c, defs) {
+  function rowSource(r, c) {
+    return r.source + (r.entered ? ' · ' + entryShort(r.entered, c) : '') + (r.also ? ' · also ' + r.also.map(function (a) { return a.title.charAt(0).toLowerCase() + a.title.slice(1); }).join(', ') : '');
+  }
+  function pctText(v) { var n = num(v); return n == null ? '' : (n < 0 ? '−' + trim(-n) : trim(n)) + '%'; }
+  // Value lines: amount against the configured amount, then the share and what's left.
+  function rowFigures(r, c) {
+    var ratio = r.ratio_percent != null ? pctText(r.ratio_percent) : '';
+    if (r.kind === 'target') {
+      return { main: '<b>' + esc(sm(r.current, c)) + '</b> of ' + esc(money(num(r.target), c)) + ' target',
+               sub: [ratio ? ratio + ' complete' : '',
+                     r.status === 'reached' ? (num(r.over_by) ? money(num(r.over_by), c) + ' over the target' : 'Target reached') :
+                     money(num(r.remaining), c) + ' to go' + (r.status === 'below_start' ? ', starting below the baseline' : '')].filter(Boolean).join(' · ') };
+    }
+    var left = num(r.remaining) >= 0 ? money(num(r.remaining), c) + ' left' : money(-num(r.remaining), c) + ' past the limit';
+    return { main: '<b>' + esc(money(num(r.used), c)) + '</b> ' + (r.id === 'risk_per_trade' ? 'at risk on ' + esc(r.worst_symbol) + ', limit ' : 'used of ') + esc(money(num(r.limit), c)) + (r.id === 'risk_per_trade' ? '' : ' limit'),
+             sub: [ratio ? ratio + ' of the limit used' : '', left].filter(Boolean).join(' · ') };
+  }
+  function detailHtml(r, i, c, defs) {
     var tone = r.tone || 'neutral';
-    var src = r.source + (r.entered ? ' · ' + entryShort(r.entered, c) : '') + (r.also ? ' · also ' + r.also.map(function (a) { return a.title.charAt(0).toLowerCase() + a.title.slice(1); }).join(', ') : '');
-    var html = '<div class="pg-row" role="group" aria-label="' + esc(r.title) + '"><div class="pg-top"><span class="pg-title">' + esc(r.title) + '</span><span class="pg-badge pg-' + tone + '">' + esc(r.status_label) + '</span></div>' +
-      '<div class="pg-src">' + esc(src) + '</div>';
+    var html = '<div class="pg-d-head"><div class="pg-d-name"><span class="pg-d-title">' + esc(r.title) + '</span><span class="pg-d-src">' + esc(rowSource(r, c)) + '</span></div>' +
+      '<span class="pg-badge pg-' + tone + '">' + esc(r.status_label) + '</span></div>';
     if (r.measurable) {
-      var w = Math.round(Math.max(0, Math.min(1, Number(r.fraction) || 0)) * 100), ratio = r.ratio_percent != null ? trim(num(r.ratio_percent)) + '%' : '';
-      var left, right;
-      if (r.kind === 'target') {
-        left = sm(r.current, c) + ' of ' + money(num(r.target), c);
-        right = r.status === 'reached' ? (num(r.over_by) ? money(num(r.over_by), c) + ' over' : 'Reached') : money(num(r.remaining), c) + ' to go';
-      } else {
-        left = (r.id === 'risk_per_trade' ? 'Risk ' : 'Used ') + money(num(r.used), c) + ' of ' + money(num(r.limit), c);
-        right = num(r.remaining) >= 0 ? money(num(r.remaining), c) + ' left' : money(-num(r.remaining), c) + ' past the limit';
-      }
-      html += '<div class="pg-bar" role="progressbar" aria-label="' + esc(r.title) + '" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + w + '" aria-valuetext="' + esc(left + (ratio ? ', ' + ratio : '') + ', ' + right + ', ' + r.status_label) + '"><span class="pg-fill pg-' + tone + '" style="width:' + w + '%"></span></div>' +
-        '<div class="pg-vals"><span>' + esc(left) + (ratio ? ' · <b>' + esc(ratio) + '</b>' : '') + '</span><span>' + esc(right) + '</span></div>';
-      var note = rowNote(r, c);
-      if (note) html += '<div class="pg-note">' + esc(note) + '</div>';
+      var f = rowFigures(r, c);
+      html += '<div class="pg-d-main">' + f.main + '</div><div class="pg-d-sub">' + esc(f.sub) + '</div>';
     } else {
       var why = r.action && r.action.flow === 'cycle' && r.action.withdrawal ? 'A ' + money(num(r.action.withdrawal), c) + ' withdrawal on ' + shortDate(r.action.after) + ' is in this account\'s history. Confirm where the current payout cycle started.' : r.reason;
-      html += '<div class="pg-why">' + esc(why || '') + '</div>';
+      html += '<div class="pg-d-why">' + esc(why || 'This can\'t be measured yet.') + '</div>';
     }
-    if (r.action) html += '<button type="button" class="su-link pg-act" data-setup="act" data-i="' + i + '">' + esc(r.action.label) + '</button>';
-    if (r.definition && defs && defs[r.definition]) html += '<details class="pg-help"><summary>How it\'s measured</summary><p>' + esc(defs[r.definition]) + '</p></details>';
-    return html + '</div>';
+    var flags = rowFlags(r, c);
+    if (flags.length) html += '<ul class="pg-d-flags">' + flags.map(function (t) { return '<li>' + esc(t) + '</li>'; }).join('') + '</ul>';
+    if (r.action) html += '<button type="button" class="btn btn-blue rip pg-act" data-setup="act" data-i="' + i + '">' + esc(r.action.label) + '</button>';
+    var note = rowNote(r, c), def = r.definition && defs && defs[r.definition];
+    if (note || def) html += '<details class="pg-help" data-row="' + esc(r.id) + '"><summary>How it\'s measured</summary>' + (note ? '<p>' + esc(note) + '</p>' : '') + (def ? '<p>' + esc(def) + '</p>' : '') + '</details>';
+    return html;
   }
+
+  // ── progress circles: one small ring per configured goal or limit; tapping one opens its details in the card ──
+  var selectedProgress = Object.create(null);   // account key -> selected row id; each account keeps its own
+  function ringCenter(r) {
+    if (!r.measurable || r.ratio_percent == null) return '—';
+    var v = Math.round(num(r.ratio_percent));
+    var t = v > 9999 ? '>9999%' : v < -999 ? '<−999%' : (v < 0 ? '−' + (-v) : String(v)) + '%';
+    return t;
+  }
+  function ringState(r) {
+    if (!r.measurable) return r.status === 'idle' ? 'Nothing open' : r.status === 'pending' ? 'Waiting' : r.action ? 'Needs info' : 'Not measured';
+    if (r.status === 'unconfirmed') return 'Unconfirmed';
+    if (r.stale) return 'Delayed';
+    return r.status_label;
+  }
+  // A short name under the circle; the details and the accessible name keep the full title.
+  function ringTitle(r) {
+    var t = String(r.title || '').replace(/^Your /, '').replace(/ profit for payout$/, '').replace(/^(Phase \d+) profit target$/, '$1 target')
+      .replace(/^Session loss budget$/, 'Session budget').replace(/ limit$/, '');
+    return t.charAt(0).toUpperCase() + t.slice(1);
+  }
+  function ringSpeech(r) {
+    if (!r.measurable) return r.title + ', ' + (r.kind === 'target' ? 'target' : 'limit') + ', not measured. ' + r.status_label + '.';
+    var p = r.ratio_percent != null ? pctText(r.ratio_percent) : '';
+    return r.title + ', ' + (r.kind === 'target' ? 'target, ' + p + ' complete' : 'limit, ' + p + ' of the limit used') + (r.estimate ? ', estimate' : '') + '. ' + r.status_label + (r.stale ? ', balance delayed' : '') + '.';
+  }
+  function ringHtml(r, i, on, detailId) {
+    var fill = r.measurable ? Math.max(0, Math.min(1, Number(r.fraction) || 0)) : null, tone = r.measurable ? (r.tone || 'neutral') : 'neutral';
+    var arc = fill ? '<circle class="pg-arc" cx="24" cy="24" r="20" pathLength="100" style="stroke-dashoffset:' + (100 - fill * 100).toFixed(2) + '"/>' : '';
+    return '<button type="button" class="pg-ring pg-t-' + tone + (on ? ' is-on' : '') + (fill === null ? ' is-unknown' : '') + (r.kind === 'target' ? ' is-target' : ' is-limit') + '"' +
+      ' data-setup="ring" data-id="' + esc(r.id) + '" data-i="' + i + '" aria-expanded="' + on + '" aria-controls="' + detailId + '" aria-label="' + esc(ringSpeech(r)) + '">' +
+      '<span class="pg-dial" aria-hidden="true"><svg viewBox="0 0 48 48" focusable="false"><circle class="pg-track" cx="24" cy="24" r="20" pathLength="100"/>' + arc + '</svg>' +
+      '<span class="pg-val' + (ringCenter(r).length > 4 ? ' is-long' : '') + '">' + esc(ringCenter(r)) + '</span></span>' +
+      '<span class="pg-name" aria-hidden="true">' + esc(ringTitle(r)) + '</span><span class="pg-state" aria-hidden="true">' + esc(ringState(r)) + '</span></button>';
+  }
+  function detailIdFor(key) { return 'pg-detail-' + String(key).replace(/[^A-Za-z0-9_-]/g, '-'); }
   function progressBlock(key, p) {
     var data = host.getProgress && host.getProgress(key);
     if (!data || !Array.isArray(data.rows)) return null;
-    var c = data.currency || cur(key, p);
-    var rows = data.rows.map(function (r, i) { return rowHtml(r, i, c, data.definitions); }).join('');
-    return { html: rows ? '<div class="su-src">Progress</div><div class="pg-list">' + rows + '</div>' : '', labels: data.labels || [] };
+    var c = data.currency || cur(key, p), rows = data.rows, sel = selectedProgress[key];
+    var at = -1;
+    for (var j = 0; j < rows.length; j++) if (rows[j].id === sel) at = j;
+    if (at < 0 && sel) delete selectedProgress[key];            // the selected rule was removed or renamed
+    if (!rows.length) return { html: '', labels: data.labels || [] };
+    var id = detailIdFor(key), on = at >= 0;
+    var html = '<div class="su-src" id="' + id + '-h">Targets and limits</div>' +
+      '<div class="pg-rings' + (on ? ' has-on' : '') + '" role="group" aria-labelledby="' + id + '-h">' +
+      rows.map(function (r, i) { return ringHtml(r, i, i === at, id); }).join('') + '</div>' +
+      '<div class="pg-drawer' + (on ? ' is-open' : '') + '" id="' + id + '"' + (on ? '' : ' inert') + '><div class="pg-drawer-in"><div class="pg-detail" role="region" aria-label="' + esc(on ? rows[at].title : 'Details') + '">' +
+      (on ? detailHtml(rows[at], at, c, data.definitions) : '') + '</div></div></div>';
+    return { html: html, labels: data.labels || [] };
+  }
+  // Tapping a ring changes only the rings and the drawer, in place, so the size change animates and focus stays put.
+  function toggleRing(container, key, rowId) {
+    var data = host.getProgress && host.getProgress(key);
+    if (!data || !Array.isArray(data.rows)) return;
+    var at = -1;
+    data.rows.forEach(function (r, j) { if (r.id === rowId) at = j; });
+    if (at < 0) return;
+    var on = selectedProgress[key] !== rowId;
+    if (on) selectedProgress[key] = rowId; else delete selectedProgress[key];
+    var rings = container.querySelector('.pg-rings'), drawer = container.querySelector('.pg-drawer'), detail = drawer && drawer.querySelector('.pg-detail');
+    if (!rings || !drawer || !detail) return renderCard(container, key);
+    rings.classList.toggle('has-on', on);
+    Array.prototype.forEach.call(rings.querySelectorAll('.pg-ring'), function (b) {
+      var me = on && b.getAttribute('data-id') === rowId;
+      b.classList.toggle('is-on', me); b.setAttribute('aria-expanded', String(me));
+    });
+    if (on) {
+      var wasOpen = drawer.classList.contains('is-open');
+      detail.innerHTML = detailHtml(data.rows[at], at, data.currency || cur(key, work(key)), data.definitions);
+      detail.setAttribute('aria-label', data.rows[at].title);
+      drawer.removeAttribute('inert'); drawer.classList.add('is-open');
+      if (wasOpen) { detail.classList.remove('pg-swap'); void detail.offsetWidth; detail.classList.add('pg-swap'); }
+    } else {
+      drawer.classList.remove('is-open'); drawer.setAttribute('inert', '');
+    }
+    container._setupHtml = cardHtml(key);   // the next routine refresh with the same figures leaves the DOM alone
   }
 
   // ── widgets (HTML strings; every trader-supplied value goes through esc) ──
@@ -602,17 +690,33 @@
     '.su-sec{display:flex;gap:6px 14px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)}' +
     '.su-sec .su-link{padding:4px 0;text-align:left}.su-sec-state{color:var(--t3);font-size:11.5px;margin-left:4px;text-decoration:none}' +
     '.btn[disabled]{opacity:.45;cursor:default}' +
-    '.pg-list{display:flex;flex-direction:column;gap:8px;margin-top:6px}.pg-row{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:10px 12px}' +
-    '.pg-top{display:flex;justify-content:space-between;align-items:center;gap:8px}.pg-title{font-size:13px;font-weight:600;color:var(--text)}' +
+    '.pg-rings{display:grid;grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:2px 4px;margin:0 -6px}' +
+    '.pg-ring{-webkit-appearance:none;appearance:none;border:0;background:none;color:var(--text);font:inherit;cursor:pointer;min-width:0;padding:4px 4px 8px;border-radius:12px;display:flex;flex-direction:column;align-items:center;-webkit-tap-highlight-color:transparent;touch-action:manipulation;transition:background-color .2s}' +
+    '.pg-ring:focus{outline:none}.pg-ring:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}.pg-ring.is-on{background:var(--s2)}' +
+    '@media(hover:hover){.pg-ring:hover{background:var(--s2)}}' +
+    '.pg-dial{position:relative;width:58px;height:58px;display:grid;place-items:center;transform:scale(.8);transition:transform .3s var(--out),opacity .25s}' +
+    '.pg-rings.has-on .pg-ring:not(.is-on) .pg-dial{transform:scale(.68);opacity:.7}.pg-ring.is-on .pg-dial{transform:none}' +
+    '.pg-dial svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}' +
+    '.pg-track{fill:none;stroke:var(--s3);stroke-width:4.5}.pg-ring.is-unknown .pg-track{stroke:var(--border2);stroke-dasharray:3.2 4.1}' +
+    '.pg-arc{fill:none;stroke:var(--pg-c);stroke-width:4.5;stroke-linecap:round;stroke-dasharray:100 100;transition:stroke-dashoffset .5s var(--out),stroke .3s}' +
+    '.pg-t-green{--pg-c:var(--green)}.pg-t-amber{--pg-c:var(--orange)}.pg-t-red{--pg-c:var(--red)}.pg-t-cyan{--pg-c:var(--blue)}.pg-t-neutral{--pg-c:var(--t3)}' +
+    '.pg-val{position:relative;font-family:"JetBrains Mono",monospace;font-size:12.5px;font-weight:600;letter-spacing:-.4px;color:var(--text);font-variant-numeric:tabular-nums}.pg-val.is-long{font-size:10.5px;letter-spacing:-.6px}.pg-ring.is-unknown .pg-val{color:var(--t3)}' +
+    '.pg-name{font-size:11px;line-height:1.25;text-align:center;max-width:100%;margin-top:-3px;min-height:2.5em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.pg-ring.is-on .pg-name{font-weight:600}' +
+    '.pg-state{font-size:10px;line-height:1.25;color:var(--t3);max-width:100%;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.pg-t-red .pg-state{color:var(--red)}.pg-t-amber .pg-state{color:var(--orange)}' +
+    '.pg-drawer{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s var(--out)}.pg-drawer.is-open{grid-template-rows:1fr}.pg-drawer-in{overflow:hidden;min-height:0}' +
+    '.pg-detail{background:var(--s2);border:1px solid var(--border);border-radius:12px;padding:11px 12px 10px;margin-top:4px;opacity:0;transition:opacity .2s}.pg-drawer.is-open .pg-detail{opacity:1}' +
+    '.pg-swap{animation:pgSwap .22s var(--out)}@keyframes pgSwap{from{opacity:.3;transform:translateY(3px)}to{opacity:1;transform:none}}' +
+    '.pg-d-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}.pg-d-name{min-width:0}' +
+    '.pg-d-title{display:block;font-size:13.5px;font-weight:600;color:var(--text);overflow-wrap:anywhere}.pg-d-src{display:block;font-size:11px;color:var(--t3);margin-top:1px;line-height:1.4}' +
+    '.pg-d-main{font-size:12.5px;color:var(--t2);margin-top:9px;line-height:1.4;overflow-wrap:anywhere}.pg-d-main b{font-family:"JetBrains Mono",monospace;font-size:15px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums}' +
+    '.pg-d-sub{font-size:12px;color:var(--t2);margin-top:2px;line-height:1.4}.pg-d-why{font-size:12.5px;color:var(--t2);line-height:1.45;margin-top:8px}' +
+    '.pg-d-flags{margin:8px 0 0;padding:0;list-style:none}.pg-d-flags li{position:relative;font-size:11.5px;color:var(--t2);line-height:1.45;padding-left:11px;margin-top:3px}.pg-d-flags li::before{content:"";position:absolute;left:1px;top:.62em;width:4px;height:4px;border-radius:50%;background:var(--t3)}' +
+    '.pg-act{display:inline-block;margin-top:10px;padding:7px 14px;font-size:12px}' +
     '.pg-badge{font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;flex:none}' +
     '.pg-green{color:var(--green)}.pg-amber{color:var(--orange)}.pg-red{color:var(--red)}.pg-cyan{color:var(--blue)}.pg-neutral{color:var(--t3)}' +
-    '.pg-src{font-size:11px;color:var(--t3);margin-top:2px;line-height:1.4}.pg-bar{height:6px;border-radius:4px;background:var(--s3);overflow:hidden;margin:9px 0 6px}' +
-    '.pg-fill{display:block;height:100%;border-radius:inherit;background:currentColor;transition:width .4s var(--out)}' +
-    '.pg-vals{display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:11.5px;color:var(--t2);font-family:"JetBrains Mono",monospace}.pg-vals b{color:var(--text);font-weight:600}' +
-    '.pg-why,.pg-note{font-size:11.5px;color:var(--t2);line-height:1.45;margin-top:5px}.pg-act{display:block;margin-top:4px;padding:4px 0;color:var(--blue)}' +
-    '.pg-help{margin-top:4px}.pg-help summary{font-size:11px;color:var(--t3);cursor:pointer;list-style:none}.pg-help summary::-webkit-details-marker{display:none}.pg-help summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px}.pg-help p{font-size:11px;color:var(--t2);line-height:1.45;margin:4px 0 0}' +
+    '.pg-help{margin-top:8px}.pg-help summary{font-size:11px;color:var(--t3);cursor:pointer;list-style:none;display:inline-block;padding:3px 0}.pg-help summary::-webkit-details-marker{display:none}.pg-help summary::after{content:" ›"}.pg-help[open] summary::after{content:" ‹"}.pg-help summary:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:4px}.pg-help p{font-size:11px;color:var(--t2);line-height:1.5;margin:4px 0 0}' +
     '.pg-labels{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}.pg-chip{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--s3);color:var(--t2)}' +
-    '@media(prefers-reduced-motion:reduce){.pg-fill{transition:none}}' +
+    '@media(prefers-reduced-motion:reduce){.pg-ring,.pg-dial,.pg-arc,.pg-drawer,.pg-detail{transition:none}.pg-swap{animation:none}}' +
     '@media(max-width:480px){#setup-sheet .su-stack{flex-direction:column-reverse}#setup-sheet .su-stack .btn{flex:none;width:100%}}' +
     '@media(min-width:900px){#setup-sheet{bottom:auto;top:50%;left:50%;right:auto;width:520px;max-height:84vh;border-radius:16px;border:1px solid var(--border);transform:translate(-50%,-46%);opacity:0;transition:transform .25s var(--out),opacity .2s;padding-bottom:16px}#setup-sheet.open{transform:translate(-50%,-50%);opacity:1}#setup-sheet .as-handle{display:none}}' +
     '@media(prefers-reduced-motion:reduce){#setup-sheet,#setup-overlay{transition:none}.su-card-flash{animation:none}}';
@@ -663,7 +767,15 @@
     var sheet = $('setup-sheet'); if (!sheet) return;
     sheet.classList.remove('open'); $('setup-overlay').classList.remove('open');
     sheet.style.bottom = ''; sheet.style.maxHeight = '';
-    if (opener && opener.focus && doc.contains(opener)) { try { opener.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
+    var back = opener;
+    // The card may have been redrawn while the sheet was open: return to the same control in the new card.
+    if (back && !doc.contains(back) && back.getAttribute) {
+      var card = $('mtApiSetupCard'), what = back.getAttribute('data-setup'), rowId = back.getAttribute('data-id');
+      back = null;
+      if (card && what === 'act') back = card.querySelector('.pg-act') || card.querySelector('.pg-ring.is-on');
+      else if (card && what) Array.prototype.forEach.call(card.querySelectorAll('[data-setup="' + what + '"]'), function (n) { if (!back && (!rowId || n.getAttribute('data-id') === rowId)) back = n; });
+    }
+    if (back && back.focus && doc.contains(back)) { try { back.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
     opener = null;
   }
   function focusFirst() {
@@ -1101,14 +1213,10 @@
     }
     return '<div class="su-src">Trade history</div><div class="su-hist"><div class="su-card-line" style="margin:0">' + esc(line) + '</div>' + action + '</div>';
   }
-  function renderCard(container, key) {
-    if (!container) return;
-    if (!enabled()) { container.style.display = 'none'; container.innerHTML = ''; return; }
-    ensureDom();
-    loadAll(); loadOne(key);
+  // The card's markup for one account. Built from the cached answers and the server's progress figures only.
+  function cardHtml(key) {
     var e = entry(key);
-    container.setAttribute('data-setup-key', key);
-    if (!e.loaded) { container.innerHTML = '<div class="su-card-title">' + esc(accountTitle(key)) + '</div><div class="su-card-line">' + esc(e.loadError || 'Loading account setup…') + '</div>'; bindCard(container); return; }
+    if (!e.loaded) return '<div class="su-card-title">' + esc(accountTitle(key)) + '</div><div class="su-card-line">' + esc(e.loadError || 'Loading account setup…') + '</div>';
     var p = work(key), next = nextAction(p), prog = p.status === 'saved' ? progressBlock(key, p) : null, lines = cardLines(p, key, !!prog);
     var html = '<div class="su-card-title">' + esc(accountTitle(key)) + '</div>' +
       '<div class="su-src">From your broker</div><div class="su-card-line">' + esc(brokerLine(key)) + '</div>' + (prog ? prog.html : '') +
@@ -1122,16 +1230,75 @@
     if (p.status === 'saved') html += '<div class="su-sec">' + ['firm', 'personal'].map(function (f) {
       return '<button type="button" class="su-link" data-setup="' + f + '">' + esc(FLOW_TITLES[f]) + '<span class="su-sec-state">' + sectionState(p, f) + '</span></button>';
     }).join('') + '</div>';
+    return html;
+  }
+  // Routine refreshes redraw only when something changed, and then keep focus and any open explanation where they were.
+  function renderCard(container, key) {
+    if (!container) return;
+    if (!enabled()) { container.style.display = 'none'; container.innerHTML = ''; container._setupHtml = null; return; }
+    ensureDom();
+    loadAll(); loadOne(key);
+    var html = cardHtml(key);
+    if (container._setupHtml === html && container.getAttribute('data-setup-key') === key) return;
+    var kept = cardState(container);
+    container.setAttribute('data-setup-key', key);
     container.innerHTML = html;
+    container._setupHtml = html;
+    if (kept.key === key) restoreCardState(container, kept);   // another account's state never carries over
     bindCard(container);
+  }
+  function cardState(container) {
+    var s = { key: container.getAttribute('data-setup-key'), help: [] }, a = doc.activeElement;
+    Array.prototype.forEach.call(container.querySelectorAll('.pg-help[open]'), function (d) { s.help.push(d.getAttribute('data-row')); });
+    if (a && a !== container && container.contains(a)) {
+      var help = a.closest && a.closest('.pg-help'), t = a.closest && a.closest('[data-setup]');
+      if (a.id) s.focus = { id: a.id };
+      else if (help) s.focus = { help: help.getAttribute('data-row') };
+      else if (t) s.focus = { setup: t.getAttribute('data-setup'), rowId: t.getAttribute('data-id'), i: t.getAttribute('data-i') };
+    }
+    return s;
+  }
+  function restoreCardState(container, s) {
+    function byRow(sel, id) { var all = container.querySelectorAll(sel); for (var j = 0; j < all.length; j++) if (all[j].getAttribute('data-row') === id || all[j].getAttribute('data-id') === id) return all[j]; return null; }
+    s.help.forEach(function (id) { var d = byRow('.pg-help', id); if (d) d.open = true; });
+    var f = s.focus, el = null;
+    if (!f) return;
+    if (f.id) el = doc.getElementById(f.id);
+    else if (f.help) { var d = byRow('.pg-help', f.help); el = d && d.querySelector('summary'); }
+    else if (f.setup === 'ring') {   // a removed rule: the ring now in its place keeps focus
+      var rings = container.querySelectorAll('.pg-ring');
+      el = byRow('.pg-ring', f.rowId) || rings[Math.min(Number(f.i) || 0, rings.length - 1)] || null;
+    }
+    else if (f.setup === 'act') el = container.querySelector('.pg-act');
+    else if (f.setup) el = container.querySelector('[data-setup="' + f.setup + '"]');
+    if (el && container.contains(el) && el.focus) el.focus({ preventScroll: true });
   }
   function bindCard(container) {
     if (container._setupBound) return;
     container._setupBound = true;
+    // Rings: arrow keys move between them; Escape closes the open details and returns to their ring.
+    container.addEventListener('keydown', function (ev) {
+      var t = ev.target, k = container.getAttribute('data-setup-key');
+      if (ev.key === 'Escape' && selectedProgress[k] && t.closest && t.closest('.pg-rings,.pg-drawer')) {
+        var id = selectedProgress[k], back = null;
+        Array.prototype.forEach.call(container.querySelectorAll('.pg-ring'), function (b) { if (b.getAttribute('data-id') === id) back = b; });
+        ev.preventDefault(); toggleRing(container, k, id);
+        if (back) back.focus({ preventScroll: true });
+        return;
+      }
+      if (!t.classList || !t.classList.contains('pg-ring')) return;
+      var all = Array.prototype.slice.call(container.querySelectorAll('.pg-ring')), at = all.indexOf(t), to = null;
+      if (ev.key === 'ArrowRight') to = all[(at + 1) % all.length];
+      else if (ev.key === 'ArrowLeft') to = all[(at - 1 + all.length) % all.length];
+      else if (ev.key === 'Home') to = all[0];
+      else if (ev.key === 'End') to = all[all.length - 1];
+      if (to) { ev.preventDefault(); to.focus(); }
+    });
     container.addEventListener('click', function (ev) {
       var t = ev.target.closest ? ev.target.closest('[data-setup]') : null; if (!t) return;
       var k = container.getAttribute('data-setup-key'), what = t.getAttribute('data-setup'), e = entry(k);
       if (!e.loaded) return;
+      if (what === 'ring') return toggleRing(container, k, t.getAttribute('data-id'));
       if (what === 'retry') { if (e.failed) { var a = e.failed; a.onSaved = null; send(a).then(function () { refresh(k, false); }); } return; }
       if (what === 'import') { if (!(imports[k] && imports[k].starting)) { ui.key = k; ui.mode = 'import'; ui.confirm = null; ui.error = null; show(); startImport(k, false).then(keepPolling); } return; }
       if (what === 'viewImport') return openImport(k);
