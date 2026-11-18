@@ -370,7 +370,6 @@
     return t;
   }
   function ringState(r) {
-    if (!r.measurable) return r.status === 'idle' ? 'Nothing open' : r.status === 'pending' ? 'Waiting' : r.action ? 'Needs info' : 'Not measured';
     if (r.status === 'unconfirmed') return 'Unconfirmed';
     if (r.stale) return 'Delayed';
     return r.status_label;
@@ -382,14 +381,22 @@
     return t.charAt(0).toUpperCase() + t.slice(1);
   }
   function ringSpeech(r) {
-    if (!r.measurable) return r.title + ', ' + (r.kind === 'target' ? 'target' : 'limit') + ', not measured. ' + r.status_label + '.';
     var p = r.ratio_percent != null ? pctText(r.ratio_percent) : '';
     return r.title + ', ' + (r.kind === 'target' ? 'target, ' + p + ' complete' : 'limit, ' + p + ' of the limit used') + (r.estimate ? ', estimate' : '') + '. ' + r.status_label + (r.stale ? ', balance delayed' : '') + '.';
   }
+  // A circle needs both a saved rule and a usable figure from the server. Omitted, cleared and unmeasurable rules get
+  // no circle (never a 0% stand-in); they stay editable from the card's edit links. A real 0% is a circle.
+  var RULE_OF = { phase_target: ['evaluation', 'phaseTarget'], payout_target: ['master', 'payoutTarget'], firm_min: ['master', 'firmMin'], growth_target: ['master', 'growthTarget'],
+                  daily_loss: ['firmRules', 'dailyLoss'], overall_drawdown: ['firmRules', 'overall'], session_budget: ['personal', 'sessionBudget'], risk_per_trade: ['personal', 'riskPerTrade'] };
+  function ruleSaved(id, p) { var at = RULE_OF[id]; return !at || !!(p[at[0]] && p[at[0]][at[1]]); }
+  function ringEligible(r, p) {
+    if (!r || r.measurable !== true || r.fraction == null || num(r.ratio_percent) == null) return false;
+    return ruleSaved(r.id, p) || (r.also || []).some(function (a) { return ruleSaved(a.id, p); });
+  }
   function ringHtml(r, i, on, detailId) {
-    var fill = r.measurable ? Math.max(0, Math.min(1, Number(r.fraction) || 0)) : null, tone = r.measurable ? (r.tone || 'neutral') : 'neutral';
+    var fill = Math.max(0, Math.min(1, Number(r.fraction) || 0)), tone = r.tone || 'neutral';
     var arc = fill ? '<circle class="pg-arc" cx="24" cy="24" r="20" pathLength="100" style="stroke-dashoffset:' + (100 - fill * 100).toFixed(2) + '"/>' : '';
-    return '<button type="button" class="pg-ring pg-t-' + tone + (on ? ' is-on' : '') + (fill === null ? ' is-unknown' : '') + (r.kind === 'target' ? ' is-target' : ' is-limit') + '"' +
+    return '<button type="button" class="pg-ring pg-t-' + tone + (on ? ' is-on' : '') + (r.kind === 'target' ? ' is-target' : ' is-limit') + '"' +
       ' data-setup="ring" data-id="' + esc(r.id) + '" data-i="' + i + '" aria-expanded="' + on + '" aria-controls="' + detailId + '" aria-label="' + esc(ringSpeech(r)) + '">' +
       '<span class="pg-dial" aria-hidden="true"><svg viewBox="0 0 48 48" focusable="false"><circle class="pg-track" cx="24" cy="24" r="20" pathLength="100"/>' + arc + '</svg>' +
       '<span class="pg-val' + (ringCenter(r).length > 4 ? ' is-long' : '') + '">' + esc(ringCenter(r)) + '</span></span>' +
@@ -400,14 +407,14 @@
     var data = host.getProgress && host.getProgress(key);
     if (!data || !Array.isArray(data.rows)) return null;
     var c = data.currency || cur(key, p), rows = data.rows, sel = selectedProgress[key];
-    var at = -1;
-    for (var j = 0; j < rows.length; j++) if (rows[j].id === sel) at = j;
-    if (at < 0 && sel) delete selectedProgress[key];            // the selected rule was removed or renamed
-    if (!rows.length) return { html: '', labels: data.labels || [] };
+    var shown = [], at = -1;                        // indexes into data.rows, which row actions refer to
+    rows.forEach(function (r, j) { if (ringEligible(r, p)) { shown.push(j); if (r.id === sel) at = j; } });
+    if (at < 0 && sel) delete selectedProgress[key];            // the selected rule was cleared, removed or can't be measured now
+    if (!shown.length) return { html: '', labels: data.labels || [] };
     var id = detailIdFor(key), on = at >= 0;
     var html = '<div class="su-src" id="' + id + '-h">Targets and limits</div>' +
       '<div class="pg-rings' + (on ? ' has-on' : '') + '" role="group" aria-labelledby="' + id + '-h">' +
-      rows.map(function (r, i) { return ringHtml(r, i, i === at, id); }).join('') + '</div>' +
+      shown.map(function (j) { return ringHtml(rows[j], j, j === at, id); }).join('') + '</div>' +
       '<div class="pg-drawer' + (on ? ' is-open' : '') + '" id="' + id + '"' + (on ? '' : ' inert') + '><div class="pg-drawer-in"><div class="pg-detail" role="region" aria-label="' + esc(on ? rows[at].title : 'Details') + '">' +
       (on ? detailHtml(rows[at], at, c, data.definitions) : '') + '</div></div></div>';
     return { html: html, labels: data.labels || [] };
@@ -416,9 +423,9 @@
   function toggleRing(container, key, rowId) {
     var data = host.getProgress && host.getProgress(key);
     if (!data || !Array.isArray(data.rows)) return;
-    var at = -1;
-    data.rows.forEach(function (r, j) { if (r.id === rowId) at = j; });
-    if (at < 0) return;
+    var at = -1, p = work(key);
+    data.rows.forEach(function (r, j) { if (r.id === rowId && ringEligible(r, p)) at = j; });
+    if (at < 0) return renderCard(container, key);
     var on = selectedProgress[key] !== rowId;
     if (on) selectedProgress[key] = rowId; else delete selectedProgress[key];
     var rings = container.querySelector('.pg-rings'), drawer = container.querySelector('.pg-drawer'), detail = drawer && drawer.querySelector('.pg-detail');
@@ -461,6 +468,21 @@
     var m = p.draft[name], v = m ? num(m.raw) : null;
     return v != null && v > 0 ? { value: v, unit: m.unit, base: baseOf(name, p) } : null;
   }
+  // An optional amount the trader empties on purpose is removed when the step is saved; Skip leaves it untouched.
+  // Zero is never a clear: the server accepts only amounts above zero, so a typed 0 is simply not valid.
+  function savedEntry(name, p) {
+    var ev = p.evaluation, ms = p.master, fr = p.firmRules, pr = p.personal;
+    return ({ phaseTarget: ev.phaseTarget, payoutTarget: ms.payoutTarget, firmMin: ms.firmMin, growthTarget: ms.growthTarget, firmDaily: fr.dailyLoss,
+              firmOverall: fr.overall, sessionBudget: pr.sessionBudget, riskPerTrade: pr.riskPerTrade })[name] || null;
+  }
+  function emptied(name, p) { var m = p.draft[name]; return !!m && !String(m.raw == null ? '' : m.raw).trim(); }
+  function removing(name, p) { return emptied(name, p) && !!savedEntry(name, p); }
+  function fieldOk(name, p) {
+    var m = p.draft[name];
+    if (!m || !String(m.raw == null ? '' : m.raw).trim()) return true;
+    var e = draftEntry(name, p);
+    return !!e && (e.unit !== 'percent' || e.value <= 1000);
+  }
   function moneyShown(name, p) {
     var m = p.draft[name] || { raw: '', unit: 'amount', view: 'amount' };
     if (m.view === m.unit) return m.raw;
@@ -470,6 +492,8 @@
   function moneyNote(name, p, key) {
     var m = p.draft[name] || { raw: '', unit: 'amount', view: 'amount' };
     var entry = draftEntry(name, p), c = cur(key, p), baseId = baseOf(name, p), base = BASES[baseId];
+    if (removing(name, p)) return 'Left empty: your saved ' + entryShort(savedEntry(name, p), c) + ' is removed when you continue. Skip keeps it.';
+    if (!entry && String(m.raw == null ? '' : m.raw).trim()) return 'Enter an amount above zero, or leave it empty.';
     if (!entry) return base ? 'Percent is measured against your ' + base.label + '.' : 'Choose what this is measured from to compare amount and percent.';
     var typed = entry.unit === 'amount' ? money(entry.value, c) : trim(entry.value) + '%';
     var other = convert(entry, p);
@@ -526,16 +550,17 @@
     if (step === 'goal') return !!d.goal && !!d.goal.id && (d.goal.id !== 'other' || !!String(d.goal.text || '').trim());
     if (step === 'phaseCount') return !!d.phaseCount;
     if (step === 'currentPhase') return !!d.currentPhase && d.currentPhase <= (d.phaseCount || p.evaluation.phaseCount || 1);
-    if (MONEY_STEPS[step]) { var e = draftEntry(step, p); return !!e && (e.unit !== 'percent' || e.value <= 1000); }
-    if (step === 'firmDaily') return !!draftEntry('firmDaily', p) && !!d.firmDailyBase;
-    if (step === 'firmOverall') return !!draftEntry('firmOverall', p) && !!d.overallMode && !!d.overallRef;
+    if (MONEY_STEPS[step]) { var e = draftEntry(step, p); return removing(step, p) || (!!e && (e.unit !== 'percent' || e.value <= 1000)); }
+    if (step === 'firmDaily') return removing('firmDaily', p) || (!!draftEntry('firmDaily', p) && !!d.firmDailyBase);
+    if (step === 'firmOverall') return removing('firmOverall', p) || (!!draftEntry('firmOverall', p) && !!d.overallMode && !!d.overallRef);
     if (step === 'profitSplit') { var ps0 = String(d.profitSplit || '').trim(); return !ps0 || (num(ps0) > 0 && num(ps0) <= 100); }
     if (step === 'phaseStart' || step === 'cycleStart') {
       var k = step === 'phaseStart' ? 'phaseStart' : 'cycle', pick = d[k + 'Pick'], other = num(d[k + 'Other']);
       var okAmount = (pick === 'size' && !!p.size) || (pick === 'other' && other > 0 && other <= 1e10);
       return okAmount && (step !== 'cycleStart' || !!d.cycleAfter);
     }
-    if (step === 'personal') return !!draftEntry('sessionBudget', p) || !!draftEntry('riskPerTrade', p);
+    if (step === 'personal') return fieldOk('sessionBudget', p) && fieldOk('riskPerTrade', p) &&
+      (!!draftEntry('sessionBudget', p) || !!draftEntry('riskPerTrade', p) || removing('sessionBudget', p) || removing('riskPerTrade', p));
     return true;
   }
   function commit(step, p, key) {           // a confirmed answer moves from the draft into the profile
@@ -553,7 +578,11 @@
     }
     else if (step === 'phaseCount') { ev.phaseCount = d.phaseCount; if (ev.phaseCount === 1 || ev.currentPhase > ev.phaseCount) delete ev.currentPhase; drop('phaseCount'); if (ev.phaseCount === 1) drop('currentPhase'); }
     else if (step === 'currentPhase') { ev.currentPhase = d.currentPhase; drop('currentPhase'); }
-    else if (MONEY_STEPS[step]) { p[MONEY_STEPS[step]][step] = draftEntry(step, p); drop(step); }
+    else if (MONEY_STEPS[step]) { var me = draftEntry(step, p); if (me) p[MONEY_STEPS[step]][step] = me; else delete p[MONEY_STEPS[step]][step]; drop(step); }
+    else if (step === 'firmDaily' && !draftEntry('firmDaily', p)) {      // emptied: the daily rule and its reset details go
+      delete fr.dailyLoss; delete fr.dailyReset; delete fr.dailyResetZone; delete fr.dailyFrom;
+      drop('firmDaily', 'firmDailyBase', 'firmDailyReset', 'firmDailyZone', 'firmDailyFrom');
+    }
     else if (step === 'firmDaily') {
       fr.dailyLoss = draftEntry('firmDaily', p);
       if (d.firmDailyReset) { fr.dailyReset = d.firmDailyReset; if (d.firmDailyZone) fr.dailyResetZone = d.firmDailyZone; else delete fr.dailyResetZone; }
@@ -564,10 +593,17 @@
     else if (step === 'profitSplit') { if (num(d.profitSplit) > 0) p.master.profitSplit = num(d.profitSplit); else delete p.master.profitSplit; drop('profitSplit'); }
     else if (step === 'phaseStart') { ev.phaseStart = { phase: phaseNow(p), amount: d.phaseStartPick === 'size' ? p.size.amount : num(d.phaseStartOther) }; drop('phaseStartPick', 'phaseStartOther'); }
     else if (step === 'cycleStart') { p.master.cycleStart = { amount: d.cyclePick === 'size' ? p.size.amount : num(d.cycleOther), after: d.cycleAfter }; drop('cyclePick', 'cycleOther', 'cycleAfter', 'cycleWithdrawal'); }
-    else if (step === 'firmOverall') { fr.overall = draftEntry('firmOverall', p); fr.overallMode = d.overallMode; fr.overallRef = d.overallRef; drop('firmOverall', 'overallMode', 'overallRef'); }
+    else if (step === 'firmOverall') {
+      var oe = draftEntry('firmOverall', p);
+      if (oe) { fr.overall = oe; fr.overallMode = d.overallMode; fr.overallRef = d.overallRef; } else { delete fr.overall; delete fr.overallMode; delete fr.overallRef; }
+      drop('firmOverall', 'overallMode', 'overallRef');
+    }
     else if (step === 'personal') {
-      var b = draftEntry('sessionBudget', p), r = draftEntry('riskPerTrade', p);
-      if (b) pr.sessionBudget = b; if (r) pr.riskPerTrade = r; drop('sessionBudget', 'riskPerTrade');
+      ['sessionBudget', 'riskPerTrade'].forEach(function (k) {
+        var v = draftEntry(k, p);
+        if (v) pr[k] = v; else if (emptied(k, p)) delete pr[k];          // untouched (no draft) keeps what was saved
+      });
+      drop('sessionBudget', 'riskPerTrade');
     }
     else if (step === 'refine') {
       if (d.style) pr.style = d.style;
@@ -697,10 +733,10 @@
     '.pg-dial{position:relative;width:58px;height:58px;display:grid;place-items:center;transform:scale(.8);transition:transform .3s var(--out),opacity .25s}' +
     '.pg-rings.has-on .pg-ring:not(.is-on) .pg-dial{transform:scale(.68);opacity:.7}.pg-ring.is-on .pg-dial{transform:none}' +
     '.pg-dial svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}' +
-    '.pg-track{fill:none;stroke:var(--s3);stroke-width:4.5}.pg-ring.is-unknown .pg-track{stroke:var(--border2);stroke-dasharray:3.2 4.1}' +
+    '.pg-track{fill:none;stroke:var(--s3);stroke-width:4.5}' +
     '.pg-arc{fill:none;stroke:var(--pg-c);stroke-width:4.5;stroke-linecap:round;stroke-dasharray:100 100;transition:stroke-dashoffset .5s var(--out),stroke .3s}' +
     '.pg-t-green{--pg-c:var(--green)}.pg-t-amber{--pg-c:var(--orange)}.pg-t-red{--pg-c:var(--red)}.pg-t-cyan{--pg-c:var(--blue)}.pg-t-neutral{--pg-c:var(--t3)}' +
-    '.pg-val{position:relative;font-family:"JetBrains Mono",monospace;font-size:12.5px;font-weight:600;letter-spacing:-.4px;color:var(--text);font-variant-numeric:tabular-nums}.pg-val.is-long{font-size:10.5px;letter-spacing:-.6px}.pg-ring.is-unknown .pg-val{color:var(--t3)}' +
+    '.pg-val{position:relative;font-family:"JetBrains Mono",monospace;font-size:12.5px;font-weight:600;letter-spacing:-.4px;color:var(--text);font-variant-numeric:tabular-nums}.pg-val.is-long{font-size:10.5px;letter-spacing:-.6px}' +
     '.pg-name{font-size:11px;line-height:1.25;text-align:center;max-width:100%;margin-top:-3px;min-height:2.5em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.pg-ring.is-on .pg-name{font-weight:600}' +
     '.pg-state{font-size:10px;line-height:1.25;color:var(--t3);max-width:100%;text-align:center;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.pg-t-red .pg-state{color:var(--red)}.pg-t-amber .pg-state{color:var(--orange)}' +
     '.pg-drawer{display:grid;grid-template-rows:0fr;transition:grid-template-rows .3s var(--out)}.pg-drawer.is-open{grid-template-rows:1fr}.pg-drawer-in{overflow:hidden;min-height:0}' +
@@ -774,6 +810,9 @@
       back = null;
       if (card && what === 'act') back = card.querySelector('.pg-act') || card.querySelector('.pg-ring.is-on');
       else if (card && what) Array.prototype.forEach.call(card.querySelectorAll('[data-setup="' + what + '"]'), function (n) { if (!back && (!rowId || n.getAttribute('data-id') === rowId)) back = n; });
+    }
+    if (!back && opener && !doc.contains(opener) && $('mtApiSetupCard') && $('mtApiSetupCard').contains(doc.activeElement) === false) {
+      var cd = $('mtApiSetupCard'); back = cd && (cd.querySelector('.pg-ring') || cd.querySelector('#setupNextAction,[data-setup="edit"]'));
     }
     if (back && back.focus && doc.contains(back)) { try { back.focus({ preventScroll: true }); } catch (e) { /* ignore */ } }
     opener = null;
@@ -1049,7 +1088,7 @@
     if (a === 'money') {
       var n = t.getAttribute('data-name'), m = d[n] || { raw: '', unit: 'amount', view: 'amount' };
       if (m.view === m.unit) m.raw = t.value;
-      else if (String(t.value).trim() !== '') { m.unit = m.view; m.raw = t.value; }   // typing in the other unit makes that the entry; clearing it keeps the original
+      else { m.unit = m.view; m.raw = t.value; }   // typing in the other unit makes that the entry; emptying it is a clear like any other
       d[n] = m;
       var note = $('su-note-' + n); if (note) note.textContent = moneyNote(n, p, key);
     }
@@ -1158,6 +1197,15 @@
     if (!p.done.personal) return { label: 'Set my risk limits', flow: 'personal' };
     return null;
   }
+  // The card's edit links: the goal's own targets once they've been answered (so a target can be changed or
+  // removed later), then the firm's rules and the trader's limits.
+  function editFlows(p) {
+    var out = [], g = goalOf(p), ms = p.master;
+    if (p.type === 'evaluation' && (p.done.phase || p.evaluation.phaseTarget)) out.push('phase');
+    if (p.type === 'master' && (ms.payoutTarget || ms.firmMin || ms.profitSplit || (g && g.id === 'payout' && p.done.payout))) out.push('payout');
+    if (p.type === 'master' && (ms.growthTarget || (g && g.id === 'grow' && p.done.growth))) out.push('growth');
+    return out.concat(['firm', 'personal']);
+  }
   function sectionState(p, flow) { return (p.resume && p.resume.flow === flow) || flowHasDraft(p, flow) ? 'Resume' : p.done[flow] ? 'Edit' : 'Add'; }
   function brokerLine(key) {
     var a = account(key), bal = brokerBalance(key), kind = reportedKind(a.accountType);
@@ -1227,7 +1275,7 @@
 
     html += '<div class="su-card-actions">' + (next ? '<button type="button" class="btn ' + 'btn-blue' + ' rip" id="setupNextAction" data-setup="next">' + esc(next.label) + '</button>' : '') +
       (p.status === 'saved' ? '<button type="button" class="su-link" data-setup="edit">Edit answers</button>' : '') + '</div>';
-    if (p.status === 'saved') html += '<div class="su-sec">' + ['firm', 'personal'].map(function (f) {
+    if (p.status === 'saved') html += '<div class="su-sec">' + editFlows(p).map(function (f) {
       return '<button type="button" class="su-link" data-setup="' + f + '">' + esc(FLOW_TITLES[f]) + '<span class="su-sec-state">' + sectionState(p, f) + '</span></button>';
     }).join('') + '</div>';
     return html;
@@ -1248,7 +1296,7 @@
     bindCard(container);
   }
   function cardState(container) {
-    var s = { key: container.getAttribute('data-setup-key'), help: [] }, a = doc.activeElement;
+    var s = { key: container.getAttribute('data-setup-key'), help: [], rings: Array.prototype.map.call(container.querySelectorAll('.pg-ring'), function (b) { return b.getAttribute('data-id'); }) }, a = doc.activeElement;
     Array.prototype.forEach.call(container.querySelectorAll('.pg-help[open]'), function (d) { s.help.push(d.getAttribute('data-row')); });
     if (a && a !== container && container.contains(a)) {
       var help = a.closest && a.closest('.pg-help'), t = a.closest && a.closest('[data-setup]');
@@ -1267,7 +1315,8 @@
     else if (f.help) { var d = byRow('.pg-help', f.help); el = d && d.querySelector('summary'); }
     else if (f.setup === 'ring') {   // a removed rule: the ring now in its place keeps focus
       var rings = container.querySelectorAll('.pg-ring');
-      el = byRow('.pg-ring', f.rowId) || rings[Math.min(Number(f.i) || 0, rings.length - 1)] || null;
+      var was = Array.prototype.indexOf.call(s.rings || [], f.rowId);
+      el = byRow('.pg-ring', f.rowId) || rings[Math.min(Math.max(was, 0), rings.length - 1)] || container.querySelector('#setupNextAction,[data-setup="edit"]');
     }
     else if (f.setup === 'act') el = container.querySelector('.pg-act');
     else if (f.setup) el = container.querySelector('[data-setup="' + f.setup + '"]');
@@ -1305,7 +1354,7 @@
       if (what === 'act') { var pd = host.getProgress && host.getProgress(k), ra = pd && pd.rows[Number(t.getAttribute('data-i'))]; return runAction(k, ra && ra.action); }
       var p = work(k), n = nextAction(p);
       if (what === 'edit') return open(k, 'basics', 'type');
-      if (what === 'firm' || what === 'personal') return open(k, what);
+      if (what === 'firm' || what === 'personal' || what === 'phase' || what === 'payout' || what === 'growth') return open(k, what);
       if (n) open(k, n.flow, n.step);
     });
   }
