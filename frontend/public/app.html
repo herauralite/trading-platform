@@ -1948,18 +1948,18 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
           <div class="order-field"><div class="of-label">Order Type</div><div class="of-row"><div class="of-val" id="orderType">Market</div><div class="of-controls"><div class="of-btn rip" id="typeToggle">⇄</div></div></div></div>
         </div>
         <div class="order-row">
-          <div class="order-field"><div class="of-label">Stop Loss</div><div class="of-row"><div class="of-val txt-red" id="slVal">17,130</div><div class="of-controls"><div class="of-btn rip" id="slDown">−</div><div class="of-btn rip" id="slUp">+</div></div></div></div>
-          <div class="order-field"><div class="of-label">Take Profit</div><div class="of-row"><div class="of-val txt-green" id="tpVal">17,350</div><div class="of-controls"><div class="of-btn rip" id="tpDown">−</div><div class="of-btn rip" id="tpUp">+</div></div></div></div>
+          <div class="order-field"><div class="of-label">Stop Loss</div><div class="of-row"><div class="of-val txt-red" id="slVal">—</div><div class="of-controls"><div class="of-btn rip" id="slDown">−</div><div class="of-btn rip" id="slUp">+</div></div></div></div>
+          <div class="order-field"><div class="of-label">Take Profit</div><div class="of-row"><div class="of-val txt-green" id="tpVal">—</div><div class="of-controls"><div class="of-btn rip" id="tpDown">−</div><div class="of-btn rip" id="tpUp">+</div></div></div></div>
         </div>
         <div class="risk-preview">
-          <div><div class="rp-label">Risk $</div><div class="rp-val txt-red" id="riskDollar">$104.75</div></div>
-          <div><div class="rp-label">Reward $</div><div class="rp-val txt-green" id="rewardDollar">$231.25</div></div>
-          <div><div class="rp-label">R:R</div><div class="rp-val" id="rrRatio">1:2.2</div></div>
-          <div><div class="rp-label">Risk %</div><div class="rp-val" id="riskPct">1.06%</div></div>
-          <div><div class="rp-label">Margin</div><div class="rp-val" id="marginReq">$241</div></div>
-          <div><div class="rp-label">Limit Left</div><div class="rp-val txt-orange" id="tradeRiskLeft">$300</div></div>
+          <div><div class="rp-label">Risk $</div><div class="rp-val txt-red" id="riskDollar">—</div></div>
+          <div><div class="rp-label">Reward $</div><div class="rp-val txt-green" id="rewardDollar">—</div></div>
+          <div><div class="rp-label">R:R</div><div class="rp-val" id="rrRatio">—</div></div>
+          <div><div class="rp-label">Risk %</div><div class="rp-val" id="riskPct">—</div></div>
+          <div><div class="rp-label">Margin</div><div class="rp-val" id="marginReq">—</div></div>
+          <div><div class="rp-label">Limit Left</div><div class="rp-val txt-orange" id="tradeRiskLeft">—</div></div>
         </div>
-        <button class="exec-btn buy-btn rip" id="execBtn" style="opacity:0.5;pointer-events:none;cursor:not-allowed" title="Coming soon"><span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;NQ/USD &nbsp;@ &nbsp;<span id="execPrice">17,234.25</span><span style="font-size:10px;margin-left:8px;opacity:0.8;font-weight:500">(coming soon)</span></button>
+        <button class="exec-btn buy-btn rip" id="execBtn" type="button"><span class="btn-shine"></span>Review BUY</button><p id="orderAccessStatus" role="status" style="font-size:11px;color:var(--t3);line-height:1.5;margin:10px 0 0">Order entry is not enabled on this server. No order will be sent.</p>
       </div>
     </div>
     <div class="depth-card" id="depthCard">
@@ -5050,8 +5050,8 @@ document.getElementById('toolLine').addEventListener('click',function(){
 document.getElementById('toolLine').classList.add('active');
 document.getElementById('toolCandle').classList.remove('active');
 
-document.getElementById('tabBuy').addEventListener('click',function(){orderSide='buy';this.classList.add('active');document.getElementById('tabSell').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn buy-btn rip';b.innerHTML=`<span class="btn-shine"></span>▲ &nbsp;BUY &nbsp;${currentSym} &nbsp;@ &nbsp;<span id="execPrice">${fmtP(currentPrice)}</span>`;});
-document.getElementById('tabSell').addEventListener('click',function(){orderSide='sell';this.classList.add('active');document.getElementById('tabBuy').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn sell-btn rip';b.innerHTML=`<span class="btn-shine"></span>▼ &nbsp;SELL &nbsp;${currentSym} &nbsp;@ &nbsp;<span id="execPrice">${fmtP(currentPrice)}</span>`;});
+document.getElementById('tabBuy').addEventListener('click',function(){orderSide='buy';this.classList.add('active');document.getElementById('tabSell').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn buy-btn rip';b.textContent='Review '+orderSide.toUpperCase();});
+document.getElementById('tabSell').addEventListener('click',function(){orderSide='sell';this.classList.add('active');document.getElementById('tabBuy').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn sell-btn rip';b.textContent='Review '+orderSide.toUpperCase();});
 const step=()=>currentPrice>=1000?5:currentPrice>=10?0.5:0.0001;
 document.getElementById('sizeUp').addEventListener('click',()=>{lotSize=parseFloat(Math.min(lotSize+0.25,100).toFixed(2));document.getElementById('sizeVal').textContent=lotSize.toFixed(2);updateRiskCalc();});
 document.getElementById('sizeDown').addEventListener('click',()=>{lotSize=parseFloat(Math.max(lotSize-0.25,0.01).toFixed(2));document.getElementById('sizeVal').textContent=lotSize.toFixed(2);updateRiskCalc();});
@@ -5061,19 +5061,11 @@ document.getElementById('tpUp').addEventListener('click',()=>{tpPrice=parseFloat
 document.getElementById('tpDown').addEventListener('click',()=>{tpPrice=parseFloat((tpPrice-step()).toFixed(5));document.getElementById('tpVal').textContent=fmtP(tpPrice);updateRiskCalc();});
 document.getElementById('typeToggle').addEventListener('click',()=>{orderTypeIdx=(orderTypeIdx+1)%orderTypes.length;document.getElementById('orderType').textContent=orderTypes[orderTypeIdx];});
 function updateRiskCalc(){
-  const rPts=Math.abs(currentPrice-slPrice),rwPts=Math.abs(tpPrice-currentPrice);
-  const pipVal=currentPrice>=1000?20:currentPrice>=10?10:10000;
-  const rd=(rPts*pipVal*lotSize).toFixed(2),rw=(rwPts*pipVal*lotSize).toFixed(2);
-  const rr=rPts>0?(rwPts/rPts).toFixed(1):'-';
-  const rp=((parseFloat(rd)/liveBalance)*100).toFixed(2);
-  const mg=(currentPrice*lotSize*0.01).toFixed(0);
-  document.getElementById('riskDollar').textContent='$'+rd;document.getElementById('rewardDollar').textContent='$'+rw;
-  document.getElementById('rrRatio').textContent='1:'+rr;document.getElementById('riskPct').textContent=rp+'%';
-  document.getElementById('marginReq').textContent='$'+mg;
+  ['riskDollar','rewardDollar','rrRatio','riskPct','marginReq','tradeRiskLeft'].forEach(id=>{document.getElementById(id).textContent='—';});
 }
+
 document.getElementById('execBtn').addEventListener('click',function(){
-  const orig=this.innerHTML;this.innerHTML='<span class="btn-shine"></span>&#10003; Order Placed';
-  setTimeout(()=>{this.innerHTML=orig;},1800);
+  document.getElementById('orderAccessStatus').textContent='Trading requires an API token with order permissions and a trading-enabled TaliTrade server. This server does not submit orders. Keep your read-only token for now; no order was sent.';
 });
 function updateDepth(){
   const container=document.getElementById('depthRows');if(!container)return;

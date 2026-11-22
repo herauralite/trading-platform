@@ -416,7 +416,7 @@
       '<div class="pg-rings' + (on ? ' has-on' : '') + '" role="group" aria-labelledby="' + id + '-h">' +
       shown.map(function (j) { return ringHtml(rows[j], j, j === at, id); }).join('') + '</div>' +
       '<div class="pg-drawer' + (on ? ' is-open' : '') + '" id="' + id + '"' + (on ? '' : ' inert') + '><div class="pg-drawer-in"><div class="pg-detail" role="region" aria-label="' + esc(on ? rows[at].title : 'Details') + '">' +
-      (on ? detailHtml(rows[at], at, c, data.definitions) : '') + '</div></div></div>';
+      (on ? '<button type="button" class="su-link" data-setup="ring" data-id="'+esc(rows[at].id)+'">Close details</button>'+detailHtml(rows[at], at, c, data.definitions) : '') + '</div></div></div>';
     return { html: html, labels: data.labels || [] };
   }
   // Tapping a ring changes only the rings and the drawer, in place, so the size change animates and focus stays put.
@@ -437,12 +437,16 @@
     });
     if (on) {
       var wasOpen = drawer.classList.contains('is-open');
-      detail.innerHTML = detailHtml(data.rows[at], at, data.currency || cur(key, work(key)), data.definitions);
+      detail.innerHTML = '<button type="button" class="su-link" data-setup="ring" data-id="'+esc(rowId)+'">Close details</button>'+detailHtml(data.rows[at], at, data.currency || cur(key, work(key)), data.definitions);
       detail.setAttribute('aria-label', data.rows[at].title);
       drawer.removeAttribute('inert'); drawer.classList.add('is-open');
+      var closeButton = detail.querySelector('[data-setup="ring"]');
+      if (closeButton) closeButton.focus({ preventScroll: true });
       if (wasOpen) { detail.classList.remove('pg-swap'); void detail.offsetWidth; detail.classList.add('pg-swap'); }
     } else {
       drawer.classList.remove('is-open'); drawer.setAttribute('inert', '');
+      var back = Array.prototype.find.call(rings.querySelectorAll('.pg-ring'), function (b) { return b.getAttribute('data-id') === rowId; });
+      if (back) back.focus({ preventScroll: true });
     }
     container._setupHtml = cardHtml(key);   // the next routine refresh with the same figures leaves the DOM alone
   }
@@ -718,6 +722,7 @@
     '#mtApiSetupCard{margin-top:10px}.su-card-title{font-size:14px;font-weight:700}.su-card-line{font-size:12.5px;color:var(--t2);margin-top:4px;line-height:1.45}.su-card-line b{color:var(--text);font-weight:600}.su-card-actions{display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap}.su-card-flash{animation:suFlash 1.6s ease-out}' +
     '@keyframes suFlash{0%{box-shadow:0 0 0 2px var(--blue)}100%{box-shadow:0 0 0 2px rgba(42,171,238,0)}}' +
     '.su-motion{height:64px;margin:0 18px;border-radius:10px;overflow:hidden;background:radial-gradient(ellipse at 50% 95%,#143c50,transparent 70%),#0a1722;color:#64dded}.su-motion:empty{display:none}.su-motion svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin:round}.su-track{stroke:#234456}.su-sweep{transform-origin:160px 32px;animation:suAcquire .85s cubic-bezier(.2,.7,.25,1) both}.su-dollar{stroke:#b9fff0;stroke-width:2.1}.su-scanner{animation:suScan 3.2s ease-in-out infinite}.su-corners{animation:suBright 3.2s infinite}.su-packet{stroke-width:2.5;stroke-dasharray:10 110;animation:suFeed 2.7s linear infinite}.su-row{stroke:#a2f6eb;stroke-width:2;stroke-dasharray:15;animation:suWrite 2.7s infinite}.su-delay{animation-delay:-1.35s}@keyframes suAcquire{from{transform:scale(1.6) rotate(-35deg);opacity:0}to{transform:none;opacity:1}}@keyframes suScan{0%{transform:translateY(-19px);opacity:0}15%,65%{opacity:.85}83%,100%{transform:translateY(19px);opacity:0}}@keyframes suBright{0%,60%,100%{stroke:#498393}76%{stroke:#b7fff7}}@keyframes suFeed{0%{stroke-dashoffset:10;opacity:0}12%{opacity:1}78%,100%{stroke-dashoffset:-96;opacity:0}}@keyframes suWrite{0%,45%{stroke-dashoffset:15;opacity:.2}72%,95%{stroke-dashoffset:0;opacity:1}100%{opacity:.2}}@media(prefers-reduced-motion:reduce){.su-motion svg *{animation:none!important}.su-scanner{opacity:0}.su-packet{display:none}}' +
+    '.su-account-layout{position:relative}.su-account-layout.has-rings .su-account-copy{padding-right:32%}.su-ring-space{position:static}.su-ring-space>.su-src{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}.su-ring-space .pg-rings{position:absolute;right:0;top:5px;bottom:5px;width:29%;max-width:185px;overflow:auto;scrollbar-width:thin;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin:0;align-content:center}.su-ring-space .pg-ring{min-width:0;padding:5px 0;color:var(--blue)!important}.su-ring-space .pg-dial{width:46px;height:46px;filter:drop-shadow(0 0 5px #2aabee30);animation:suFloat 5s ease-in-out infinite}.su-ring-space .pg-ring:nth-child(even) .pg-dial{animation-delay:-2.5s}.su-ring-space .pg-arc{stroke:#57c9f4!important}.su-ring-space .pg-name{font-size:9px}.su-ring-space .pg-state{font-size:8px;color:var(--t2)!important}.su-ring-space:has(.pg-drawer.is-open){overflow:visible}.su-ring-space .pg-drawer.is-open{position:absolute;left:0;right:32%;top:0;bottom:0;background:var(--s1);z-index:2;overflow:auto;padding:10px;border:1px solid var(--border2);border-radius:12px}.su-ring-space .pg-dial::after{content:"";position:absolute;inset:-5px;border:1px solid #57c9f422;border-top-color:#76dcff88;border-radius:50%;opacity:.5;pointer-events:none}.su-ring-space.is-refreshed .pg-dial::after{animation:suOrbit .85s ease-out both}.su-ring-space .pg-ring:focus-visible{outline:2px solid var(--blue);outline-offset:2px;border-radius:8px}@keyframes suOrbit{0%{transform:rotate(-100deg);opacity:.1}40%{opacity:1}100%{transform:rotate(260deg);opacity:.5}}@keyframes suFloat{0%,100%{translate:0 0}50%{translate:0 -3px}}@media(max-width:480px){.su-ring-space .pg-rings{grid-template-columns:1fr}.su-account-layout.has-rings .su-account-copy{padding-right:29%}.su-ring-space{width:26%}}@media(prefers-reduced-motion:reduce){.su-ring-space .pg-dial,.su-ring-space.is-refreshed .pg-dial::after{animation:none}}' +
     '.su-big{display:flex;align-items:baseline;gap:10px;margin:6px 0 12px}.su-big-n{font-family:"JetBrains Mono",monospace;font-size:30px;font-weight:600;color:var(--text)}.su-big-l{font-size:13px;color:var(--t2)}' +
     '.su-hist{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.su-hist .btn{padding:8px 14px;font-size:12px}' +
     '.su-error{background:var(--red-dim);border:1px solid rgba(224,92,92,.4);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--text);margin-bottom:12px;line-height:1.45;display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}' +
@@ -1265,12 +1270,11 @@
   function cardHtml(key) {
     var e = entry(key);
     if (!e.loaded) return '<div class="su-card-title">' + esc(accountTitle(key)) + '</div><div class="su-card-line">' + esc(e.loadError || 'Loading account setup…') + '</div>';
-    var p = work(key), next = nextAction(p), prog = p.status === 'saved' ? progressBlock(key, p) : null, lines = cardLines(p, key, !!prog);
-    var html = '<div class="su-card-title">' + esc(accountTitle(key)) + '</div>' +
-      '<div class="su-src">From your broker</div><div class="su-card-line">' + esc(brokerLine(key)) + '</div>' + (prog ? prog.html : '') +
+    var p = work(key), next = nextAction(p), prog = progressBlock(key, p), lines = cardLines(p, key, false);
+    var html = '<div class="su-account-layout' + (prog && prog.html ? ' has-rings' : '') + '"><div class="su-account-copy"><div class="su-card-title">' + esc(accountTitle(key)) + '</div>' +
+      '<div class="su-src">From your broker</div><div class="su-card-line">' + esc(brokerLine(key)) + '</div>' +
       '<div class="su-src">You entered</div>' + (lines.length ? lines.map(function (l) { return '<div class="su-card-line">' + l + '</div>'; }).join('') :
         '<div class="su-card-line">' + (p.status === 'in_progress' ? 'Setup started. Your answers so far are saved on this account.' : 'Nothing yet. Tell TaliTrade what kind of account this is, so targets and limits are measured your way.') + '</div>');
-    if (prog && prog.labels.length) html += '<div class="pg-labels">' + prog.labels.map(function (l) { return '<span class="pg-chip">' + esc(l.title) + ' · ' + esc(l.value) + '</span>'; }).join('') + '</div>';
     if (e.failed) html += '<div class="su-error" role="alert" style="margin-top:10px"><span>Your latest answers for this account are not saved yet.</span><button type="button" class="btn btn-blue rip" data-setup="retry">Retry</button></div>';
 
     html += '<div class="su-card-actions">' + (next ? '<button type="button" class="btn ' + 'btn-blue' + ' rip" id="setupNextAction" data-setup="next">' + esc(next.label) + '</button>' : '') +
@@ -1278,22 +1282,36 @@
     if (p.status === 'saved') html += '<div class="su-sec">' + editFlows(p).map(function (f) {
       return '<button type="button" class="su-link" data-setup="' + f + '">' + esc(FLOW_TITLES[f]) + '<span class="su-sec-state">' + sectionState(p, f) + '</span></button>';
     }).join('') + '</div>';
+    html += '</div>' + (prog && prog.html ? '<aside class="su-ring-space" aria-label="Account targets and limits">' + prog.html + '</aside>' : '') + '</div>';
     return html;
   }
   // Routine refreshes redraw only when something changed, and then keep focus and any open explanation where they were.
+  var ringSnapshotTimes = Object.create(null);
+  function ringRefreshMotion(container, key) {
+    var snapshot = host.getSnapshot && host.getSnapshot(key);
+    var stamp = snapshot && snapshot.summary && snapshot.summary.fetched_at;
+    var previous = ringSnapshotTimes[key];
+    if (!stamp || !Number.isFinite(Date.parse(stamp))) return;
+    ringSnapshotTimes[key] = stamp;
+    if (!previous || Date.parse(stamp) <= Date.parse(previous) || Date.now() - Date.parse(stamp) > 90000) return;
+    if (global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    var rail = container.querySelector('.su-ring-space');
+    if (rail) { rail.classList.remove('is-refreshed'); void rail.offsetWidth; rail.classList.add('is-refreshed'); }
+  }
   function renderCard(container, key) {
     if (!container) return;
     if (!enabled()) { container.style.display = 'none'; container.innerHTML = ''; container._setupHtml = null; return; }
     ensureDom();
     loadAll(); loadOne(key);
     var html = cardHtml(key);
-    if (container._setupHtml === html && container.getAttribute('data-setup-key') === key) return;
+    if (container._setupHtml === html && container.getAttribute('data-setup-key') === key) { ringRefreshMotion(container, key); return; }
     var kept = cardState(container);
     container.setAttribute('data-setup-key', key);
     container.innerHTML = html;
     container._setupHtml = html;
     if (kept.key === key) restoreCardState(container, kept);   // another account's state never carries over
     bindCard(container);
+    ringRefreshMotion(container, key);
   }
   function cardState(container) {
     var s = { key: container.getAttribute('data-setup-key'), help: [], rings: Array.prototype.map.call(container.querySelectorAll('.pg-ring'), function (b) { return b.getAttribute('data-id'); }) }, a = doc.activeElement;

@@ -260,7 +260,7 @@
     }
     function setMarketLayout(on) {
       show('chartIntervalRow', on); show('chartWindowNote', on);
-      show('chartRangeRow', !on); show('orderPanel', !on); show('depthCard', !on);       // no order entry or sample depth beside real prices
+      show('chartRangeRow', !on); show('orderPanel', true); show('depthCard', !on);       // Keep the order ticket visible; never show synthetic market depth.
       var candleTool = byId('toolCandle'), lineTool = byId('toolLine');
       if (candleTool) {
         var tip = on ? 'Candles: open, high, low and close for each period' : 'Candle view is available for Match-Trader API accounts';

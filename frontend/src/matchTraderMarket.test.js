@@ -73,7 +73,7 @@ test('chart status text distinguishes a closed market from a delayed or failing 
   assert.equal(core.utcTime('nonsense'), '')
 })
 
-test('served page: no sample prices, real ticker container, market module loaded, no order entry in market mode', () => {
+test('served page: no sample prices, real ticker container, market module loaded, visible order ticket without simulated execution', () => {
   for (const sample of ['2,341.80', '67,450', '>18.34<', '>VIX<']) assert.ok(!appHtml.includes(sample), sample)
   const strip = appHtml.slice(appHtml.indexOf('id="tickerInner"'), appHtml.indexOf('Risk Parameters'))
   assert.ok(!/\d\.\d/.test(strip))                                             // the static markup carries no price at all
@@ -81,7 +81,7 @@ test('served page: no sample prices, real ticker container, market module loaded
   assert.ok(appHtml.indexOf('/tali-matchtrader-dashboard.js') < appHtml.indexOf('/tali-matchtrader-market.js'))
   assert.match(appHtml, /TaliMatchTraderMarket\.showChart\(\{chart,lineSeries\}\)/)
   assert.ok(!appHtml.includes("showChartState('Equity history not available'"))
-  assert.match(src, /show\('orderPanel', !on\); show\('depthCard', !on\)/)
+  assert.match(src, /show\('orderPanel', true\); show\('depthCard', !on\)/)
   for (const forbidden of ['innerHTML', 'localStorage.setItem', 'WebSocket', 'console.']) assert.ok(!src.includes(forbidden), forbidden)
   assert.ok(!/https?:\/\//.test(src))                                           // no third-party price source
 })
