@@ -87,7 +87,7 @@ function setup(db = makeServer()) {
   card.id = 'mtApiSetupCard'
   const $ = (q) => w.document.querySelector(q)
   const t = {
-    w, card, progress, db, $,
+    w, card, progress, db, $, host,
     async render(k = active) { active = k; w.TaliAccountSetup.renderCard(card, k); await until(() => !/Loading account setup/.test(card.textContent)); w.TaliAccountSetup.renderCard(card, k) },
     rings: () => [...card.querySelectorAll('.pg-ring')],
     ids: () => t.rings().map((b) => b.dataset.id),
@@ -114,6 +114,25 @@ function setup(db = makeServer()) {
   }
   return t
 }
+
+test('refresh halo only runs for a newer fresh snapshot, never first load or repeated data', async () => {
+  const t = setup()
+  let stamp = new Date(Date.now() - 10000).toISOString()
+  t.host.getSnapshot = () => ({summary:{balance:'100000',fetched_at:stamp}})
+  await t.render()
+  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), false)
+  stamp = new Date(Date.now()).toISOString()
+  await t.render()
+  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), true)
+  t.$('.su-ring-space').classList.remove('is-refreshed')
+  await t.render()
+  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), false)
+  t.w.matchMedia = () => ({matches:true})
+  stamp = new Date(Date.now() + 1000).toISOString()
+  await t.render()
+  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), false)
+  t.w.close()
+})
 
 test('only saved rules with a usable figure get a circle; a real 0% stays', async () => {
   const t = setup()
