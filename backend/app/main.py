@@ -2734,13 +2734,18 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
         if prev_alerts.get(alert.get("type")) != alert.get("level"):
             await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>", chat_id=notify_chat)
 
-    # Closed-trade alerts go through community_bot.deliver: receipt and send in one transaction, rolled back
-    # on failure, so a delivered close is never re-sent and a failed one leaves no receipt. The extension
-    # keeps a queued close until it gets a 2xx, so on a failed delivery this request answers 503 and the
-    # extension retries on its next poll. Everything stored above (account, snapshot, positions, link) is
-    # idempotent on that retry.
+    # Closed-trade alerts go through community_bot.deliver: receipt and send in one transaction.
+    # * Delivered: receipt committed; replays of the same close are suppressed.
+    # * Transient failure (network, timeout, 429, 5xx, bot misconfiguration): receipt rolled back, and this
+    #   request answers 503 so the extension keeps its queue (it clears only on a 2xx) and resends.
+    # * Permanent per-alert rejection (Bot API 400/403, e.g. the user blocked the bot): receipt committed as
+    #   settled, so it is not retried; on its own it does not make the request fail.
+    # The extension resends its whole queue after a 503, so in a mixed batch the delivered and rejected
+    # closes are suppressed by their receipts and only the transient ones are attempted again.
+    # Everything stored above (account, snapshot, positions, link) is idempotent on that retry.
     from app.services import community_bot
     undelivered_closes = 0
+    rejected_closes = 0
     telegram_configured = bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(tg_uid)
     for ct in data.closedTrades:
         if not telegram_configured:
@@ -2752,10 +2757,15 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
         message = f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n{ct.get('symbol','?')} {ct.get('direction','?')} | <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%"
         try:
             await community_bot.deliver(tg_uid, "closed_trade:" + closed_trade_fingerprint(account_id, ct), message,
-                                        require_subscription=False, parse_mode="HTML")
+                                        require_subscription=False, parse_mode="HTML", settle_permanent_failures=True)
+        except community_bot.TelegramDeliveryRejected as exc:
+            rejected_closes += 1
+            logger.warning("Closed-trade alert permanently rejected by Telegram; not retried: error_code=%s", exc.error_code)
         except Exception as exc:
             undelivered_closes += 1
-            logger.warning("Closed-trade alert delivery failed; left retryable: exception_type=%s", type(exc).__name__)
+            # Structured fields only: never the Telegram response text or the request URL (it holds the token).
+            logger.warning("Closed-trade alert delivery failed; left retryable: exception_type=%s status=%s error_code=%s",
+                           type(exc).__name__, getattr(exc, "status_code", None), getattr(exc, "error_code", None))
 
     prev_profit = prev.get("profit"); curr_profit = data.profit
     if curr_profit is not None and prev_profit is not None:
@@ -2766,9 +2776,10 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
 
     if undelivered_closes:
         return JSONResponse(status_code=503, content={"detail": "Telegram delivery failed; resend to retry", "retryable": True,
-                                                      "undelivered_closed_trades": undelivered_closes, "account": account_id})
+                                                      "undelivered_closed_trades": undelivered_closes,
+                                                      "rejected_closed_trades": rejected_closes, "account": account_id})
     risk = data.riskPerTradeIdea or {}; daily = data.dailyLoss or {}; overall = data.overallLoss or {}
-    return {"status": "ok", "account": account_id, "balance": data.balance, "equity": data.equity, "tradeRisk": {"used": risk.get("combined"), "remaining": risk.get("remaining"), "pct": risk.get("pct")}, "dailyLoss": {"used": daily.get("used"), "remaining": daily.get("remaining"), "pct": daily.get("pct")}, "overallLoss": {"used": overall.get("used"), "remaining": overall.get("remaining"), "pct": overall.get("pct")}, "alerts_fired": len(data.alerts), "telegramLinked": bool(tg_uid)}
+    return {"status": "ok", "account": account_id, "balance": data.balance, "equity": data.equity, "tradeRisk": {"used": risk.get("combined"), "remaining": risk.get("remaining"), "pct": risk.get("pct")}, "dailyLoss": {"used": daily.get("used"), "remaining": daily.get("remaining"), "pct": daily.get("pct")}, "overallLoss": {"used": overall.get("used"), "remaining": overall.get("remaining"), "pct": overall.get("pct")}, "alerts_fired": len(data.alerts), "telegramLinked": bool(tg_uid), "rejected_closed_trades": rejected_closes}
 
 
 @app.post("/extension/trade")
