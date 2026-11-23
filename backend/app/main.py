@@ -78,6 +78,7 @@ from app.services.provider_onboarding import (
 from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
+from app.core import oidc_replay
 from app.core import ingest_auth
 from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
 from app.services.matchtrader_api.store import SqlStore as MtApiStore
@@ -267,8 +268,8 @@ def verify_telegram_oidc_id_token(id_token: str, nonce: str | None = None) -> di
     except Exception as exc:
         logger.warning("Telegram OIDC verification failed: %s", exc)
         raise ValueError("oidc_invalid_token") from exc
-    if nonce and claims.get("nonce") and claims.get("nonce") != nonce:
-        raise ValueError("oidc_nonce_mismatch")
+    # Strict: a nonce is required, the signed token must carry the same nonce (see app/core/oidc_replay.py).
+    oidc_replay.validate_nonce_claim(nonce, claims)
     return claims
 
 # ─── Phase / rule tables ──────────────────────────────────────────────────────
@@ -1572,6 +1573,7 @@ async def telegram_login_oidc(data: TelegramOidcAuthData):
     try:
         claims = verify_telegram_oidc_id_token(data.id_token, data.nonce)
         tg_profile = _coerce_telegram_profile_from_claims(claims)
+        await oidc_replay.consume_nonce(claims, data.nonce)
     except ValueError as exc:
         return JSONResponse(status_code=401, content={"detail": "Invalid Telegram OIDC token", "reason": str(exc)})
     await db_upsert_user(tg_profile)
