@@ -2962,6 +2962,21 @@ function renderOverviewCards(){
   setOverviewStat('ovPositions',s.positionsVal||'—',s.positionsSub||'Live account exposure',s.positionsTone||'txt-dim');
 }
 
+// Feed freshness from /extension/status. age_seconds is computed by the server, so the browser's clock
+// does not matter; last_updated is naive UTC.
+function taliFeedAgeLabel(freshness){
+  const age=freshness&&typeof freshness.age_seconds==='number'?freshness.age_seconds:null;
+  if(age==null) return 'unknown';
+  if(age<60) return 'just now';
+  if(age<3600) return Math.floor(age/60)+'m ago';
+  if(age<86400) return Math.floor(age/3600)+'h ago';
+  return Math.floor(age/86400)+'d ago';
+}
+function taliFeedClock(freshness){
+  const raw=freshness&&freshness.last_updated;
+  const when=raw?new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(raw)?raw:raw+'Z'):new Date();
+  return (isNaN(when)?new Date():when).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+}
 function prettyRelativeFromIso(iso){
   if(!iso) return '—';
   const t=new Date(iso).getTime();
@@ -3434,7 +3449,13 @@ async function fetchStatus(){
     if(res.status===401){ handleSessionRejected(); return; }   // the session expired or was revoked while the page was open
     const data=await res.json();
     if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
-    const acct=data.accounts&&data.accounts[activeAcct];
+    // A stale account (feed stopped) is listed separately with its last known values and age; show them,
+    // clearly labelled as stale, instead of hiding the numbers. Never treat it as live.
+    const liveAcct=data.accounts&&data.accounts[activeAcct];
+    const staleAcct=!liveAcct&&data.stale_accounts?data.stale_accounts[activeAcct]:null;
+    const acct=liveAcct||staleAcct;
+    const isStale=!!staleAcct;
+    const feedAge=taliFeedAgeLabel(acct&&acct.freshness);
     // Track all accounts received (live ones) for sheet display
     if(data.accounts) Object.assign(liveAccountsCache, data.accounts);
     const statusEl=document.getElementById('tb-status');
@@ -3501,11 +3522,11 @@ async function fetchStatus(){
       equity:resolvedEquity,
       equitySub:profit!=null?'Floating '+pnl(profit):'Including floating P&L',
       equityTone:'txt-blue',
-      syncVal:'Live',
-      syncSub:'Updated '+new Date().toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'}),
-      syncTone:'txt-green',
+      syncVal:isStale?'Stale':'Live',
+      syncSub:isStale?('Last update '+feedAge+' · extension offline'):('Updated '+taliFeedClock(acct.freshness)),
+      syncTone:isStale?'txt-orange':'txt-green',
       positionsVal:acct.hasPositions?String(acct.openPositionCount||0):'0',
-      positionsSub:acct.hasPositions?'position(s) open':'No open positions',
+      positionsSub:isStale?('at last update ('+feedAge+')'):(acct.hasPositions?'position(s) open':'No open positions'),
       positionsTone:acct.hasPositions?'txt-blue':'txt-dim'
     };
     const riskPcts=[ri?.pct,dl?.pct,ol?.pct].filter(v=>typeof v==='number');
@@ -3524,7 +3545,8 @@ async function fetchStatus(){
     document.getElementById('footerAcct').textContent=fullLabel;
     document.getElementById('riskMeta').textContent=fullLabel;
     document.getElementById('sgRulesSub').textContent=fullLabel;
-    statusEl.textContent='live · '+typeStr;statusEl.style.color='var(--blue)';
+    if(isStale){ statusEl.textContent='stale · last update '+feedAge; statusEl.style.color='var(--orange)'; }
+    else { statusEl.textContent='live · '+typeStr; statusEl.style.color='var(--blue)'; }
 
     // ── Account ID fields ──────────────────────────────────────────────────────
     const resolvedId=liveAcctId||activeAcct;
