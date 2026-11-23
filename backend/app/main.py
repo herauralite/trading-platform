@@ -78,6 +78,7 @@ from app.services.provider_onboarding import (
 from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
+from app.core import execution_gate
 from app.core import ingest_auth
 from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
 from app.services.matchtrader_api.store import SqlStore as MtApiStore
@@ -1347,6 +1348,10 @@ app.add_middleware(
 MAX_INGEST_BODY_BYTES = 512 * 1024
 MAX_CSV_INGEST_BODY_BYTES = 5 * 1024 * 1024
 _INGEST_BODY_PREFIXES = ("/extension/", "/journal/", "/ingest/")
+
+
+# Read-only MVP: refuse anything that looks like order execution, server-side (app/core/execution_gate.py).
+app.middleware("http")(execution_gate.block_execution_routes)
 
 
 @app.middleware("http")
