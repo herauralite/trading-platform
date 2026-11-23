@@ -78,13 +78,13 @@ from app.services.provider_onboarding import (
 from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
-from app.core import execution_gate
 from app.core import ingest_auth
 from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
 from app.services.matchtrader_api.store import SqlStore as MtApiStore
 from app.services.account_setup import config as setup_config, routes as setup_routes
 from app.services.account_setup.store import SetupStore
 from app.core.ingest_auth import Principal
+from app.core import execution_gate
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
