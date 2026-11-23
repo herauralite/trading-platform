@@ -134,6 +134,16 @@ def world(monkeypatch):
         return {"account_id": acct_id, "eligible": False, "balance": acct.get("balance")}
 
     monkeypatch.setattr(main_mod, "send_telegram", tg)
+
+    async def persist_hb(**kwargs):
+        w["writes"].append(("heartbeat", kwargs["user_id"], kwargs["trading_account_id"]))
+
+    async def active_accounts(user_id, account_ids=None):
+        # The fake world's ownership map stands in for trading_accounts(user_id, is_active=TRUE).
+        owned = [a for a, users in w["owners"].items() if user_id in users]
+        return {a: None for a in owned if account_ids is None or a in account_ids}
+    monkeypatch.setattr(main_mod.live_status, "persist_heartbeat", persist_hb)
+    monkeypatch.setattr(main_mod.live_status, "load_active_heartbeats", active_accounts)
     monkeypatch.setattr(main_mod, "evaluate_payout_eligibility", payout)
     yield w
     main_mod.account_data_store.clear()
@@ -259,7 +269,7 @@ def test_user_with_no_accounts_sees_nothing(world):
     carol = session("3003")
     assert call("GET", "/extension/journal", headers=carol).json()["trades"] == []
     assert call("GET", "/extension/journal/stats", headers=carol).json()["total"] == 0
-    assert call("GET", "/extension/status", headers=carol).json() == {"accounts": {}, "count": 0}
+    assert call("GET", "/extension/status", headers=carol).json() == {"accounts": {}, "count": 0, "stale_accounts": {}}
     assert call("GET", "/extension/payout", headers=carol).status_code == 404
 
 
