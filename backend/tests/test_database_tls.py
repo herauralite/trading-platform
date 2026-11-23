@@ -124,7 +124,7 @@ def test_import_succeeds_in_production_with_default_verification():
 
 # ── real handshakes ───────────────────────────────────────────────────────────
 
-def _make_ca_and_server_cert(tmp_path, hostname="localhost"):
+def _make_ca_and_server_cert(tmp_path, hostname="localhost", ip_san=True):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import ec
@@ -146,8 +146,9 @@ def _make_ca_and_server_cert(tmp_path, hostname="localhost"):
     cert = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, hostname)]))
             .issuer_name(ca_name).public_key(key.public_key()).serial_number(x509.random_serial_number())
             .not_valid_before(now - datetime.timedelta(minutes=1)).not_valid_after(now + datetime.timedelta(days=1))
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname),
-                                                        x509.IPAddress(ipaddress.ip_address("127.0.0.1"))]), critical=False)
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(hostname)]
+                                                       + ([x509.IPAddress(ipaddress.ip_address("127.0.0.1"))] if ip_san else [])),
+                           critical=False)
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
             .sign(ca_key, hashes.SHA256()))
     ca_pem = ca_cert.public_bytes(serialization.Encoding.PEM).decode()
@@ -219,3 +220,93 @@ def test_default_trust_store_rejects_untrusted_certificate(tls_server):
     port, _, _ = tls_server
     with pytest.raises(ssl.SSLCertVerificationError):
         _handshake(database.build_ssl_context(), port, "localhost")
+
+
+# ── the real engine path (SQLAlchemy + asyncpg), not just the SSLContext object ──
+# A fake PostgreSQL endpoint: answers the SSLRequest with 'S', then does a TLS handshake with a certificate
+# issued to "db.test" only (no IP SAN). The app engine connects to 127.0.0.1, so verify-full must refuse the
+# certificate while verify-ca (same CA, no host name check) must complete the handshake.
+
+@pytest.fixture
+def fake_postgres_tls(tmp_path):
+    ca_path, _ = _make_ca_and_server_cert(tmp_path, hostname="db.test", ip_san=False)
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(tmp_path / "server.pem", tmp_path / "server.key")
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(5)
+    stop, handshakes = threading.Event(), []
+
+    def serve():
+        sock.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                continue
+            try:
+                conn.settimeout(5)
+                if len(conn.recv(8)) == 8:          # SSLRequest: int32 length + int32 code 80877103
+                    conn.sendall(b"S")
+                    with server_ctx.wrap_socket(conn, server_side=True):
+                        handshakes.append(True)     # completed: the client accepted our certificate
+            except (ssl.SSLError, OSError):
+                pass
+            finally:
+                conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    yield sock.getsockname()[1], str(ca_path), handshakes
+    stop.set()
+    thread.join(timeout=2)
+    sock.close()
+
+
+_ENGINE_CONNECT = """
+import asyncio
+from app.core import database
+
+async def main():
+    try:
+        async with database.engine.connect():
+            pass
+    except BaseException as exc:
+        chain, e = [], exc
+        while e is not None and len(chain) < 10:
+            chain.append(type(e).__name__)
+            e = e.__cause__ or e.__context__
+        print("CHAIN=" + ",".join(chain))
+
+asyncio.run(main())
+"""
+
+
+def _engine_connect(port, env_overrides):
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("TALITRADE_DB_SSL", "RAILWAY_", "TALITRADE_ENV"))}
+    env.update({"DATABASE_URL": f"postgresql+asyncpg://u:pw@127.0.0.1:{port}/db", **env_overrides})
+    return subprocess.run([sys.executable, "-c", _ENGINE_CONNECT], cwd=BACKEND_DIR, env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_engine_verify_full_refuses_certificate_for_another_host(fake_postgres_tls):
+    port, ca_path, handshakes = fake_postgres_tls
+    result = _engine_connect(port, {"TALITRADE_DB_SSL_ROOT_CERT": ca_path, "RAILWAY_ENVIRONMENT_NAME": "production"})
+    assert "SSLCertVerificationError" in result.stdout, result.stdout + result.stderr
+    assert not handshakes
+
+
+def test_engine_default_trust_store_refuses_private_ca(fake_postgres_tls):
+    port, _, handshakes = fake_postgres_tls
+    result = _engine_connect(port, {"RAILWAY_ENVIRONMENT_NAME": "production"})
+    assert "SSLCertVerificationError" in result.stdout, result.stdout + result.stderr
+    assert not handshakes
+
+
+def test_engine_verify_ca_completes_handshake_with_same_ca(fake_postgres_tls):
+    # Control: proves the two refusals above come from certificate checks, not from the fake server.
+    port, ca_path, handshakes = fake_postgres_tls
+    result = _engine_connect(port, {"TALITRADE_DB_SSL_MODE": "verify-ca", "TALITRADE_DB_SSL_ROOT_CERT": ca_path})
+    assert "SSLCertVerificationError" not in result.stdout, result.stdout + result.stderr
+    assert handshakes
