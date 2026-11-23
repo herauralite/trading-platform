@@ -103,19 +103,44 @@ async def subscribe(user_id, enabled):
         await conn.execute(text(sql), {"u": user_id})
 
 
-async def deliver(user_id, key, message, photo=None):
+async def deliver(user_id, key, message, photo=None, *, require_subscription=True, parse_mode=None):
+    """Send `message` to `user_id`; after one successful send, later attempts for (user_id, key) do nothing.
+
+    The receipt is inserted and the message sent inside ONE transaction:
+    * a failed send raises (api() raises on any non-OK Telegram response, httpx raises on transport errors),
+      the transaction rolls back and no receipt remains, so the same event can be delivered later;
+    * a concurrent attempt for the same key, in any process, blocks on the receipt's primary key until the
+      first attempt finishes: after its commit the second inserts nothing and does not send; after its
+      rollback the second sends.
+    Remaining ambiguity (at-least-once, not exactly-once): if Telegram accepts the message but the response
+    is lost (timeout), or the process dies after Telegram accepted it and before the commit, no receipt is
+    recorded and a retry sends the message again. The Bot API offers no idempotency key that would let us
+    detect that. The transaction stays open for at most the HTTP timeout (8 s).
+
+    require_subscription=True (default) delivers only to users in telegram_alert_preferences.
+    Returns True if this call sent the message, False if it was already delivered or not subscribed."""
     async with engine.begin() as conn:
-        claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
-            SELECT user_id,:key FROM telegram_alert_preferences WHERE user_id=:u
-            ON CONFLICT DO NOTHING RETURNING 1"""), {"u": user_id, "key": key})
+        if require_subscription:
+            claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
+                SELECT user_id,:key FROM telegram_alert_preferences WHERE user_id=:u
+                ON CONFLICT DO NOTHING RETURNING 1"""), {"u": user_id, "key": key})
+        else:
+            claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
+                VALUES (:u,:key) ON CONFLICT DO NOTHING RETURNING 1"""), {"u": user_id, "key": key})
         if not claimed:
-            return
+            return False
         async with httpx.AsyncClient(timeout=8) as client:
             if photo:
-                await api(client, "sendPhoto", data={"chat_id": user_id, "caption": message},
-                          files={"photo": ("talitrade.png", photo, "image/png")})
+                data = {"chat_id": user_id, "caption": message}
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
+                await api(client, "sendPhoto", data=data, files={"photo": ("talitrade.png", photo, "image/png")})
             else:
-                await api(client, "sendMessage", data={"chat_id": user_id, "text": message})
+                data = {"chat_id": user_id, "text": message}
+                if parse_mode:
+                    data["parse_mode"] = parse_mode
+                await api(client, "sendMessage", data=data)
+    return True
 
 
 async def alert_image(section, title, detail):
