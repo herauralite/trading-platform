@@ -574,28 +574,28 @@ async def _set_sync_run_status(
             UPDATE connector_sync_runs
             SET
                 status = :status,
-                started_at = COALESCE(:started_at, started_at),
-                finished_at = COALESCE(:finished_at, finished_at),
-                retry_count = COALESCE(:retry_count, retry_count),
+                started_at = COALESCE(CAST(:started_at AS TIMESTAMPTZ), started_at),
+                finished_at = COALESCE(CAST(:finished_at AS TIMESTAMPTZ), finished_at),
+                retry_count = COALESCE(CAST(:retry_count AS INTEGER), retry_count),
                 next_retry_at = :next_retry_at,
                 lease_owner = CASE
-                    WHEN :clear_lease THEN NULL
-                    WHEN :lease_owner IS NULL THEN lease_owner
-                    ELSE :lease_owner
+                    WHEN CAST(:clear_lease AS BOOLEAN) THEN NULL
+                    WHEN CAST(:lease_owner AS TEXT) IS NULL THEN lease_owner
+                    ELSE CAST(:lease_owner AS TEXT)
                 END,
                 lease_expires_at = CASE
-                    WHEN :clear_lease THEN NULL
+                    WHEN CAST(:clear_lease AS BOOLEAN) THEN NULL
                     ELSE lease_expires_at
                 END,
                 error_detail = :error_detail,
                 result_detail = CASE
-                    WHEN :result_detail::jsonb = '{}'::jsonb THEN result_detail
-                    ELSE result_detail || :result_detail::jsonb
+                    WHEN CAST(:result_detail AS jsonb) = '{}'::jsonb THEN result_detail
+                    ELSE result_detail || CAST(:result_detail AS jsonb)
                 END,
-                metadata = metadata || :metadata::jsonb
+                metadata = metadata || CAST(:metadata AS jsonb)
             WHERE id = :id
-              AND (:expected_status IS NULL OR status = :expected_status)
-              AND (:lease_owner IS NULL OR lease_owner = :lease_owner)
+              AND (CAST(:expected_status AS TEXT) IS NULL OR status = CAST(:expected_status AS TEXT))
+              AND (CAST(:lease_owner AS TEXT) IS NULL OR lease_owner = CAST(:lease_owner AS TEXT))
             RETURNING *
         """), params)).mappings().first()
     if not row:
