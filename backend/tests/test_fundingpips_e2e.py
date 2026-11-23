@@ -85,6 +85,24 @@ def ctx(monkeypatch):
     async def fake_send(message, chat_id=None):
         c.telegram.append((str(chat_id), message))
     monkeypatch.setattr(main, "send_telegram", fake_send)
+
+    # Receipt-backed delivery (community_bot.deliver) talks to Telegram through community_bot.api; replace
+    # only that HTTP call. `c.telegram_failures` makes the next N sends fail like a Telegram 5xx would.
+    c.telegram_failures = 0
+    c.telegram_attempts = 0
+    c.telegram_delay = 0.0
+
+    async def fake_api(client, method, *, data=None, files=None):
+        c.telegram_attempts += 1
+        if c.telegram_delay:
+            await asyncio.sleep(c.telegram_delay)
+        if c.telegram_failures > 0:
+            c.telegram_failures -= 1
+            raise RuntimeError(f"Telegram {method} returned 502")
+        c.telegram.append((str(data["chat_id"]), data.get("text") or data.get("caption") or ""))
+        return {"message_id": len(c.telegram)}
+    monkeypatch.setattr(community_bot, "api", fake_api)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-bot-token-not-real")
     main.account_data_store.clear()
     yield c
     main.account_data_store.clear()
@@ -354,4 +372,72 @@ def test_no_telegram_for_rejected_writes(ctx):
         assert res.status_code == 403 and ctx.telegram == []
         res = await ctx.http.post("/extension/data", json=heartbeat(closedTrades=[close]))
         assert res.status_code == 401 and ctx.telegram == []
+    run(ctx, scenario)
+
+
+CLOSE = {"accountId": ACCT_A, "symbol": "NAS100", "direction": "Sell", "volume": 2.0, "openPrice": 18500.0,
+         "pnl": -42.5, "balanceAfter": 100207.5, "dailyLossLimit": 5000, "overallLossLimit": 10000}
+
+
+async def _receipts(ctx):
+    rows = await ctx.q("SELECT event_key FROM telegram_alert_receipts WHERE user_id = :u AND event_key LIKE 'closed_trade:%'", u=ALICE)
+    return [r["event_key"] for r in rows]
+
+
+def test_failed_closed_trade_alert_stays_retryable_then_is_sent_once(ctx):
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        payload = heartbeat(positions=[], hasPositions=False, closedTrades=[CLOSE])
+        ctx.telegram_failures = 1                                   # Telegram rejects the first attempt
+        first = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        # Non-2xx: the extension keeps the close queued and resends it on its next poll.
+        assert first.status_code == 503 and first.json()["retryable"] is True and first.json()["undelivered_closed_trades"] == 1
+        assert ctx.telegram == [] and await _receipts(ctx) == []    # no receipt left behind to suppress the retry
+        # The snapshot was still stored on the failed attempt.
+        assert len(await ctx.q("SELECT 1 FROM account_snapshots")) == 1
+
+        retry = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert retry.status_code == 200
+        assert [(chat, "Trade Closed" in m and "-42.50" in m) for chat, m in ctx.telegram] == [(ALICE, True)]
+        assert len(await _receipts(ctx)) == 1
+
+        for _ in range(3):                                          # later re-sends: suppressed, still 2xx
+            assert (await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)).status_code == 200
+        assert len(ctx.telegram) == 1 and ctx.telegram_attempts == 2
+    run(ctx, scenario)
+
+
+def test_concurrent_retries_from_several_processes_send_once(ctx):
+    """Each concurrent request runs on its own database connection (NullPool), so PostgreSQL arbitrates the
+    receipt exactly as it does between separate web processes sharing the database."""
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        payload = heartbeat(positions=[], hasPositions=False, closedTrades=[CLOSE])
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat())   # account exists
+        ctx.telegram_delay = 0.3                                    # keep the first send in flight
+        results = await asyncio.gather(*(ctx.http.post("/extension/data", headers=bearer(tok), json=payload) for _ in range(5)))
+        assert [r.status_code for r in results] == [200] * 5
+        assert len([m for _, m in ctx.telegram if "Trade Closed" in m]) == 1 and len(await _receipts(ctx)) == 1
+    run(ctx, scenario)
+
+
+def test_concurrent_retry_after_a_failed_in_flight_send_still_delivers(ctx):
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat())
+        payload = heartbeat(positions=[], hasPositions=False, closedTrades=[CLOSE])
+        ctx.telegram_delay, ctx.telegram_failures = 0.3, 1          # whichever attempt sends first fails
+        results = await asyncio.gather(*(ctx.http.post("/extension/data", headers=bearer(tok), json=payload) for _ in range(3)))
+        codes = sorted(r.status_code for r in results)
+        assert codes.count(503) == 1 and codes.count(200) == 2
+        assert len([m for _, m in ctx.telegram if "Trade Closed" in m]) == 1 and len(await _receipts(ctx)) == 1
+    run(ctx, scenario)
+
+
+def test_without_a_bot_token_closed_trades_are_not_blocked(ctx, monkeypatch):
+    async def scenario():
+        monkeypatch.delenv("TELEGRAM_BOT_TOKEN")
+        tok = await ctx.pair(ALICE)
+        res = await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(closedTrades=[CLOSE]))
+        assert res.status_code == 200 and ctx.telegram_attempts == 0 and await _receipts(ctx) == []
     run(ctx, scenario)
