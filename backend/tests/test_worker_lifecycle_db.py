@@ -150,6 +150,41 @@ def test_lock_held_by_a_crashed_instance_is_released_with_its_connection(db):
     run(db, scenario, fresh=False)
 
 
+async def _lock_holders(engine, key):
+    """(pid, backend state) of every session holding advisory lock `key` (bigint keys: classid=high, objid=low)."""
+    async with engine.connect() as conn:
+        rows = await conn.execute(text("""
+            SELECT l.pid, a.state FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+            WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
+              AND ((l.classid::bigint << 32) | l.objid::bigint) = :k"""), {"k": key})
+        return [(r[0], r[1]) for r in rows]
+
+
+def test_schema_lock_is_held_by_an_open_transaction_so_a_transaction_pooler_cannot_leak_it(db):
+    """Production uses Neon's PgBouncer pooler (transaction mode): a server connection is handed to another
+    client after every COMMIT. The lock must therefore be held inside an open transaction for its whole life
+    (a backend that is 'idle in transaction' stays pinned), never by an idle session, and gone afterwards."""
+    async def scenario():
+        async with schema_lock.startup_schema_lock(db, key=TEST_LOCK_KEY):
+            await asyncio.sleep(0.2)
+            holders = await _lock_holders(db, TEST_LOCK_KEY)
+            assert len(holders) == 1, holders
+            assert holders[0][1] == "idle in transaction", holders
+        assert await _lock_holders(db, TEST_LOCK_KEY) == []
+    run(db, scenario, fresh=False)
+
+
+def test_schema_lock_is_released_when_a_startup_step_fails(db):
+    async def scenario():
+        with pytest.raises(RuntimeError):
+            async with schema_lock.startup_schema_lock(db, key=TEST_LOCK_KEY):
+                raise RuntimeError("step failed")
+        assert await _lock_holders(db, TEST_LOCK_KEY) == []
+        async with schema_lock.startup_schema_lock(db, key=TEST_LOCK_KEY, wait_seconds=1):
+            pass
+    run(db, scenario, fresh=False)
+
+
 # ── background sync jobs ─────────────────────────────────────────────────────
 
 def test_a_queued_sync_run_is_claimed_by_exactly_one_of_many_workers(db):
