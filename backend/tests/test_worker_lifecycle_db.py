@@ -230,3 +230,20 @@ def test_legacy_daily_summary_claim_survives_restart_and_other_instances(db):
         assert await community_bot.claim_once("u1", "summary-legacy:2026-11-23") is False
         assert await community_bot.claim_once("u1", "summary-legacy:2026-11-24") is True
     run(db, scenario)
+
+
+# ── statements that only fail on a real PostgreSQL ───────────────────────────
+
+def test_tradingview_webhook_event_is_stored_end_to_end(db):
+    """Previously failed on every call: missing FROM alias and untyped jsonb_build_object parameters."""
+    async def scenario():
+        from app.services import provider_onboarding as po
+        await bootstrap(db)
+        conn = await po.create_tradingview_connection(user_id="u1", display_label="TV alerts")
+        out = await po.ingest_tradingview_event(token=conn["webhook_token"],
+                                                payload={"symbol": "US30", "timeframe": "5", "message": "breakout"})
+        assert out["ok"] is True and out["state"] == "active"
+        async with db.connect() as c:
+            events = (await c.execute(text("SELECT COUNT(*) FROM connector_events WHERE connector_type = 'tradingview_webhook'"))).scalar()
+        assert events == 1
+    run(db, scenario)
