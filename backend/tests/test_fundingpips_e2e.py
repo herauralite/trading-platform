@@ -34,6 +34,8 @@ from app.core import database, ingest_auth  # noqa: E402
 from app.core.auth_session import create_session_token  # noqa: E402
 from app.services import community_bot  # noqa: E402
 
+REAL_TELEGRAM_API = community_bot.api  # real Bot API reply parsing, captured before any fixture replaces it
+
 URL = os.getenv("TALITRADE_TEST_DATABASE_URL", "")
 _db_name = URL.rsplit("/", 1)[-1].split("?")[0].lower()
 pytestmark = pytest.mark.skipif(not URL or not ("test" in _db_name or "disposable" in _db_name),
@@ -558,4 +560,121 @@ def test_status_governance_is_per_user(ctx):
         assert ACCT_A in main.account_data_store and ACCT_B not in main.account_data_store
         alice = (await ctx.http.get("/extension/status", headers=session(ALICE))).json()
         assert set(alice["accounts"]) == {ACCT_A} and alice["stale_accounts"] == {}
+    run(ctx, scenario)
+
+
+# ── closed-trade alerts: permanent vs transient Telegram failures ─────────────
+# These run the REAL community_bot.api (reply parsing + classification); only the HTTP transport is
+# scripted. Each entry answers one sendMessage call: "ok", (status, json_body), ("raw", status, text) or an
+# httpx exception instance.
+
+BOT_TOKEN = "123456:SECRET-test-token-value"
+BLOCKED = (403, {"ok": False, "error_code": 403, "description": "Forbidden: bot was blocked by the user"})
+CHAT_GONE = (400, {"ok": False, "error_code": 400, "description": "Bad Request: chat not found"})
+RATE_LIMITED = (429, {"ok": False, "error_code": 429, "description": "Too Many Requests: retry after 7",
+                      "parameters": {"retry_after": 7}})
+SERVER_DOWN = ("raw", 502, "<html>Bad Gateway</html>")
+
+
+@pytest.fixture
+def telegram_http(ctx, monkeypatch):
+    import httpx
+    from urllib.parse import parse_qs
+    script, sent = [], []
+    monkeypatch.setattr(community_bot, "api", REAL_TELEGRAM_API)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", BOT_TOKEN)
+
+    def handler(request):
+        assert request.url.path.endswith("/sendMessage")
+        step = script.pop(0) if script else "ok"
+        if isinstance(step, Exception):
+            raise step
+        if step == "ok":
+            sent.append(parse_qs(request.content.decode())["chat_id"][0])
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+        if step[0] == "raw":
+            return httpx.Response(step[1], text=step[2])
+        return httpx.Response(step[0], json=step[1])
+
+    real_client = httpx.AsyncClient
+    # httpx is one module: patch only clients created without their own transport (deliver's Telegram
+    # client), not the test's ASGI client.
+    monkeypatch.setattr(community_bot.httpx, "AsyncClient",
+                        lambda *a, **k: real_client(*a, **k) if "transport" in k
+                        else real_client(*a, transport=httpx.MockTransport(handler), **k))
+    return script, sent
+
+
+def _close(symbol, pnl, balance):
+    return {**CLOSE, "symbol": symbol, "pnl": pnl, "balanceAfter": balance}
+
+
+def test_permanently_rejected_alert_is_settled_and_never_retried(ctx, telegram_http, caplog):
+    script, sent = telegram_http
+
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        payload = heartbeat(positions=[], hasPositions=False, closedTrades=[CLOSE])
+        script.append(BLOCKED)                                       # the user blocked the bot
+        with caplog.at_level("WARNING"):
+            first = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert first.status_code == 200 and first.json()["rejected_closed_trades"] == 1   # 2xx: the extension drops it
+        assert len(await _receipts(ctx)) == 1                         # settled, not left retryable
+        assert "error_code=403" in caplog.text
+        for leaked in (BOT_TOKEN, "SECRET", "blocked by the user", "api.telegram.org"):
+            assert leaked not in caplog.text
+        # Even if the same alert is replayed (another tab, an old queue), Telegram is not called again.
+        for _ in range(3):
+            res = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+            assert res.status_code == 200 and res.json()["rejected_closed_trades"] == 0
+        assert sent == [] and script == []
+    run(ctx, scenario)
+
+
+@pytest.mark.parametrize("failure", ["5xx", "429", "network", "timeout"])
+def test_transient_failure_is_retried_then_delivered_once(ctx, telegram_http, failure, caplog):
+    import httpx
+    script, sent = telegram_http
+    step = {"5xx": SERVER_DOWN, "429": RATE_LIMITED, "network": httpx.ConnectError("connection refused"),
+            "timeout": httpx.ReadTimeout("timed out")}[failure]
+
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        payload = heartbeat(positions=[], hasPositions=False, closedTrades=[CLOSE])
+        script.append(step)
+        with caplog.at_level("WARNING"):
+            first = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert first.status_code == 503 and first.json()["undelivered_closed_trades"] == 1
+        assert first.json()["rejected_closed_trades"] == 0
+        assert await _receipts(ctx) == []                             # rolled back: still retryable
+        for leaked in (BOT_TOKEN, "SECRET", "Bad Gateway", "Too Many Requests", "api.telegram.org"):
+            assert leaked not in caplog.text
+        retry = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert retry.status_code == 200 and sent == [ALICE]
+        replay = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert replay.status_code == 200 and sent == [ALICE]          # delivered alert suppressed on replay
+    run(ctx, scenario)
+
+
+def test_mixed_batch_retries_only_the_transient_alert(ctx, telegram_http):
+    script, sent = telegram_http
+
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        delivered = _close("US30", 50.0, 100300.0)
+        rejected = _close("XAUUSD", -20.0, 100280.0)
+        transient = _close("GER40", 10.0, 100290.0)
+        payload = heartbeat(positions=[], hasPositions=False, closedTrades=[delivered, rejected, transient])
+        script.extend(["ok", CHAT_GONE, SERVER_DOWN])
+        first = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        body = first.json()
+        assert first.status_code == 503 and body["undelivered_closed_trades"] == 1 and body["rejected_closed_trades"] == 1
+        assert sent == [ALICE] and len(await _receipts(ctx)) == 2     # delivered + rejected settled; transient open
+
+        # The extension resends the whole batch after a 503: only the transient alert reaches Telegram.
+        retry = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert retry.status_code == 200 and retry.json()["rejected_closed_trades"] == 0
+        assert sent == [ALICE, ALICE] and len(await _receipts(ctx)) == 3
+        again = await ctx.http.post("/extension/data", headers=bearer(tok), json=payload)
+        assert again.status_code == 200 and sent == [ALICE, ALICE] and script == []
     run(ctx, scenario)
