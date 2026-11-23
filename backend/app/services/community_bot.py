@@ -103,6 +103,16 @@ async def subscribe(user_id, enabled):
         await conn.execute(text(sql), {"u": user_id})
 
 
+async def claim_once(user_id, key) -> bool:
+    """Record (user, key) as delivered; True only for the first caller across all instances.
+
+    At-most-once: use for messages sent outside deliver(), where a missed message is better than a repeat."""
+    async with engine.begin() as conn:
+        claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key) VALUES (:u,:key)
+            ON CONFLICT DO NOTHING RETURNING 1"""), {"u": str(user_id), "key": key})
+    return bool(claimed)
+
+
 async def deliver(user_id, key, message, photo=None):
     async with engine.begin() as conn:
         claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
