@@ -224,7 +224,10 @@ async def account_pass():
                     'Entry ' || t.open_price, 'Exit ' || t.close_price) AS fill_detail
                 FROM mtapi_closed_positions t JOIN mtapi_connections c ON c.id=t.connection_id
                 JOIN telegram_alert_preferences p ON p.user_id=c.user_id
-                WHERE c.disconnected_at IS NULL AND t.close_time>=p.enabled_since""")
+                WHERE c.disconnected_at IS NULL AND t.close_time>=p.enabled_since
+                  -- Only closes after THIS connection was linked. A relink creates a new connection row and
+                  -- backfills past closes under it (new keys); without this they were all alerted again.
+                  AND t.close_time>=c.created_at""")
         rows = (await conn.execute(text("SELECT e.* FROM (" + " UNION ALL ".join(queries) +
             ") e WHERE NOT EXISTS (SELECT 1 FROM telegram_alert_receipts r WHERE r.user_id=e.user_id AND r.event_key=e.key) LIMIT 100"))).all()
     for uid, key, message, fill_detail in rows:

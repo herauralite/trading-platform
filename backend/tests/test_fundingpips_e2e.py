@@ -412,6 +412,37 @@ def test_closed_trade_alert_is_sent_once_to_the_owner_even_when_the_extension_re
     run(ctx, scenario)
 
 
+def test_unlink_and_relink_does_not_replay_old_close_alerts_and_the_next_close_alerts_once(ctx):
+    """Owner-reported: relinking an account replayed old trade alerts. After unlink + relink (new extension
+    token, process restart), the extension resending closes it already reported must not alert again; the
+    next normal close must alert exactly once."""
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        old = [{"accountId": ACCT_A, "symbol": "US30", "direction": "Buy", "volume": 1.0, "openPrice": 42000.5,
+                "pnl": 50.0, "balanceAfter": 100300.0, "dailyLossLimit": 5000, "overallLossLimit": 10000},
+               {"accountId": ACCT_A, "symbol": "NAS100", "direction": "Sell", "volume": 2.0, "openPrice": 18000.0,
+                "pnl": -30.0, "balanceAfter": 100270.0, "dailyLossLimit": 5000, "overallLossLimit": 10000}]
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(positions=[], hasPositions=False, closedTrades=old))
+        assert len([m for _, m in ctx.telegram if "Trade Closed" in m]) == 2
+
+        assert (await ctx.http.post("/connectors/fundingpips_extension/disconnect", headers=session(ALICE))).status_code == 200
+        main.account_data_store.clear()                     # restart between unlink and relink
+        relinked = await ctx.pair(ALICE)                    # extension paired again: a new token
+        for _ in range(2):                                  # queue / history resent after the relink
+            res = await ctx.http.post("/extension/data", headers=bearer(relinked),
+                                      json=heartbeat(positions=[], hasPositions=False, closedTrades=old))
+            assert res.status_code == 200, res.text
+        assert len([m for _, m in ctx.telegram if "Trade Closed" in m]) == 2      # nothing replayed
+
+        new = {**old[0], "symbol": "GER40", "pnl": 15.0, "balanceAfter": 100285.0}
+        for _ in range(2):
+            await ctx.http.post("/extension/data", headers=bearer(relinked),
+                                json=heartbeat(positions=[], hasPositions=False, closedTrades=old + [new]))
+        closed = [m for _, m in ctx.telegram if "Trade Closed" in m]
+        assert len(closed) == 3 and "GER40" in closed[-1]
+    run(ctx, scenario)
+
+
 def test_no_telegram_for_rejected_writes(ctx):
     async def scenario():
         tok_a, tok_b = await ctx.pair(ALICE), await ctx.pair(BOB)
