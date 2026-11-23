@@ -2384,17 +2384,27 @@ def account_age_seconds(acct: dict) -> float | None:
         return None
 
 
-async def hydrate_live_accounts(user_id: str, account_ids: list[str] | None = None) -> None:
-    """Fill the process-local cache from the durable last heartbeat (app/services/live_status.py), so a
-    restarted or second instance shows the same live view. Never overwrites a newer in-memory entry."""
+async def sync_live_accounts(user_id: str, account_ids: list[str] | None = None) -> set[str]:
+    """Reconcile this process's cache with the database and return the user's ACTIVE account ids.
+
+    * The active set comes from trading_accounts on every call, so it reflects a disconnect handled by any
+      replica, not just this one.
+    * Cached entries of this user for accounts outside the active set (disconnected, deactivated) are
+      evicted, so no response or later lookup in this process can use their live values.
+    * Newer stored heartbeats are loaded into the cache (restart / other replica); a newer in-memory entry
+      is never overwritten.
+    Raises if the database cannot be read: callers decide how to fail (status fails closed)."""
     if not user_id:
-        return
-    try:
-        heartbeats = await live_status.load_heartbeats(user_id, account_ids)
-    except Exception as exc:
-        logger.warning("Live status hydrate failed: exception_type=%s", type(exc).__name__)
-        return
-    for aid, hb in heartbeats.items():
+        return set()
+    rows = await live_status.load_active_heartbeats(user_id, account_ids)
+    active = set(rows)
+    scope = None if account_ids is None else {str(a) for a in account_ids}
+    for aid in [a for a, acct in list(account_data_store.items())
+                if acct.get("_owner") == user_id and a not in active and (scope is None or a in scope)]:
+        account_data_store.pop(aid, None)
+    for aid, hb in rows.items():
+        if not hb:
+            continue
         received = live_status.received_at_naive_utc(hb)
         if not received:
             continue
@@ -2406,6 +2416,15 @@ async def hydrate_live_accounts(user_id: str, account_ids: list[str] | None = No
         account_data_store[aid] = {**{k: v for k, v in hb.items() if k != "received_at"}, "accountId": aid,
                                    "closedTrades": [], "telegramUserId": user_id, "_owner": user_id,
                                    "last_updated": received}
+    return active
+
+
+async def hydrate_live_accounts(user_id: str, account_ids: list[str] | None = None) -> None:
+    """Best-effort sync_live_accounts for paths that must not fail on a database error."""
+    try:
+        await sync_live_accounts(user_id, account_ids)
+    except Exception as exc:
+        logger.warning("Live status hydrate failed: exception_type=%s", type(exc).__name__)
 
 
 def get_primary_account_id() -> str:
@@ -2793,11 +2812,19 @@ async def get_journal_stats(account_id: str = None, principal: Principal = Depen
 async def extension_status(principal: Principal = Depends(ingest_auth.require_ingest_principal)):
     """`accounts`: fresh (heartbeat within ACCOUNT_DATA_TTL_SECONDS), same shape as before.
     `stale_accounts`: the last known values for owned accounts whose feed stopped, with their age; kept
-    separate so a client that treats every `accounts` entry as live never shows stale numbers as live."""
-    await hydrate_live_accounts(principal.user_id)
+    separate so a client that treats every `accounts` entry as live never shows stale numbers as live.
+    Both fields are limited to the caller's currently ACTIVE accounts, read from the database on each call
+    (a disconnected account disappears from both, even if this process still had it cached)."""
+    try:
+        active = await sync_live_accounts(principal.user_id)
+    except Exception as exc:
+        # Fail closed: without the active set we cannot tell which cached accounts may still be shown.
+        logger.warning("Live status unavailable: exception_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Live status temporarily unavailable")
     live, stale = {}, {}
-    for aid, acct in account_data_store.items():
-        if acct.get("_owner") != principal.user_id:
+    for aid in sorted(active):
+        acct = account_data_store.get(aid)
+        if not acct or acct.get("_owner") != principal.user_id:
             continue
         entry = {k: v for k, v in acct.items() if k != "_owner"}
         age = account_age_seconds(acct)
@@ -2830,9 +2857,15 @@ async def get_payout(account_id: str = None, principal: Principal = Depends(inge
     account_ids = await _readable_account_ids(principal, account_id)
     if not account_ids:
         raise HTTPException(status_code=404, detail="No linked trading account")
-    await hydrate_live_accounts(principal.user_id, account_ids)
-    acct_id = next((a for a in account_ids if get_live_account(a)), account_ids[0])
-    acct    = get_live_account(acct_id)
+    # Live inputs (balance, equity...) only from accounts that are still active; a disconnected account's
+    # history stays readable by its owner, but its cached live values are evicted and never used.
+    try:
+        active = await sync_live_accounts(principal.user_id, account_ids)
+    except Exception as exc:
+        logger.warning("Payout live inputs unavailable: exception_type=%s", type(exc).__name__)
+        active = set()
+    acct_id = next((a for a in account_ids if a in active and get_live_account(a)), account_ids[0])
+    acct    = get_live_account(acct_id) if acct_id in active else {}
     if acct.get("_owner") not in (None, principal.user_id):
         acct = {}
     return await evaluate_payout_eligibility(acct_id, acct)
