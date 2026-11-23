@@ -281,7 +281,10 @@ def test_dashboard_workspace_lists_owned_account_with_last_sync_time(ctx):
         ids = [w["external_account_id"] for w in workspaces]
         assert ids == [ACCT_A]
         assert workspaces[0]["last_sync_at"] is not None
-        assert (await ctx.http.get("/accounts/workspaces", headers=session(BOB))).status_code == 200
+        bob = await ctx.http.get("/accounts/workspaces", headers=session(BOB))
+        assert bob.status_code == 200 and bob.json()["workspaces"] == []
+        overview = await ctx.http.get("/connectors/overview", headers=session(ALICE))
+        assert overview.status_code == 200, overview.text
     run(ctx, scenario)
 
 
