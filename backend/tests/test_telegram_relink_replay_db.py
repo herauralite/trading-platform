@@ -58,8 +58,6 @@ def env(monkeypatch):
 def run(db, scenario):
     async def _main():
         try:
-            await main.ensure_trades_table()
-            await main.ensure_users_tables()
             await main.ensure_connector_tables()        # trading_accounts (account_pass reads it)
             await SqlStore(lambda: db).ensure_schema()
             await community_bot.setup()
