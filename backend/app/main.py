@@ -28,6 +28,7 @@ from app.services.connector_ingest import (
     clear_connector_config,
     connector_sync_worker_loop,
     enqueue_connector_sync_run,
+    compute_position_key,
     deactivate_missing_positions,
     ensure_connector_tables,
     get_connector_config,
@@ -2623,6 +2624,20 @@ class TradeData(BaseModel):
 ALLOWED_EXTENSION_TRADE_SOURCES = {"scraper", "realtime"}
 
 
+def closed_trade_fingerprint(account_id: str, ct: dict) -> str:
+    fields = {k: ct.get(k) for k in ("symbol", "direction", "volume", "openPrice", "pnl", "balanceAfter")}
+    return hashlib.sha256(json.dumps({"account": account_id, **fields}, sort_keys=True, default=str).encode()).hexdigest()
+
+
+async def claim_alert_receipt(user_id: str, event_key: str) -> bool:
+    """True exactly once per (user, event_key), across processes and restarts."""
+    from app.core.database import engine
+    async with engine.begin() as conn:
+        claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id, event_key) VALUES (:u, :k)
+            ON CONFLICT DO NOTHING RETURNING 1"""), {"u": str(user_id), "k": event_key})
+    return bool(claimed)
+
+
 @app.post("/extension/data")
 async def receive_extension_data(data: ExtensionData, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
     account_id  = str(data.accountId or "").strip() or "unknown"
@@ -2642,8 +2657,18 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
         normalized_account = await upsert_trading_account(connector_account_payload)
         await ingest_account_snapshot({**connector_account_payload, "timestamp": data.timestamp or datetime.utcnow().isoformat(), "balance": data.balance, "equity": data.equity, "drawdown": (data.overallLoss or {}).get("used"), "risk_used": (data.dailyLoss or {}).get("used"), "source_metadata": {"legacy_route": "/extension/data", "has_positions": data.hasPositions, "open_position_count": data.openPositionCount}})
         seen_position_keys: list[str] = []
+        unkeyed_counts: dict[str, int] = {}
         for pos in data.positions or []:
-            position_key = await ingest_position({**connector_account_payload, "symbol": pos.get("symbol") or pos.get("instrument") or "unknown", "side": pos.get("direction") or pos.get("side"), "size": pos.get("volume") or pos.get("size"), "average_entry": pos.get("entryPrice") or pos.get("openPrice"), "unrealized_pnl": pos.get("pnl") or pos.get("profit"), "stop_loss": pos.get("stopLoss"), "take_profit": pos.get("takeProfit"), "opened_at": pos.get("openedAt"), "source_metadata": {"legacy_route": "/extension/data"}})
+            # The extension sends no open time or ticket, so two open positions on the same symbol and
+            # side would share one key and collapse into one row. Number repeats within the snapshot
+            # (the first keeps the plain key, so existing rows stay matched).
+            explicit_key = None
+            if not pos.get("openedAt"):
+                base_key = compute_position_key(pos.get("symbol") or pos.get("instrument") or "unknown", pos.get("direction") or pos.get("side"))
+                n = unkeyed_counts.get(base_key, 0)
+                unkeyed_counts[base_key] = n + 1
+                explicit_key = base_key if n == 0 else f"{base_key}#{n + 1}"
+            position_key = await ingest_position({**connector_account_payload, "position_key": explicit_key, "symbol": pos.get("symbol") or pos.get("instrument") or "unknown", "side": pos.get("direction") or pos.get("side"), "size": pos.get("volume") or pos.get("size"), "average_entry": pos.get("entryPrice") or pos.get("openPrice"), "unrealized_pnl": pos.get("pnl") or pos.get("profit"), "stop_loss": pos.get("stopLoss"), "take_profit": pos.get("takeProfit"), "opened_at": pos.get("openedAt"), "source_metadata": {"legacy_route": "/extension/data"}})
             seen_position_keys.append(position_key)
         await deactivate_missing_positions(trading_account_id=normalized_account["id"], seen_position_keys=seen_position_keys, allow_empty_snapshot=not data.hasPositions)
 
@@ -2661,6 +2686,10 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
             await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>", chat_id=notify_chat)
 
     for ct in data.closedTrades:
+        # The extension re-sends queued closes until it gets a 2xx, so a retry after a lost response
+        # (or a second tab) must not notify twice. Claim a persisted receipt first.
+        if not await claim_alert_receipt(tg_uid, "closed_trade:" + closed_trade_fingerprint(account_id, ct)):
+            continue
         pnl = ct.get("pnl") or 0; icon = "✅" if pnl > 0 else "❌"
         daily_pct   = round((ct.get("dailyLossUsed")  or 0) / (ct.get("dailyLossLimit")  or 500)  * 100)
         overall_pct = round((ct.get("overallLossUsed") or 0) / (ct.get("overallLossLimit") or 1000) * 100)
