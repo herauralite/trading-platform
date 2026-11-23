@@ -146,6 +146,15 @@ def test_lifespan_runs_every_step_marks_ready_and_shuts_tasks_down(monkeypatch):
 
     for name in ("news_scheduler", "weekend_scheduler", "daily_summary_scheduler", "connector_sync_worker_loop"):
         monkeypatch.setattr(main, name, forever)
+    from contextlib import asynccontextmanager
+    from app.core import schema_lock
+
+    @asynccontextmanager
+    async def fake_lock(*a, **k):
+        calls.append("lock:acquire")
+        yield
+        calls.append("lock:release")
+    monkeypatch.setattr(schema_lock, "startup_schema_lock", fake_lock)
     from app.services import community_bot
     monkeypatch.setattr(community_bot, "setup", stub("community_bot_setup"))
     monkeypatch.setattr(community_bot, "run", forever)
@@ -156,5 +165,7 @@ def test_lifespan_runs_every_step_marks_ready_and_shuts_tasks_down(monkeypatch):
         assert health.startup_state.complete is False
 
     asyncio.run(_run())
-    assert calls[:3] == ["ensure_trades_table", "ensure_users_tables", "ensure_connector_tables"]
+    assert calls[:4] == ["lock:acquire", "ensure_trades_table", "ensure_users_tables", "ensure_connector_tables"]
+    # Every schema step runs inside the cross-instance lock; the Telegram webhook call runs after it.
+    assert calls.index("community_bot_setup") < calls.index("lock:release") < calls.index("setup_telegram_webhook")
     assert "community_bot_setup" in calls and "setup_telegram_webhook" in calls
