@@ -75,7 +75,7 @@ async def ingest_trades(
 ):
     inserted = await ingest_trade(await _owned_payload(payload, principal))
     if not inserted:
-        raise HTTPException(status_code=422, detail="Trade rejected: pnl exceeds account_size")
+        raise HTTPException(status_code=422, detail="Trade rejected: pnl is missing or exceeds account_size")
     return {"ok": True, "persisted": inserted}
 
 

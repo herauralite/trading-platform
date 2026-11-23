@@ -1641,21 +1641,43 @@ async def ingest_trade(payload: dict[str, Any]) -> bool:
     account_user_id = _normalize_user_id(account.get("user_id") or payload.get("user_id"))
     connector_type = _normalize_connector(payload.get("connector_type") or account.get("connector_type"))
     account_size = payload.get("account_size") or account.get("account_size") or 10000
-    pnl = payload.get("pnl") or 0
-    if abs(pnl) > account_size:
+    pnl = payload.get("pnl")
+    try:
+        pnl = float(pnl) if pnl is not None and pnl != "" else None
+    except (TypeError, ValueError):
+        pnl = None
+    # A closed trade without a P&L is unknown, not zero: storing 0 would corrupt win rate and totals.
+    rejection = "Trade rejected: pnl is missing" if pnl is None else (
+        "Trade rejected: pnl exceeds account_size" if abs(pnl) > account_size else None)
+    if rejection:
         if account_user_id:
             await upsert_connector_lifecycle(
                 user_id=account_user_id,
                 connector_type=connector_type,
                 status="sync_error",
                 is_connected=True,
-                error="Trade rejected: pnl exceeds account_size",
+                error=rejection,
                 last_activity_at=datetime.now(timezone.utc),
                 metadata={"source": "ingest_trade"},
             )
         return False
 
+    closed_at = _parse_dt(payload.get("close_time"))
     async with engine.begin() as conn:
+        if closed_at is None:
+            # The UNIQUE(account_id, symbol, direction, closed_at, pnl) dedupe cannot see rows whose
+            # closed_at is NULL (NULLs are distinct in Postgres), so a re-sent trade without a close
+            # time would be inserted again on every extension reload. Dedupe those explicitly, under a
+            # per-account transaction lock so concurrent re-sends cannot both insert.
+            await conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:a))"), {"a": str(account["external_account_id"])})
+            existing = (await conn.execute(text("""
+                SELECT 1 FROM trades
+                WHERE account_id = :a AND closed_at IS NULL AND pnl = :p
+                  AND symbol IS NOT DISTINCT FROM :s AND direction IS NOT DISTINCT FROM :d
+                LIMIT 1
+            """), {"a": account["external_account_id"], "p": pnl, "s": payload.get("symbol"), "d": payload.get("side")})).first()
+            if existing:
+                return True
         await conn.execute(text("""
             INSERT INTO trades (
                 account_id, account_type, account_size,
@@ -1695,7 +1717,7 @@ async def ingest_trade(payload: dict[str, Any]) -> bool:
             "daily_loss_limit": payload.get("daily_loss_limit"),
             "overall_loss_used": payload.get("overall_loss_used"),
             "overall_loss_limit": payload.get("overall_loss_limit"),
-            "closed_at": _parse_dt(payload.get("close_time")),
+            "closed_at": closed_at,
             "source": payload.get("source") or _normalize_connector(payload.get("connector_type")),
             "connector_type": _normalize_connector(payload.get("connector_type")),
             "open_time": _parse_dt(payload.get("open_time")),
