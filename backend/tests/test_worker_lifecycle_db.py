@@ -247,3 +247,24 @@ def test_tradingview_webhook_event_is_stored_end_to_end(db):
             events = (await c.execute(text("SELECT COUNT(*) FROM connector_events WHERE connector_type = 'tradingview_webhook'"))).scalar()
         assert events == 1
     run(db, scenario)
+
+
+def test_full_sync_pipeline_runs_a_queued_job_to_completion_once(db, monkeypatch):
+    """Queue -> worker claim -> execute -> final status, with only the provider call stubbed."""
+    async def scenario():
+        await bootstrap(db)
+        calls = []
+
+        async def fake_perform(run):
+            calls.append(run["id"])
+            return {"accounts": 1, "trades": 0}
+        monkeypatch.setattr(ci, "_perform_connector_sync", fake_perform)
+        queued = await ci.create_connector_sync_run("u1", "fundingpips_extension")
+        results = await asyncio.gather(*(ci.run_connector_sync_once(worker_id=f"w{i}") for i in range(4)))
+        assert calls == [queued["id"]] and sum(1 for r in results if r) == 1
+        async with db.connect() as c:
+            row = (await c.execute(text("SELECT status, lease_owner, finished_at FROM connector_sync_runs WHERE id = :i"),
+                                   {"i": queued["id"]})).mappings().first()
+        assert row["status"] == "succeeded" and row["lease_owner"] is None and row["finished_at"] is not None
+        assert await ci.run_connector_sync_once(worker_id="again") is None
+    run(db, scenario)
