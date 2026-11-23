@@ -29,12 +29,55 @@ def webhook_secret(token):
     return hmac.new(token.encode(), b"talitrade-webhook-v1", hashlib.sha256).hexdigest()
 
 
+# Bot API error_code values that reject one specific message/chat for good (bot blocked or kicked, user
+# deactivated, chat not found, unparsable message). Retrying the same alert cannot succeed. Everything else
+# (429 rate limit, 5xx, 401/404 bot misconfiguration, non-JSON replies) may succeed later.
+PERMANENT_ERROR_CODES = frozenset({400, 403})
+
+
+class TelegramApiError(RuntimeError):
+    """A non-OK Bot API reply, reduced to structured fields.
+
+    Carries no response text and no URL (the URL contains the bot token), so it is safe to log. The
+    message keeps the historical format "Telegram <method> returned <status>"."""
+
+    def __init__(self, method, status_code, error_code=None, retry_after=None):
+        super().__init__(f"Telegram {method} returned {status_code}")
+        self.method = method
+        self.status_code = status_code
+        self.error_code = error_code
+        self.retry_after = retry_after
+
+    @property
+    def permanent(self) -> bool:
+        return self.error_code in PERMANENT_ERROR_CODES
+
+
+class TelegramDeliveryRejected(Exception):
+    """deliver(settle_permanent_failures=True): Telegram permanently rejected this alert. The receipt was
+    kept, so later attempts for the same key are suppressed instead of failing again."""
+
+    def __init__(self, error: TelegramApiError):
+        super().__init__(f"Telegram rejected {error.method} permanently (error_code={error.error_code})")
+        self.error_code = error.error_code
+        self.status_code = error.status_code
+
+
 async def api(client, method, *, data=None, files=None):
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     res = await client.post(f"https://api.telegram.org/bot{token}/{method}", data=data, files=files)
-    if not res.is_success or not res.json().get("ok"):
-        raise RuntimeError(f"Telegram {method} returned {res.status_code}")
-    return res.json()["result"]
+    try:
+        body = res.json()
+    except ValueError:
+        body = None
+    if not res.is_success or not isinstance(body, dict) or not body.get("ok"):
+        error_code = retry_after = None
+        if isinstance(body, dict):
+            error_code = body.get("error_code") if isinstance(body.get("error_code"), int) else None
+            params = body.get("parameters") if isinstance(body.get("parameters"), dict) else {}
+            retry_after = params.get("retry_after") if isinstance(params.get("retry_after"), int) else None
+        raise TelegramApiError(method, res.status_code, error_code, retry_after)
+    return body["result"]
 
 
 async def matches_avatar(client, user_id, target):
@@ -103,19 +146,57 @@ async def subscribe(user_id, enabled):
         await conn.execute(text(sql), {"u": user_id})
 
 
-async def deliver(user_id, key, message, photo=None):
+async def deliver(user_id, key, message, photo=None, *, require_subscription=True, parse_mode=None,
+                  settle_permanent_failures=False):
+    """Send `message` to `user_id`; after one successful send, later attempts for (user_id, key) do nothing.
+
+    The receipt is inserted and the message sent inside ONE transaction:
+    * a failed send raises (api() raises on any non-OK Telegram response, httpx raises on transport errors),
+      the transaction rolls back and no receipt remains, so the same event can be delivered later;
+    * a concurrent attempt for the same key, in any process, blocks on the receipt's primary key until the
+      first attempt finishes: after its commit the second inserts nothing and does not send; after its
+      rollback the second sends.
+    Remaining ambiguity (at-least-once, not exactly-once): if Telegram accepts the message but the response
+    is lost (timeout), or the process dies after Telegram accepted it and before the commit, no receipt is
+    recorded and a retry sends the message again. The Bot API offers no idempotency key that would let us
+    detect that. The transaction stays open for at most the HTTP timeout (8 s).
+
+    require_subscription=True (default) delivers only to users in telegram_alert_preferences.
+    settle_permanent_failures=True (opt-in): when Telegram rejects the alert permanently
+    (TelegramApiError.permanent), the receipt is COMMITTED instead of rolled back and
+    TelegramDeliveryRejected is raised, so replays of that alert are suppressed rather than failing forever.
+    Transient failures still roll back and re-raise. With the default (False) every failure rolls back.
+    Returns True if this call sent the message, False if it was already settled or not subscribed."""
+    rejected = None
     async with engine.begin() as conn:
-        claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
-            SELECT user_id,:key FROM telegram_alert_preferences WHERE user_id=:u
-            ON CONFLICT DO NOTHING RETURNING 1"""), {"u": user_id, "key": key})
+        if require_subscription:
+            claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
+                SELECT user_id,:key FROM telegram_alert_preferences WHERE user_id=:u
+                ON CONFLICT DO NOTHING RETURNING 1"""), {"u": user_id, "key": key})
+        else:
+            claimed = await conn.scalar(text("""INSERT INTO telegram_alert_receipts(user_id,event_key)
+                VALUES (:u,:key) ON CONFLICT DO NOTHING RETURNING 1"""), {"u": user_id, "key": key})
         if not claimed:
-            return
-        async with httpx.AsyncClient(timeout=8) as client:
-            if photo:
-                await api(client, "sendPhoto", data={"chat_id": user_id, "caption": message},
-                          files={"photo": ("talitrade.png", photo, "image/png")})
-            else:
-                await api(client, "sendMessage", data={"chat_id": user_id, "text": message})
+            return False
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                if photo:
+                    data = {"chat_id": user_id, "caption": message}
+                    if parse_mode:
+                        data["parse_mode"] = parse_mode
+                    await api(client, "sendPhoto", data=data, files={"photo": ("talitrade.png", photo, "image/png")})
+                else:
+                    data = {"chat_id": user_id, "text": message}
+                    if parse_mode:
+                        data["parse_mode"] = parse_mode
+                    await api(client, "sendMessage", data=data)
+        except TelegramApiError as exc:
+            if not (settle_permanent_failures and exc.permanent):
+                raise                      # rolls the receipt back: the alert stays retryable
+            rejected = exc                 # leave the block normally: the receipt is committed
+    if rejected is not None:
+        raise TelegramDeliveryRejected(rejected)
+    return True
 
 
 async def alert_image(section, title, detail):
