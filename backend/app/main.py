@@ -54,6 +54,7 @@ from app.services.account_workspace import (
     list_account_workspaces,
 )
 from app.services.fundingpips_hydration import hydrate_fundingpips_canonical_state
+from app.services import live_status
 from app.services.fundingpips_connector import (
     connect_fundingpips_prop_firm,
     FundingPipsAuthError,
@@ -2376,6 +2377,37 @@ def get_live_account(account_id: str) -> dict:
     return acct
 
 
+def account_age_seconds(acct: dict) -> float | None:
+    try:
+        return max(0.0, (datetime.utcnow() - datetime.fromisoformat(acct["last_updated"])).total_seconds())
+    except Exception:
+        return None
+
+
+async def hydrate_live_accounts(user_id: str, account_ids: list[str] | None = None) -> None:
+    """Fill the process-local cache from the durable last heartbeat (app/services/live_status.py), so a
+    restarted or second instance shows the same live view. Never overwrites a newer in-memory entry."""
+    if not user_id:
+        return
+    try:
+        heartbeats = await live_status.load_heartbeats(user_id, account_ids)
+    except Exception as exc:
+        logger.warning("Live status hydrate failed: exception_type=%s", type(exc).__name__)
+        return
+    for aid, hb in heartbeats.items():
+        received = live_status.received_at_naive_utc(hb)
+        if not received:
+            continue
+        current = account_data_store.get(aid)
+        if current and current.get("_owner") not in (None, user_id):
+            continue
+        if current and str(current.get("last_updated") or "") >= received:
+            continue
+        account_data_store[aid] = {**{k: v for k, v in hb.items() if k != "received_at"}, "accountId": aid,
+                                   "closedTrades": [], "telegramUserId": user_id, "_owner": user_id,
+                                   "last_updated": received}
+
+
 def get_primary_account_id() -> str:
     if PRIMARY_ACCOUNT in account_data_store:
         return PRIMARY_ACCOUNT
@@ -2639,6 +2671,10 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
     if account_id != "unknown":
         account_id = await ingest_auth.authorize_account_write(tg_uid, account_id)
     notify_chat = resolve_telegram_chat_target(tg_uid)
+    if account_id != "unknown" and account_id not in account_data_store:
+        # After a restart (or on another replica) the previous state comes from the database, so alert
+        # transitions are compared with the real last heartbeat instead of firing again.
+        await hydrate_live_accounts(tg_uid, [account_id])
     prev        = account_data_store.get(account_id, {})
     if prev.get("_owner") not in (None, tg_uid):
         prev = {}
@@ -2664,6 +2700,7 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
             position_key = await ingest_position({**connector_account_payload, "position_key": explicit_key, "symbol": pos.get("symbol") or pos.get("instrument") or "unknown", "side": pos.get("direction") or pos.get("side"), "size": pos.get("volume") or pos.get("size"), "average_entry": pos.get("entryPrice") or pos.get("openPrice"), "unrealized_pnl": pos.get("pnl") or pos.get("profit"), "stop_loss": pos.get("stopLoss"), "take_profit": pos.get("takeProfit"), "opened_at": pos.get("openedAt"), "source_metadata": {"legacy_route": "/extension/data"}})
             seen_position_keys.append(position_key)
         await deactivate_missing_positions(trading_account_id=normalized_account["id"], seen_position_keys=seen_position_keys, allow_empty_snapshot=not data.hasPositions)
+        await live_status.persist_heartbeat(trading_account_id=normalized_account["id"], user_id=tg_uid, data=data.dict(), received_at=datetime.now(timezone.utc))
 
     if tg_uid and account_id != "unknown":
         try:
@@ -2754,12 +2791,20 @@ async def get_journal_stats(account_id: str = None, principal: Principal = Depen
 
 @app.get("/extension/status")
 async def extension_status(principal: Principal = Depends(ingest_auth.require_ingest_principal)):
-    live = {
-        aid: {k: v for k, v in acct.items() if k != "_owner"}
-        for aid, acct in account_data_store.items()
-        if acct.get("_owner") == principal.user_id and get_live_account(aid)
-    }
-    return {"accounts": live, "count": len(live)}
+    """`accounts`: fresh (heartbeat within ACCOUNT_DATA_TTL_SECONDS), same shape as before.
+    `stale_accounts`: the last known values for owned accounts whose feed stopped, with their age; kept
+    separate so a client that treats every `accounts` entry as live never shows stale numbers as live."""
+    await hydrate_live_accounts(principal.user_id)
+    live, stale = {}, {}
+    for aid, acct in account_data_store.items():
+        if acct.get("_owner") != principal.user_id:
+            continue
+        entry = {k: v for k, v in acct.items() if k != "_owner"}
+        age = account_age_seconds(acct)
+        entry["freshness"] = {"last_updated": acct.get("last_updated"), "age_seconds": None if age is None else round(age),
+                              "ttl_seconds": ACCOUNT_DATA_TTL_SECONDS, "state": "live" if get_live_account(aid) else "stale"}
+        (live if entry["freshness"]["state"] == "live" else stale)[aid] = entry
+    return {"accounts": live, "count": len(live), "stale_accounts": stale}
 
 
 @app.get("/extension/news")
@@ -2785,6 +2830,7 @@ async def get_payout(account_id: str = None, principal: Principal = Depends(inge
     account_ids = await _readable_account_ids(principal, account_id)
     if not account_ids:
         raise HTTPException(status_code=404, detail="No linked trading account")
+    await hydrate_live_accounts(principal.user_id, account_ids)
     acct_id = next((a for a in account_ids if get_live_account(a)), account_ids[0])
     acct    = get_live_account(acct_id)
     if acct.get("_owner") not in (None, principal.user_id):

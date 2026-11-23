@@ -306,17 +306,65 @@ def test_dashboard_workspace_lists_owned_account_with_last_sync_time(ctx):
     run(ctx, scenario)
 
 
-def test_live_status_expires_when_heartbeats_stop(ctx, monkeypatch):
+async def _age_heartbeat(ctx, account, seconds):
+    """Pretend the last heartbeat arrived `seconds` ago, in the database and in this process's cache."""
+    when = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    async with ctx.db.begin() as conn:
+        await conn.execute(text("""UPDATE trading_accounts SET metadata = jsonb_set(metadata, '{last_heartbeat,received_at}', to_jsonb(CAST(:t AS TEXT)))
+                                   WHERE external_account_id = :a"""), {"t": when.isoformat(), "a": account})
+    main.account_data_store.pop(account, None)
+
+
+def test_stale_account_keeps_its_last_values_and_says_how_old_they_are(ctx):
     async def scenario():
         tok = await ctx.pair(ALICE)
         await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat())
-        assert ACCT_A in (await ctx.http.get("/extension/status", headers=bearer(tok))).json()["accounts"]
-        stale = (datetime.utcnow() - timedelta(seconds=main.ACCOUNT_DATA_TTL_SECONDS + 5)).isoformat()
-        main.account_data_store[ACCT_A]["last_updated"] = stale
-        assert (await ctx.http.get("/extension/status", headers=bearer(tok))).json()["accounts"] == {}
-        # The durable record keeps the last snapshot time, so the account is still listed with its age.
-        last = await ctx.q("SELECT MAX(snapshot_time) AS t FROM account_snapshots")
-        assert last[0]["t"] is not None
+        live = (await ctx.http.get("/extension/status", headers=bearer(tok))).json()
+        assert live["accounts"][ACCT_A]["freshness"]["state"] == "live" and live["stale_accounts"] == {}
+
+        await _age_heartbeat(ctx, ACCT_A, main.ACCOUNT_DATA_TTL_SECONDS + 300)
+        body = (await ctx.http.get("/extension/status", headers=bearer(tok))).json()
+        assert body["accounts"] == {}                       # never presented as live
+        stale = body["stale_accounts"][ACCT_A]
+        assert stale["balance"] == 100250.0 and stale["equity"] == 100180.0 and stale["positions"][0]["symbol"] == "US30"
+        assert stale["freshness"]["state"] == "stale" and stale["freshness"]["age_seconds"] >= main.ACCOUNT_DATA_TTL_SECONDS + 290
+        # Bob sees neither the live nor the stale view of Alice's account.
+        bob = (await ctx.http.get("/extension/status", headers=bearer(await ctx.pair(BOB)))).json()
+        assert bob["accounts"] == {} and bob["stale_accounts"] == {}
+        # A new heartbeat makes it live again.
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(balance=100300.0))
+        again = (await ctx.http.get("/extension/status", headers=bearer(tok))).json()
+        assert again["accounts"][ACCT_A]["balance"] == 100300.0 and again["stale_accounts"] == {}
+    run(ctx, scenario)
+
+
+def test_live_view_survives_a_restart_and_is_shared_with_another_replica(ctx):
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(url="https://app.fundingpips.com/secret-path"))
+        main.account_data_store.clear()                     # process restart / request served by another replica
+        body = (await ctx.http.get("/extension/status", headers=session(ALICE))).json()
+        acct = body["accounts"][ACCT_A]
+        assert acct["balance"] == 100250.0 and acct["equity"] == 100180.0 and acct["freshness"]["state"] == "live"
+        stored = (await ctx.q("SELECT metadata->'last_heartbeat' AS hb FROM trading_accounts WHERE external_account_id = :a", a=ACCT_A))[0]["hb"]
+        hb = stored if isinstance(stored, dict) else __import__("json").loads(stored)
+        assert "url" not in hb and "telegramUserId" not in hb and "closedTrades" not in hb   # display fields only
+        assert "url" not in acct
+    run(ctx, scenario)
+
+
+def test_risk_alert_does_not_fire_again_after_a_restart(ctx):
+    async def scenario():
+        tok = await ctx.pair(ALICE)
+        warn = [{"type": "daily_loss", "level": "warning", "message": "Daily loss at 80%"}]
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(alerts=warn))
+        assert len([m for _, m in ctx.telegram if "Daily loss" in m]) == 1
+        main.account_data_store.clear()                     # restart
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(alerts=warn))
+        assert len([m for _, m in ctx.telegram if "Daily loss" in m]) == 1
+        crit = [{"type": "daily_loss", "level": "critical", "message": "Daily loss at 95%"}]
+        await ctx.http.post("/extension/data", headers=bearer(tok), json=heartbeat(alerts=crit))
+        assert len([m for _, m in ctx.telegram if "Daily loss" in m]) == 2   # a real escalation still notifies
     run(ctx, scenario)
 
 
