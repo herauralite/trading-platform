@@ -40,26 +40,28 @@ async def persist_heartbeat(*, trading_account_id: int, user_id: str, data: dict
         """), {"hb": json.dumps(hb, default=str), "id": trading_account_id, "uid": str(user_id)})
 
 
-async def load_heartbeats(user_id: str, account_ids: list[str] | None = None) -> dict[str, dict[str, Any]]:
-    """{external_account_id: heartbeat} for the user's active accounts that have one."""
+async def load_active_heartbeats(user_id: str, account_ids: list[str] | None = None) -> dict[str, dict[str, Any] | None]:
+    """{external_account_id: heartbeat or None} for every ACTIVE account owned by `user_id`.
+
+    The keys are the authorized, active account set (read from the database on every call, so a disconnect
+    handled by any replica is seen immediately); the value is the stored last heartbeat, if any."""
     sql = """
         SELECT external_account_id, metadata->'last_heartbeat' AS hb
         FROM trading_accounts
-        WHERE user_id = :uid AND is_active = TRUE AND metadata ? 'last_heartbeat'
+        WHERE user_id = :uid AND is_active = TRUE
     """
     params: dict[str, Any] = {"uid": str(user_id)}
-    if account_ids:
+    if account_ids is not None:
         sql += " AND external_account_id = ANY(CAST(:ids AS TEXT[]))"
-        params["ids"] = list(account_ids)
+        params["ids"] = [str(a) for a in account_ids]
     async with _engine().connect() as conn:
         rows = (await conn.execute(text(sql), params)).mappings().all()
-    out = {}
+    out: dict[str, dict[str, Any] | None] = {}
     for row in rows:
         hb = row["hb"]
         if isinstance(hb, str):
             hb = json.loads(hb)
-        if isinstance(hb, dict) and hb.get("received_at"):
-            out[str(row["external_account_id"])] = hb
+        out[str(row["external_account_id"])] = hb if isinstance(hb, dict) and hb.get("received_at") else None
     return out
 
 
