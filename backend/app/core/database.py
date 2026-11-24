@@ -112,7 +112,33 @@ def build_ssl_context(mode: str | None = None, root_cert: str | None = None, roo
     return context
 
 
+CA_EXPIRY_WARNING_DAYS = 60
+
+
+def pinned_ca_days_left(root_cert: str | None = None, root_cert_pem: str | None = None) -> int | None:
+    """Days until the earliest certificate in the configured CA bundle expires (None if no CA is configured).
+
+    Railway's SSL Postgres regenerates its whole CA when the server certificate is within 30 days of expiry
+    (820-day lifetime), so a pinned TALITRADE_DB_SSL_ROOT_CERT_PEM silently becomes wrong on that day and
+    every new connection would fail verification. Startup logs this so the pin is renewed in time."""
+    root_cert = root_cert if root_cert is not None else (os.getenv("TALITRADE_DB_SSL_ROOT_CERT") or "").strip() or None
+    root_cert_pem = root_cert_pem if root_cert_pem is not None else (os.getenv("TALITRADE_DB_SSL_ROOT_CERT_PEM") or "").strip() or None
+    if not (root_cert or root_cert_pem):
+        return None
+    from datetime import datetime, timezone
+    from cryptography import x509
+    data = root_cert_pem.encode() if root_cert_pem else Path(root_cert).read_bytes()
+    soonest = min(c.not_valid_after_utc for c in x509.load_pem_x509_certificates(data))
+    return (soonest - datetime.now(timezone.utc)).days
+
+
 ssl_context = build_ssl_context()
+_ca_days = pinned_ca_days_left()
+if _ca_days is not None:
+    (logger.warning if _ca_days <= CA_EXPIRY_WARNING_DAYS else logger.info)(
+        "Database TLS: pinned CA expires in %s days%s", _ca_days,
+        "; Railway regenerates its Postgres CA ~30 days before server-certificate expiry: re-pin "
+        "TALITRADE_DB_SSL_ROOT_CERT_PEM before then" if _ca_days <= CA_EXPIRY_WARNING_DAYS else "")
 if ssl_context.verify_mode == ssl.CERT_NONE:
     logger.warning("Database TLS: encrypted, server certificate NOT verified (mode=require, railway_private_network=%s)",
                    is_railway_private_host(database_host()))
