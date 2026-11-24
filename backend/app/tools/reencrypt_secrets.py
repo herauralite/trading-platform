@@ -100,7 +100,7 @@ async def rotate(engine, current: Fernet, previous: Fernet, *, apply: bool) -> R
                             for i, (c, (_, d)) in enumerate(changes.items()))
                         params = {f"v{i}": v for i, (_, (v, _)) in enumerate(changes.items())}
                         params["ctid"] = row[0]
-                        await conn.execute(text(f"UPDATE {_q(table)} SET {sets} WHERE ctid = CAST(:ctid AS tid)"), params)
+                        await conn.execute(text(f"UPDATE {_q(table)} SET {sets} WHERE ctid = CAST(CAST(:ctid AS text) AS tid)"), params)
             if apply:
                 await trans.commit()
             else:
@@ -124,7 +124,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"SECRET_KEY and {PREVIOUS_ENV} are identical: nothing to rotate.")
         return 2
     from app.core.database import engine
-    rot = asyncio.run(rotate(engine, fernet_for(new), fernet_for(old), apply=args.apply))
+    try:
+        rot = asyncio.run(rotate(engine, fernet_for(new), fernet_for(old), apply=args.apply))
+    except Exception as exc:  # driver errors echo the SQL parameters (ciphertexts): report the type only
+        print(f"FAILED, nothing committed: exception_type={type(exc).__name__}")
+        return 3
     labels = sorted({w for w, _ in rot.counts})
     for label in labels:
         print(f"{label}: rotated={rot.counts[(label, 'rotated')]} already_current={rot.counts[(label, 'already_current')]} "
