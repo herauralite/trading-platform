@@ -13,7 +13,8 @@ rand() { python3 -c "import secrets,string,sys; a=string.ascii_letters+string.di
 digits() { python3 -c "import secrets,sys; print(''.join(secrets.choice('0123456789') for _ in range(int(sys.argv[1]))))" "$1"; }
 
 declare -A FIXTURES
-FIXTURES[telegram_bot_token]="TELEGRAM_BOT_TOKEN=$(digits 10):A$(rand 34)"
+FIXTURES[telegram_bot_token]="TELEGRAM_BOT_TOKEN=$(digits 10):AA$(rand 33)"
+FIXTURES[telegram_bot_token_in_code]="bot = Bot(\"$(digits 9):AA$(rand 33)\")"
 FIXTURES[neon_database_url]="DATABASE_URL=postgresql://neondb_owner:npg_$(rand 12)@ep-$(rand 8 | tr 'A-Z' 'a-z')-pooler.us-east-2.aws.neon.tech/neondb?sslmode=require"
 FIXTURES[asyncpg_database_url]="DATABASE_URL=postgresql+asyncpg://app:$(rand 24)@db.internal:5432/app"
 FIXTURES[secret_key]="SECRET_KEY=$(rand 48)"

@@ -14,3 +14,12 @@ secretGroup = 1
 # Excludes CI placeholders such as postgres:postgres@localhost; generated passwords are far above this.
 entropy = 3.2
 keywords = ["postgres", "mysql", "mongodb", "redis"]
+
+[[rules]]
+# The default telegram-bot-api-token rule did not fire on `TELEGRAM_BOT_TOKEN=<id>:<secret>` lines
+# (shown by the self-test on gitleaks v8.21.2), which is exactly how this repository leaked one.
+id = "telegram-bot-token-any-context"
+description = "Telegram bot token (<bot id>:<35-char secret>) in any context"
+regex = '''(?:^|[^0-9])([0-9]{8,10}:A[A-Za-z0-9_-]{34})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
