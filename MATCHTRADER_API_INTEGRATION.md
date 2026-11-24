@@ -344,13 +344,16 @@ or accept that window knowingly.
   every user must reconnect. Rotate by adding a new version and changing `..._KEY_ACTIVE`.
 * The schema is additive. Dropping `mtapi_*` tables is the only destructive step and is not part of any rollback.
 
-**Database TLS.** `backend/app/core/database.py` defaults to `TALITRADE_DB_SSL_MODE=verify-full`: the
-certificate chain is validated (the certifi public CA bundle by default, which is expected to cover Neon; or
-`TALITRADE_DB_SSL_ROOT_CERT` (PEM file) / `TALITRADE_DB_SSL_ROOT_CERT_PEM` (inline PEM)) and the host name must
-match DATABASE_URL. `require` (encrypted but unauthenticated) is refused on any Railway deployment or when
-`TALITRADE_ENV=production`. An unknown mode or an unloadable CA stops startup; nothing falls back to unverified
-TLS. A handshake against the live Neon endpoint has not been run from this repository: confirm on a
-non-production deployment (`/health/ready`) before production.
+**Database TLS (existing finding, separate from this feature).** `backend/app/core/database.py` connects with
+TLS but, as it always has, without checking the server certificate (`TALITRADE_DB_SSL_MODE=require`). The
+connection is encrypted; the database server is not authenticated. Encrypting broker tokens at rest does not
+change that. The setting is now explicit and logged at startup, and two verified modes exist:
+`verify-ca` and `verify-full` with `TALITRADE_DB_SSL_ROOT_CERT` (PEM file). The default was not changed,
+because turning verification on without the right CA would stop the app from starting. Before go-live:
+obtain the database server's CA certificate from the provider, set `verify-full` + the root certificate on a
+non-production deployment, confirm startup and `/health/db`, then apply to production. An unknown mode or an
+unreadable certificate stops startup; it never falls back to unverified. Whether the provider's certificate
+can be validated by host name has not been checked here.
 
 **Still to be checked by people, not by the automated tests.**
 * Real Telegram sign-in on a deployed (non-localhost) host, then connecting with a real read-only token.
