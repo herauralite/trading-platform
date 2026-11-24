@@ -1,0 +1,31 @@
+# gitleaks configuration: the default rule set plus rules for the credential types this repository has
+# actually leaked (see SECURITY_HISTORY_REMEDIATION.md). .github/scripts/secret-scan-selftest.sh proves on
+# every run that each of those types is detected.
+title = "TaliTrade gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "database-url-with-password"
+description = "Database connection URL with an embedded password (e.g. a Neon DATABASE_URL)"
+regex = '''(?i)\b(?:postgres(?:ql)?(?:\+asyncpg|\+psycopg2?)?|mysql(?:\+\w+)?|mongodb(?:\+srv)?|rediss?)://[^:@/\s'"]+:([^@/\s'"]{8,})@[^/\s'"]+'''
+secretGroup = 1
+# Excludes CI placeholders such as postgres:postgres@localhost; generated passwords are far above this.
+entropy = 3.2
+keywords = ["postgres", "mysql", "mongodb", "redis"]
+[rules.allowlist]
+# Test canaries: deliberately fake credentials that tests plant to prove secrets are NOT logged
+# (backend/tests/test_health_readiness.py builds a DSN whose password contains "CANARY").
+regexTarget = "match"
+regexes = ['''CANARY''']
+
+[[rules]]
+# The default telegram-bot-api-token rule did not fire on `TELEGRAM_BOT_TOKEN=<id>:<secret>` lines
+# (shown by the self-test on gitleaks v8.21.2), which is exactly how this repository leaked one.
+id = "telegram-bot-token-any-context"
+description = "Telegram bot token (<bot id>:<35-char secret>) in any context"
+regex = '''(?:^|[^0-9])([0-9]{8,10}:A[A-Za-z0-9_-]{34})(?:[^A-Za-z0-9_-]|$)'''
+secretGroup = 1
+entropy = 3.5
+
