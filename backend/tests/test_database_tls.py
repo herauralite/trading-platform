@@ -439,3 +439,19 @@ def test_probe_shows_when_a_certificate_does_not_name_the_host(fake_postgres_tls
     assert "check configured-ca/verify-ca: PASS" in out
     assert "check configured-ca/verify-full: FAIL verify_code=" in out and "mismatch" in out.lower()
     assert "subject_cn='db.test'" in out
+
+
+def test_pinned_ca_expiry_is_reported_and_warns_when_close(tmp_path):
+    ca_path, ca_pem = _make_ca_and_server_cert(tmp_path)      # test CA is valid for one day
+    assert database.pinned_ca_days_left(root_cert_pem=ca_pem) == 0
+    assert database.pinned_ca_days_left(root_cert=str(ca_path)) == 0
+    assert database.pinned_ca_days_left(root_cert="", root_cert_pem="") is None
+
+
+def test_import_warns_about_a_soon_expiring_pinned_ca(tmp_path):
+    _, ca_pem = _make_ca_and_server_cert(tmp_path)
+    result = _import_database({"DATABASE_URL": "postgresql+asyncpg://u:pw@postgres.railway.internal:5432/railway",
+                               "RAILWAY_ENVIRONMENT_NAME": "production", "TALITRADE_DB_SSL_MODE": "verify-ca",
+                               "TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem})
+    assert result.returncode == 0, result.stderr
+    assert "pinned CA expires in 0 days" in result.stderr and "re-pin" in result.stderr
