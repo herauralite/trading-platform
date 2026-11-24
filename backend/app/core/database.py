@@ -39,20 +39,52 @@ def _default_ca_bundle() -> str | None:
         return None
 
 
+RAILWAY_PRIVATE_SUFFIX = ".railway.internal"
+
+
+def database_host(url: str | None = None) -> str:
+    """Lower-cased host of DATABASE_URL ('' if it cannot be parsed). Never logged in full by this module."""
+    from sqlalchemy.engine import make_url
+    try:
+        return (make_url(url if url is not None else DATABASE_URL).host or "").strip().lower().rstrip(".")
+    except Exception:
+        return ""
+
+
+def is_railway_private_host(host: str) -> bool:
+    """True only for <name>.railway.internal: Railway's private network, which is WireGuard-encrypted and
+    reachable only from services in the same project environment. A look-alike such as
+    `db.railway.internal.example.com` does not match."""
+    return host.endswith(RAILWAY_PRIVATE_SUFFIX) and len(host) > len(RAILWAY_PRIVATE_SUFFIX)
+
+
+def effective_ssl_mode(mode: str | None = None, host: str | None = None) -> str:
+    """The TLS mode to use. Explicit TALITRADE_DB_SSL_MODE wins. Unset, it is verify-full, except on Railway's
+    private network, where Railway's Postgres presents a certificate from its own generated CA that public
+    trust stores cannot verify (see 2026-11-24: verify-full by default crash-looped production)."""
+    raw = mode if mode is not None else os.getenv("TALITRADE_DB_SSL_MODE")
+    if raw is not None and raw.strip():
+        return raw.strip().lower()
+    host = database_host() if host is None else host
+    return "require" if is_railway_private_host(host) else DEFAULT_DB_SSL_MODE
+
+
 def build_ssl_context(mode: str | None = None, root_cert: str | None = None, root_cert_pem: str | None = None,
-                      production: bool | None = None) -> ssl.SSLContext:
-    """TLS settings for the database connection. Verification is the default and never silently falls back.
+                      production: bool | None = None, host: str | None = None) -> ssl.SSLContext:
+    """TLS settings for the database connection. Verification never silently falls back.
 
     TALITRADE_DB_SSL_MODE:
-      verify-full  (default) the server certificate chain must validate AND match the host name in
-                   DATABASE_URL. Trust anchors: TALITRADE_DB_SSL_ROOT_CERT (PEM file path), or
-                   TALITRADE_DB_SSL_ROOT_CERT_PEM (PEM text, for platforms without file mounts), or the
-                   certifi public CA bundle (correct for Neon, whose certificates are publicly trusted).
-      verify-ca    chain must validate; host name is not compared. Use only with a private CA.
-      require      encrypted but the server is NOT authenticated. Local development only: refused when
-                   is_production_environment() is true, so a deploy can never run unverified.
-    An unknown mode, an unreadable/invalid CA, or `require` in production stops startup."""
-    mode = (mode if mode is not None else os.getenv("TALITRADE_DB_SSL_MODE") or DEFAULT_DB_SSL_MODE).strip().lower()
+      verify-full  (default for every host except *.railway.internal) the server certificate chain must
+                   validate AND match the host name in DATABASE_URL. Trust anchors:
+                   TALITRADE_DB_SSL_ROOT_CERT (PEM file path), or TALITRADE_DB_SSL_ROOT_CERT_PEM (PEM text),
+                   or the certifi public CA bundle (correct for providers with publicly trusted certificates).
+      verify-ca    chain must validate against the configured CA; host name is not compared. Use with a
+                   private CA whose server certificate does not name the host.
+      require      encrypted, server NOT authenticated. In production this is refused, except for a
+                   *.railway.internal host (private, WireGuard-encrypted network), where it is the default.
+    An unknown mode, an unreadable/invalid CA, or `require` to a non-private host in production stops startup."""
+    host = database_host() if host is None else host
+    mode = effective_ssl_mode(mode, host)
     root_cert = root_cert if root_cert is not None else (os.getenv("TALITRADE_DB_SSL_ROOT_CERT") or "").strip() or None
     root_cert_pem = root_cert_pem if root_cert_pem is not None else (os.getenv("TALITRADE_DB_SSL_ROOT_CERT_PEM") or "").strip() or None
     production = is_production_environment() if production is None else production
@@ -61,9 +93,9 @@ def build_ssl_context(mode: str | None = None, root_cert: str | None = None, roo
     if root_cert and root_cert_pem:
         raise ValueError("Set only one of TALITRADE_DB_SSL_ROOT_CERT and TALITRADE_DB_SSL_ROOT_CERT_PEM")
     if mode == "require":
-        if production:
-            raise RuntimeError("TALITRADE_DB_SSL_MODE=require is not allowed in production: "
-                               "use verify-full (default) so the database server is authenticated")
+        if production and not is_railway_private_host(host):
+            raise RuntimeError("TALITRADE_DB_SSL_MODE=require is not allowed in production for a database outside "
+                               "Railway's private network: use verify-full (default) so the server is authenticated")
         if root_cert or root_cert_pem:
             raise ValueError("A database root certificate is set but TALITRADE_DB_SSL_MODE is 'require': choose verify-ca or verify-full")
         context = ssl.create_default_context()
@@ -82,8 +114,8 @@ def build_ssl_context(mode: str | None = None, root_cert: str | None = None, roo
 
 ssl_context = build_ssl_context()
 if ssl_context.verify_mode == ssl.CERT_NONE:
-    logger.warning("Database TLS: encrypted, but the server certificate is NOT verified (TALITRADE_DB_SSL_MODE=require). "
-                   "This is only permitted outside production.")
+    logger.warning("Database TLS: encrypted, server certificate NOT verified (mode=require, railway_private_network=%s)",
+                   is_railway_private_host(database_host()))
 else:
     logger.info("Database TLS: certificate verification on (hostname check=%s)", ssl_context.check_hostname)
 

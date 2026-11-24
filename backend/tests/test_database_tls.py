@@ -335,3 +335,107 @@ def test_engine_verify_full_completes_handshake_when_chain_and_host_name_match(f
     result = _engine_connect(port, {"TALITRADE_DB_SSL_ROOT_CERT": ca_path, "RAILWAY_ENVIRONMENT_NAME": "production"})
     assert "SSLCertVerificationError" not in result.stdout, result.stdout + result.stderr
     assert handshakes
+
+
+# ── Railway private network (2026-11-24: verify-full by default crash-looped a *.railway.internal database) ──
+
+from app.core import db_tls_probe  # noqa: E402
+
+
+@pytest.mark.parametrize("host,private", [
+    ("postgres.railway.internal", True), ("POSTGRES.Railway.Internal.", True),
+    ("railway.internal", False), ("db.railway.internal.attacker.example", False),
+    ("ep-x-pooler.us-east-2.aws.neon.tech", False), ("monorail.proxy.rlwy.net", False), ("", False)])
+def test_only_real_railway_private_hosts_count_as_private(host, private):
+    assert database.is_railway_private_host(host.strip().lower().rstrip(".")) is private
+
+
+def test_unset_mode_defaults_to_require_on_railway_private_network_even_in_production():
+    ctx = database.build_ssl_context(mode=None, production=True, host="postgres.railway.internal")
+    assert ctx.verify_mode == ssl.CERT_NONE   # the configuration production ran on before #144
+
+
+def test_unset_mode_stays_verify_full_for_public_hosts_in_production():
+    ctx = database.build_ssl_context(mode=None, production=True, host="ep-x-pooler.us-east-2.aws.neon.tech")
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+
+
+@pytest.mark.parametrize("host", ["monorail.proxy.rlwy.net", "db.railway.internal.attacker.example", "10.0.0.5"])
+def test_require_is_still_refused_in_production_outside_the_private_network(host):
+    with pytest.raises(RuntimeError, match="not allowed in production"):
+        database.build_ssl_context(mode="require", production=True, host=host)
+
+
+def test_explicit_verification_on_the_private_network_is_honoured(tmp_path):
+    ca_path, ca_pem = _make_ca_and_server_cert(tmp_path)
+    ctx = database.build_ssl_context(mode="verify-ca", root_cert_pem=ca_pem, production=True,
+                                     host="postgres.railway.internal")
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is False
+
+
+def test_import_succeeds_in_production_on_railway_private_network_without_tls_settings():
+    result = _import_database({"DATABASE_URL": "postgresql+asyncpg://u:pw@postgres.railway.internal:5432/railway",
+                               "RAILWAY_ENVIRONMENT_NAME": "production"})
+    assert result.returncode == 0, result.stderr
+
+
+_ENGINE_CONNECT_PRIVATE_NAME = """
+import socket
+_real = socket.getaddrinfo
+def _fake(host, *a, **k):   # resolve the Railway private name to the local fake server
+    return _real("127.0.0.1" if host == "postgres.railway.internal" else host, *a, **k)
+socket.getaddrinfo = _fake
+""" + _ENGINE_CONNECT
+
+
+@pytest.mark.parametrize("extra_env,expect_handshake", [
+    ({}, True),                                             # no TLS settings: private-network default
+    ({"TALITRADE_DB_SSL_MODE": "verify-full"}, False),      # explicit strict mode still refuses the private CA
+])
+def test_engine_with_production_settings_on_the_railway_private_name(fake_postgres_tls, extra_env, expect_handshake):
+    """The 2026-11-24 outage, end to end: production env, DATABASE_URL host postgres.railway.internal, a server
+    whose certificate chains to a private CA. Default settings must connect; explicit verify-full must refuse."""
+    port, _, handshakes = fake_postgres_tls
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TALITRADE_DB_SSL", "RAILWAY_", "TALITRADE_ENV"))}
+    env.update({"DATABASE_URL": f"postgresql+asyncpg://u:pw@postgres.railway.internal:{port}/db",
+                "RAILWAY_ENVIRONMENT_NAME": "production", **extra_env})
+    result = subprocess.run([sys.executable, "-c", _ENGINE_CONNECT_PRIVATE_NAME], cwd=BACKEND_DIR, env=env,
+                            capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert ("SSLCertVerificationError" in result.stdout) is (not expect_handshake), result.stdout
+    assert bool(handshakes) is expect_handshake
+
+
+def test_startup_log_names_the_certificate_failure_reason_without_the_host():
+    from app.core import health
+    exc = ssl.SSLCertVerificationError(1, "certificate verify failed")
+    exc.verify_code, exc.verify_message = 62, "Hostname mismatch, certificate is not valid for 'secret-host.internal'."
+    wrapped = RuntimeError("driver error")
+    wrapped.__cause__ = exc
+    reason = health.tls_failure_reason(wrapped)
+    assert reason == "verify_code=62 reason=Hostname mismatch" and "secret-host" not in reason
+
+
+def test_probe_reports_each_mode_and_never_prints_credentials(fake_postgres_tls_matching_host, capsys, monkeypatch):
+    port, ca_path, _ = fake_postgres_tls_matching_host
+    monkeypatch.setenv("DATABASE_URL", f"postgresql+asyncpg://probeuser:S3cretPassw0rd@127.0.0.1:{port}/db")
+    monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", open(ca_path).read())
+    monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT", raising=False)
+    assert db_tls_probe.main([]) == 0
+    out = capsys.readouterr().out
+    assert "S3cretPassw0rd" not in out and "probeuser" not in out and "postgresql" not in out
+    assert "check public-ca/verify-full: FAIL" in out
+    assert "check configured-ca/verify-ca: PASS" in out and "check configured-ca/verify-full: PASS" in out
+
+
+def test_probe_shows_when_a_certificate_does_not_name_the_host(fake_postgres_tls, capsys, monkeypatch):
+    # Certificate for "db.test" only, reached as 127.0.0.1: chain-only passes, hostname check fails.
+    port, ca_path, _ = fake_postgres_tls
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://u:pw123456@127.0.0.1:{port}/db")
+    monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT", ca_path)
+    monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", raising=False)
+    assert db_tls_probe.main([]) == 0
+    out = capsys.readouterr().out
+    assert "check configured-ca/verify-ca: PASS" in out
+    assert "check configured-ca/verify-full: FAIL verify_code=" in out and "mismatch" in out.lower()
+    assert "subject_cn='db.test'" in out
