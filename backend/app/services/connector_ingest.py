@@ -7,10 +7,13 @@ import json
 import os
 import socket
 import uuid
+import logging
 
 from sqlalchemy import text
 
 from app.core.database import engine
+
+logger = logging.getLogger(__name__)
 from app.services.secret_crypto import decrypt_secret, encrypt_secret
 from app.services.tradelocker_provider import TradeLockerApiError, TradeLockerAuthError, TradeLockerClient, parse_expiry, token_is_expiring_soon
 
@@ -571,28 +574,28 @@ async def _set_sync_run_status(
             UPDATE connector_sync_runs
             SET
                 status = :status,
-                started_at = COALESCE(:started_at, started_at),
-                finished_at = COALESCE(:finished_at, finished_at),
-                retry_count = COALESCE(:retry_count, retry_count),
+                started_at = COALESCE(CAST(:started_at AS TIMESTAMPTZ), started_at),
+                finished_at = COALESCE(CAST(:finished_at AS TIMESTAMPTZ), finished_at),
+                retry_count = COALESCE(CAST(:retry_count AS INTEGER), retry_count),
                 next_retry_at = :next_retry_at,
                 lease_owner = CASE
-                    WHEN :clear_lease THEN NULL
-                    WHEN :lease_owner IS NULL THEN lease_owner
-                    ELSE :lease_owner
+                    WHEN CAST(:clear_lease AS BOOLEAN) THEN NULL
+                    WHEN CAST(:lease_owner AS TEXT) IS NULL THEN lease_owner
+                    ELSE CAST(:lease_owner AS TEXT)
                 END,
                 lease_expires_at = CASE
-                    WHEN :clear_lease THEN NULL
+                    WHEN CAST(:clear_lease AS BOOLEAN) THEN NULL
                     ELSE lease_expires_at
                 END,
                 error_detail = :error_detail,
                 result_detail = CASE
-                    WHEN :result_detail::jsonb = '{}'::jsonb THEN result_detail
-                    ELSE result_detail || :result_detail::jsonb
+                    WHEN CAST(:result_detail AS jsonb) = '{}'::jsonb THEN result_detail
+                    ELSE result_detail || CAST(:result_detail AS jsonb)
                 END,
-                metadata = metadata || :metadata::jsonb
+                metadata = metadata || CAST(:metadata AS jsonb)
             WHERE id = :id
-              AND (:expected_status IS NULL OR status = :expected_status)
-              AND (:lease_owner IS NULL OR lease_owner = :lease_owner)
+              AND (CAST(:expected_status AS TEXT) IS NULL OR status = CAST(:expected_status AS TEXT))
+              AND (CAST(:lease_owner AS TEXT) IS NULL OR lease_owner = CAST(:lease_owner AS TEXT))
             RETURNING *
         """), params)).mappings().first()
     if not row:
@@ -1050,10 +1053,12 @@ async def claim_next_connector_sync_run(
                 status = 'running',
                 started_at = COALESCE(r.started_at, NOW()),
                 next_retry_at = NULL,
-                lease_owner = :worker_id,
-                lease_expires_at = NOW() + (:lease_seconds || ' seconds')::interval,
+                -- Explicit casts: asyncpg cannot infer a parameter's type inside jsonb_build_object or a
+                -- text concatenation, and without them every claim failed with AmbiguousParameterError.
+                lease_owner = CAST(:worker_id AS TEXT),
+                lease_expires_at = NOW() + make_interval(secs => CAST(:lease_seconds AS INTEGER)),
                 metadata = r.metadata || jsonb_build_object(
-                    'claimed_by', :worker_id,
+                    'claimed_by', CAST(:worker_id AS TEXT),
                     'claimed_at', NOW(),
                     'claim_from_status', candidate.status
                 )
@@ -1200,8 +1205,24 @@ async def connector_sync_worker_loop(
     worker_id: str = SYNC_WORKER_ID,
     idle_poll_seconds: float = SYNC_WORKER_IDLE_POLL_SECONDS,
 ) -> None:
+    failures = 0
     while not stop_event.is_set():
-        handled = await run_connector_sync_once(worker_id=worker_id)
+        try:
+            handled = await run_connector_sync_once(worker_id=worker_id)
+            failures = 0
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # A failing poll (database blip, bad statement) used to end this loop for the life of the
+            # process. Log the type only, back off (max 60 s) and keep polling.
+            failures += 1
+            logger.error("Connector sync worker poll failed: exception_type=%s consecutive=%s", type(exc).__name__, failures)
+            handled = False
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=min(60.0, 2.0 ** min(failures, 6)))
+            except asyncio.TimeoutError:
+                pass
+            continue
         if handled:
             continue
         try:
