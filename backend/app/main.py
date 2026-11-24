@@ -28,6 +28,7 @@ from app.services.connector_ingest import (
     clear_connector_config,
     connector_sync_worker_loop,
     enqueue_connector_sync_run,
+    compute_position_key,
     deactivate_missing_positions,
     ensure_connector_tables,
     get_connector_config,
@@ -53,6 +54,7 @@ from app.services.account_workspace import (
     list_account_workspaces,
 )
 from app.services.fundingpips_hydration import hydrate_fundingpips_canonical_state
+from app.services import live_status
 from app.services.fundingpips_connector import (
     connect_fundingpips_prop_firm,
     FundingPipsAuthError,
@@ -593,10 +595,12 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                 GROUP BY trading_account_id
             ),
             latest_trades AS (
-                SELECT trading_account_id, MAX(COALESCE(close_time, closed_at, logged_at)) AS last_trade_at
+                -- trades rows are keyed by the external account id (ownership-enforced); the table has no
+                -- trading_account_id or close_time column, so joining on those failed on any fresh schema.
+                SELECT account_id, MAX(COALESCE(closed_at, logged_at)) AS last_trade_at
                 FROM trades
-                WHERE trading_account_id IS NOT NULL
-                GROUP BY trading_account_id
+                WHERE account_id IS NOT NULL
+                GROUP BY account_id
             ),
             latest_events AS (
                 SELECT trading_account_id, MAX(event_time) AS last_event_at
@@ -625,7 +629,7 @@ async def db_get_connectors_overview(telegram_user_id: str) -> list:
                     ls.last_snapshot_at
                 FROM trading_accounts ta
                 LEFT JOIN latest_snapshots ls ON ls.trading_account_id = ta.id
-                LEFT JOIN latest_trades lt ON lt.trading_account_id = ta.id
+                LEFT JOIN latest_trades lt ON lt.account_id = ta.external_account_id
                 LEFT JOIN latest_events le ON le.trading_account_id = ta.id
                 WHERE ta.user_id = :uid AND ta.is_active = TRUE
             ),
@@ -2373,6 +2377,56 @@ def get_live_account(account_id: str) -> dict:
     return acct
 
 
+def account_age_seconds(acct: dict) -> float | None:
+    try:
+        return max(0.0, (datetime.utcnow() - datetime.fromisoformat(acct["last_updated"])).total_seconds())
+    except Exception:
+        return None
+
+
+async def sync_live_accounts(user_id: str, account_ids: list[str] | None = None) -> set[str]:
+    """Reconcile this process's cache with the database and return the user's ACTIVE account ids.
+
+    * The active set comes from trading_accounts on every call, so it reflects a disconnect handled by any
+      replica, not just this one.
+    * Cached entries of this user for accounts outside the active set (disconnected, deactivated) are
+      evicted, so no response or later lookup in this process can use their live values.
+    * Newer stored heartbeats are loaded into the cache (restart / other replica); a newer in-memory entry
+      is never overwritten.
+    Raises if the database cannot be read: callers decide how to fail (status fails closed)."""
+    if not user_id:
+        return set()
+    rows = await live_status.load_active_heartbeats(user_id, account_ids)
+    active = set(rows)
+    scope = None if account_ids is None else {str(a) for a in account_ids}
+    for aid in [a for a, acct in list(account_data_store.items())
+                if acct.get("_owner") == user_id and a not in active and (scope is None or a in scope)]:
+        account_data_store.pop(aid, None)
+    for aid, hb in rows.items():
+        if not hb:
+            continue
+        received = live_status.received_at_naive_utc(hb)
+        if not received:
+            continue
+        current = account_data_store.get(aid)
+        if current and current.get("_owner") not in (None, user_id):
+            continue
+        if current and str(current.get("last_updated") or "") >= received:
+            continue
+        account_data_store[aid] = {**{k: v for k, v in hb.items() if k != "received_at"}, "accountId": aid,
+                                   "closedTrades": [], "telegramUserId": user_id, "_owner": user_id,
+                                   "last_updated": received}
+    return active
+
+
+async def hydrate_live_accounts(user_id: str, account_ids: list[str] | None = None) -> None:
+    """Best-effort sync_live_accounts for paths that must not fail on a database error."""
+    try:
+        await sync_live_accounts(user_id, account_ids)
+    except Exception as exc:
+        logger.warning("Live status hydrate failed: exception_type=%s", type(exc).__name__)
+
+
 def get_primary_account_id() -> str:
     if PRIMARY_ACCOUNT in account_data_store:
         return PRIMARY_ACCOUNT
@@ -2623,6 +2677,11 @@ class TradeData(BaseModel):
 ALLOWED_EXTENSION_TRADE_SOURCES = {"scraper", "realtime"}
 
 
+def closed_trade_fingerprint(account_id: str, ct: dict) -> str:
+    fields = {k: ct.get(k) for k in ("symbol", "direction", "volume", "openPrice", "pnl", "balanceAfter")}
+    return hashlib.sha256(json.dumps({"account": account_id, **fields}, sort_keys=True, default=str).encode()).hexdigest()
+
+
 @app.post("/extension/data")
 async def receive_extension_data(data: ExtensionData, principal: Principal = Depends(ingest_auth.require_ingest_principal)):
     account_id  = str(data.accountId or "").strip() or "unknown"
@@ -2631,6 +2690,10 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
     if account_id != "unknown":
         account_id = await ingest_auth.authorize_account_write(tg_uid, account_id)
     notify_chat = resolve_telegram_chat_target(tg_uid)
+    if account_id != "unknown" and account_id not in account_data_store:
+        # After a restart (or on another replica) the previous state comes from the database, so alert
+        # transitions are compared with the real last heartbeat instead of firing again.
+        await hydrate_live_accounts(tg_uid, [account_id])
     prev        = account_data_store.get(account_id, {})
     if prev.get("_owner") not in (None, tg_uid):
         prev = {}
@@ -2642,10 +2705,21 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
         normalized_account = await upsert_trading_account(connector_account_payload)
         await ingest_account_snapshot({**connector_account_payload, "timestamp": data.timestamp or datetime.utcnow().isoformat(), "balance": data.balance, "equity": data.equity, "drawdown": (data.overallLoss or {}).get("used"), "risk_used": (data.dailyLoss or {}).get("used"), "source_metadata": {"legacy_route": "/extension/data", "has_positions": data.hasPositions, "open_position_count": data.openPositionCount}})
         seen_position_keys: list[str] = []
+        unkeyed_counts: dict[str, int] = {}
         for pos in data.positions or []:
-            position_key = await ingest_position({**connector_account_payload, "symbol": pos.get("symbol") or pos.get("instrument") or "unknown", "side": pos.get("direction") or pos.get("side"), "size": pos.get("volume") or pos.get("size"), "average_entry": pos.get("entryPrice") or pos.get("openPrice"), "unrealized_pnl": pos.get("pnl") or pos.get("profit"), "stop_loss": pos.get("stopLoss"), "take_profit": pos.get("takeProfit"), "opened_at": pos.get("openedAt"), "source_metadata": {"legacy_route": "/extension/data"}})
+            # The extension sends no open time or ticket, so two open positions on the same symbol and
+            # side would share one key and collapse into one row. Number repeats within the snapshot
+            # (the first keeps the plain key, so existing rows stay matched).
+            explicit_key = None
+            if not pos.get("openedAt"):
+                base_key = compute_position_key(pos.get("symbol") or pos.get("instrument") or "unknown", pos.get("direction") or pos.get("side"))
+                n = unkeyed_counts.get(base_key, 0)
+                unkeyed_counts[base_key] = n + 1
+                explicit_key = base_key if n == 0 else f"{base_key}#{n + 1}"
+            position_key = await ingest_position({**connector_account_payload, "position_key": explicit_key, "symbol": pos.get("symbol") or pos.get("instrument") or "unknown", "side": pos.get("direction") or pos.get("side"), "size": pos.get("volume") or pos.get("size"), "average_entry": pos.get("entryPrice") or pos.get("openPrice"), "unrealized_pnl": pos.get("pnl") or pos.get("profit"), "stop_loss": pos.get("stopLoss"), "take_profit": pos.get("takeProfit"), "opened_at": pos.get("openedAt"), "source_metadata": {"legacy_route": "/extension/data"}})
             seen_position_keys.append(position_key)
         await deactivate_missing_positions(trading_account_id=normalized_account["id"], seen_position_keys=seen_position_keys, allow_empty_snapshot=not data.hasPositions)
+        await live_status.persist_heartbeat(trading_account_id=normalized_account["id"], user_id=tg_uid, data=data.dict(), received_at=datetime.now(timezone.utc))
 
     if tg_uid and account_id != "unknown":
         try:
@@ -2660,12 +2734,38 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
         if prev_alerts.get(alert.get("type")) != alert.get("level"):
             await send_telegram(alert.get("message", "") + f"\n\n<i>Account: {account_id}</i>", chat_id=notify_chat)
 
+    # Closed-trade alerts go through community_bot.deliver: receipt and send in one transaction.
+    # * Delivered: receipt committed; replays of the same close are suppressed.
+    # * Transient failure (network, timeout, 429, 5xx, bot misconfiguration): receipt rolled back, and this
+    #   request answers 503 so the extension keeps its queue (it clears only on a 2xx) and resends.
+    # * Permanent per-alert rejection (Bot API 400/403, e.g. the user blocked the bot): receipt committed as
+    #   settled, so it is not retried; on its own it does not make the request fail.
+    # The extension resends its whole queue after a 503, so in a mixed batch the delivered and rejected
+    # closes are suppressed by their receipts and only the transient ones are attempted again.
+    # Everything stored above (account, snapshot, positions, link) is idempotent on that retry.
+    from app.services import community_bot
+    undelivered_closes = 0
+    rejected_closes = 0
+    telegram_configured = bool(os.getenv("TELEGRAM_BOT_TOKEN")) and bool(tg_uid)
     for ct in data.closedTrades:
+        if not telegram_configured:
+            break
         pnl = ct.get("pnl") or 0; icon = "✅" if pnl > 0 else "❌"
         daily_pct   = round((ct.get("dailyLossUsed")  or 0) / (ct.get("dailyLossLimit")  or 500)  * 100)
         overall_pct = round((ct.get("overallLossUsed") or 0) / (ct.get("overallLossLimit") or 1000) * 100)
         bal = ct.get("balanceAfter"); bal_line = f"Balance: ${bal:,.2f}\n" if bal else ""
-        await send_telegram(f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n{ct.get('symbol','?')} {ct.get('direction','?')} | <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%", chat_id=notify_chat)
+        message = f"{icon} <b>Trade Closed</b>\nAccount: {account_id}\n{ct.get('symbol','?')} {ct.get('direction','?')} | <b>{'+'if pnl>=0 else ''}{pnl:.2f}</b>\n{bal_line}Daily: {daily_pct}% | Overall: {overall_pct}%"
+        try:
+            await community_bot.deliver(tg_uid, "closed_trade:" + closed_trade_fingerprint(account_id, ct), message,
+                                        require_subscription=False, parse_mode="HTML", settle_permanent_failures=True)
+        except community_bot.TelegramDeliveryRejected as exc:
+            rejected_closes += 1
+            logger.warning("Closed-trade alert permanently rejected by Telegram; not retried: error_code=%s", exc.error_code)
+        except Exception as exc:
+            undelivered_closes += 1
+            # Structured fields only: never the Telegram response text or the request URL (it holds the token).
+            logger.warning("Closed-trade alert delivery failed; left retryable: exception_type=%s status=%s error_code=%s",
+                           type(exc).__name__, getattr(exc, "status_code", None), getattr(exc, "error_code", None))
 
     prev_profit = prev.get("profit"); curr_profit = data.profit
     if curr_profit is not None and prev_profit is not None:
@@ -2674,8 +2774,12 @@ async def receive_extension_data(data: ExtensionData, principal: Principal = Dep
         if prev_profit < 0 and curr_profit >= 0:
             await send_telegram(f"✅ <b>Position in Profit!</b>\nAccount: {account_id} | ${curr_profit:.2f}", chat_id=notify_chat)
 
+    if undelivered_closes:
+        return JSONResponse(status_code=503, content={"detail": "Telegram delivery failed; resend to retry", "retryable": True,
+                                                      "undelivered_closed_trades": undelivered_closes,
+                                                      "rejected_closed_trades": rejected_closes, "account": account_id})
     risk = data.riskPerTradeIdea or {}; daily = data.dailyLoss or {}; overall = data.overallLoss or {}
-    return {"status": "ok", "account": account_id, "balance": data.balance, "equity": data.equity, "tradeRisk": {"used": risk.get("combined"), "remaining": risk.get("remaining"), "pct": risk.get("pct")}, "dailyLoss": {"used": daily.get("used"), "remaining": daily.get("remaining"), "pct": daily.get("pct")}, "overallLoss": {"used": overall.get("used"), "remaining": overall.get("remaining"), "pct": overall.get("pct")}, "alerts_fired": len(data.alerts), "telegramLinked": bool(tg_uid)}
+    return {"status": "ok", "account": account_id, "balance": data.balance, "equity": data.equity, "tradeRisk": {"used": risk.get("combined"), "remaining": risk.get("remaining"), "pct": risk.get("pct")}, "dailyLoss": {"used": daily.get("used"), "remaining": daily.get("remaining"), "pct": daily.get("pct")}, "overallLoss": {"used": overall.get("used"), "remaining": overall.get("remaining"), "pct": overall.get("pct")}, "alerts_fired": len(data.alerts), "telegramLinked": bool(tg_uid), "rejected_closed_trades": rejected_closes}
 
 
 @app.post("/extension/trade")
@@ -2717,12 +2821,28 @@ async def get_journal_stats(account_id: str = None, principal: Principal = Depen
 
 @app.get("/extension/status")
 async def extension_status(principal: Principal = Depends(ingest_auth.require_ingest_principal)):
-    live = {
-        aid: {k: v for k, v in acct.items() if k != "_owner"}
-        for aid, acct in account_data_store.items()
-        if acct.get("_owner") == principal.user_id and get_live_account(aid)
-    }
-    return {"accounts": live, "count": len(live)}
+    """`accounts`: fresh (heartbeat within ACCOUNT_DATA_TTL_SECONDS), same shape as before.
+    `stale_accounts`: the last known values for owned accounts whose feed stopped, with their age; kept
+    separate so a client that treats every `accounts` entry as live never shows stale numbers as live.
+    Both fields are limited to the caller's currently ACTIVE accounts, read from the database on each call
+    (a disconnected account disappears from both, even if this process still had it cached)."""
+    try:
+        active = await sync_live_accounts(principal.user_id)
+    except Exception as exc:
+        # Fail closed: without the active set we cannot tell which cached accounts may still be shown.
+        logger.warning("Live status unavailable: exception_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Live status temporarily unavailable")
+    live, stale = {}, {}
+    for aid in sorted(active):
+        acct = account_data_store.get(aid)
+        if not acct or acct.get("_owner") != principal.user_id:
+            continue
+        entry = {k: v for k, v in acct.items() if k != "_owner"}
+        age = account_age_seconds(acct)
+        entry["freshness"] = {"last_updated": acct.get("last_updated"), "age_seconds": None if age is None else round(age),
+                              "ttl_seconds": ACCOUNT_DATA_TTL_SECONDS, "state": "live" if get_live_account(aid) else "stale"}
+        (live if entry["freshness"]["state"] == "live" else stale)[aid] = entry
+    return {"accounts": live, "count": len(live), "stale_accounts": stale}
 
 
 @app.get("/extension/news")
@@ -2748,8 +2868,15 @@ async def get_payout(account_id: str = None, principal: Principal = Depends(inge
     account_ids = await _readable_account_ids(principal, account_id)
     if not account_ids:
         raise HTTPException(status_code=404, detail="No linked trading account")
-    acct_id = next((a for a in account_ids if get_live_account(a)), account_ids[0])
-    acct    = get_live_account(acct_id)
+    # Live inputs (balance, equity...) only from accounts that are still active; a disconnected account's
+    # history stays readable by its owner, but its cached live values are evicted and never used.
+    try:
+        active = await sync_live_accounts(principal.user_id, account_ids)
+    except Exception as exc:
+        logger.warning("Payout live inputs unavailable: exception_type=%s", type(exc).__name__)
+        active = set()
+    acct_id = next((a for a in account_ids if a in active and get_live_account(a)), account_ids[0])
+    acct    = get_live_account(acct_id) if acct_id in active else {}
     if acct.get("_owner") not in (None, principal.user_id):
         acct = {}
     return await evaluate_payout_eligibility(acct_id, acct)

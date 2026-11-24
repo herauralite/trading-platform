@@ -164,6 +164,11 @@ def test_extension_trade_compatibility(monkeypatch):
 def test_extension_data_compatibility_and_stale_cleanup(monkeypatch):
     calls = {"upsert": 0, "snapshot": 0, "position": 0, "deactivate": []}
 
+    async def _noop(*a, **k):
+        return {}
+    monkeypatch.setattr(main_mod.live_status, "persist_heartbeat", _noop)
+    monkeypatch.setattr(main_mod.live_status, "load_active_heartbeats", _noop)
+
     async def fake_upsert(payload):
         calls["upsert"] += 1
         return {"id": 99}
