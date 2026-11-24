@@ -131,10 +131,12 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                 GROUP BY trading_account_id
             ),
             latest_trades AS (
-                SELECT trading_account_id, MAX(COALESCE(close_time, closed_at, logged_at)) AS last_trade_at
+                -- trades rows are keyed by the external account id (ownership-enforced); the table has no
+                -- trading_account_id or close_time column, so joining on those failed on any fresh schema.
+                SELECT account_id, MAX(COALESCE(closed_at, logged_at)) AS last_trade_at
                 FROM trades
-                WHERE trading_account_id IS NOT NULL
-                GROUP BY trading_account_id
+                WHERE account_id IS NOT NULL
+                GROUP BY account_id
             ),
             latest_events AS (
                 SELECT trading_account_id, MAX(event_time) AS last_event_at
@@ -182,7 +184,7 @@ async def list_account_workspaces(telegram_user_id: str) -> list[dict[str, Any]]
                     FALSE AS is_primary
                 FROM trading_accounts ta
                 LEFT JOIN latest_snapshots ls ON ls.trading_account_id = ta.id
-                LEFT JOIN latest_trades lt ON lt.trading_account_id = ta.id
+                LEFT JOIN latest_trades lt ON lt.account_id = ta.external_account_id
                 LEFT JOIN latest_events le ON le.trading_account_id = ta.id
                 WHERE ta.user_id = :uid AND ta.is_active = TRUE
             ),
