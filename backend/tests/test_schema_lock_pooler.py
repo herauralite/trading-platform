@@ -145,6 +145,11 @@ def test_concurrent_startups_through_the_pooler_run_schema_steps_one_instance_at
     monkeypatch.setattr(main.setup_config, "enabled", lambda: False)
 
     async def scenario(direct):
+        # Start from an empty schema, like a first deploy: other tests leave reduced versions of app tables.
+        from tests.test_worker_lifecycle_db import APP_TABLES
+        async with direct.begin() as conn:
+            for table in APP_TABLES:
+                await conn.execute(text(f"DROP TABLE IF EXISTS {table} CASCADE"))
         events = []
 
         async def instance(name):
