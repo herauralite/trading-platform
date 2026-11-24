@@ -14,6 +14,11 @@ secretGroup = 1
 # Excludes CI placeholders such as postgres:postgres@localhost; generated passwords are far above this.
 entropy = 3.2
 keywords = ["postgres", "mysql", "mongodb", "redis"]
+[rules.allowlist]
+# Test canaries: deliberately fake credentials that tests plant to prove secrets are NOT logged
+# (backend/tests/test_health_readiness.py builds a DSN whose password contains "CANARY").
+regexTarget = "match"
+regexes = ['''CANARY''']
 
 [[rules]]
 # The default telegram-bot-api-token rule did not fire on `TELEGRAM_BOT_TOKEN=<id>:<secret>` lines
@@ -23,3 +28,4 @@ description = "Telegram bot token (<bot id>:<35-char secret>) in any context"
 regex = '''(?:^|[^0-9])([0-9]{8,10}:A[A-Za-z0-9_-]{34})(?:[^A-Za-z0-9_-]|$)'''
 secretGroup = 1
 entropy = 3.5
+
