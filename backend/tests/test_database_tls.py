@@ -2,6 +2,7 @@
 
 Includes real TLS handshakes against a local server with a throwaway self-signed CA, so the contexts are
 proven to accept the right server and reject a wrong host name or an untrusted certificate."""
+import contextlib
 import datetime
 import ipaddress
 import os
@@ -227,9 +228,9 @@ def test_default_trust_store_rejects_untrusted_certificate(tls_server):
 # issued to "db.test" only (no IP SAN). The app engine connects to 127.0.0.1, so verify-full must refuse the
 # certificate while verify-ca (same CA, no host name check) must complete the handshake.
 
-@pytest.fixture
-def fake_postgres_tls(tmp_path):
-    ca_path, _ = _make_ca_and_server_cert(tmp_path, hostname="db.test", ip_san=False)
+@contextlib.contextmanager
+def _fake_postgres_tls_server(tmp_path, hostname, ip_san):
+    ca_path, _ = _make_ca_and_server_cert(tmp_path, hostname=hostname, ip_san=ip_san)
     server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server_ctx.load_cert_chain(tmp_path / "server.pem", tmp_path / "server.key")
     sock = socket.socket()
@@ -257,10 +258,25 @@ def fake_postgres_tls(tmp_path):
 
     thread = threading.Thread(target=serve, daemon=True)
     thread.start()
-    yield sock.getsockname()[1], str(ca_path), handshakes
-    stop.set()
-    thread.join(timeout=2)
-    sock.close()
+    try:
+        yield sock.getsockname()[1], str(ca_path), handshakes
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        sock.close()
+
+
+@pytest.fixture
+def fake_postgres_tls(tmp_path):
+    with _fake_postgres_tls_server(tmp_path, hostname="db.test", ip_san=False) as server:
+        yield server
+
+
+@pytest.fixture
+def fake_postgres_tls_matching_host(tmp_path):
+    # Certificate names 127.0.0.1 (IP SAN), i.e. exactly the host the engine connects to.
+    with _fake_postgres_tls_server(tmp_path, hostname="localhost", ip_san=True) as server:
+        yield server
 
 
 _ENGINE_CONNECT = """
@@ -308,5 +324,14 @@ def test_engine_verify_ca_completes_handshake_with_same_ca(fake_postgres_tls):
     # Control: proves the two refusals above come from certificate checks, not from the fake server.
     port, ca_path, handshakes = fake_postgres_tls
     result = _engine_connect(port, {"TALITRADE_DB_SSL_MODE": "verify-ca", "TALITRADE_DB_SSL_ROOT_CERT": ca_path})
+    assert "SSLCertVerificationError" not in result.stdout, result.stdout + result.stderr
+    assert handshakes
+
+
+def test_engine_verify_full_completes_handshake_when_chain_and_host_name_match(fake_postgres_tls_matching_host):
+    # Positive control for verify-full itself (production defaults: no mode set, Railway env present):
+    # the same engine that refuses a wrong host name or an unknown CA accepts a valid, matching certificate.
+    port, ca_path, handshakes = fake_postgres_tls_matching_host
+    result = _engine_connect(port, {"TALITRADE_DB_SSL_ROOT_CERT": ca_path, "RAILWAY_ENVIRONMENT_NAME": "production"})
     assert "SSLCertVerificationError" not in result.stdout, result.stdout + result.stderr
     assert handshakes
