@@ -1,1 +1,24 @@
-Generic single-database configuration.
+Schema ownership (2026-11): the runtime, not Alembic
+====================================================
+
+Today the database schema is created and adjusted by the web process at startup:
+app/main.py (ensure_trades_table, ensure_users_tables, ...), connector_ingest.ensure_connector_tables,
+ingest_auth.ensure_integration_tokens_table, community_bot.setup, and the opt-in Match-Trader /
+account-setup stores. All of it is additive (CREATE ... IF NOT EXISTS, ADD COLUMN IF NOT EXISTS) apart
+from two one-time cleanups (trading_accounts dedupe, a legacy positions constraint), and it runs under a
+cross-instance advisory lock (app/core/schema_lock.py). The old "drop users if the column is missing"
+path now refuses to start instead of dropping data.
+
+The four revisions in versions/ are stale: two are empty, two create SQLAlchemy-model tables (users with
+a UUID key, linked_accounts) that the application does not use and that conflict with the runtime users
+table. env.py refuses to run them unless TALITRADE_ALLOW_LEGACY_ALEMBIC=1.
+
+Plan to move to migration-controlled schemas (needs production DB access, owner approval):
+1. Take a schema-only dump of production (pg_dump --schema-only) and of a fresh database bootstrapped
+   by the app; diff them to find drift (columns added by hand or by old code paths).
+2. Write one baseline revision that creates exactly the reconciled schema; delete the stale revisions.
+3. On production: back up, then `alembic stamp <baseline>` (no DDL is executed).
+4. Run `alembic upgrade head` as a Railway pre-deploy command, once per deploy, not in the web process.
+5. Replace the startup ensure_* calls with a check that alembic_version is at head (fail readiness if not).
+6. From then on every schema change is a reviewed revision with a tested downgrade or a documented
+   forward-only rollback.
