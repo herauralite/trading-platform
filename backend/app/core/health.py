@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import traceback
 from typing import Any, Awaitable, Callable
 
 from sqlalchemy import text
@@ -34,16 +36,40 @@ class StartupState:
 startup_state = StartupState()
 
 
+class StartupStepFailed(RuntimeError):
+    """Raised in place of the original startup error so its text never reaches the server log.
+
+    Starlette formats the lifespan exception with traceback.format_exc() and uvicorn logs that text
+    verbatim, so re-raising the original would print e.g. a DSN or host name from a driver error.
+    The replacement carries only the step name, the exception type and where it was raised."""
+
+    def __init__(self, step: str, exception_type: str, location: str) -> None:
+        super().__init__(f"startup step failed: step={step} exception_type={exception_type} at={location}")
+        self.step = step
+        self.exception_type = exception_type
+
+
+def _raise_location(exc: BaseException) -> str:
+    frames = traceback.extract_tb(exc.__traceback__)
+    if not frames:
+        return "unknown"
+    last = frames[-1]
+    return f"{os.path.basename(last.filename)}:{last.lineno}"
+
+
 async def run_startup_step(name: str, step: Callable[[], Awaitable[Any]]) -> Any:
     """Run one startup step, logging its outcome without leaking exception text.
 
-    A failing step is re-raised: a web process with a half-created schema must not report ready."""
+    A failing step aborts startup (uvicorn then exits with code 3): a web process with a half-created
+    schema must not report ready. The error is replaced by StartupStepFailed, without its context."""
     try:
         result = await step()
     except Exception as exc:
         startup_state.failed_step = name
-        logger.error("Startup step failed: step=%s exception_type=%s", name, type(exc).__name__)
-        raise
+        exc_type = type(exc).__name__
+        location = _raise_location(exc)
+        logger.error("Startup step failed: step=%s exception_type=%s at=%s", name, exc_type, location)
+        raise StartupStepFailed(name, exc_type, location) from None
     logger.info("Startup step ok: step=%s", name)
     return result
 
