@@ -81,6 +81,7 @@ from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
 from app.core import health
+from app.core import schema_lock
 from app.core import ingest_auth
 from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
 from app.services.matchtrader_api.store import SqlStore as MtApiStore
@@ -422,7 +423,12 @@ async def ensure_users_tables():
         """))
         col_exists = result.fetchone()
         if not col_exists:
-            await conn.execute(text("DROP TABLE IF EXISTS users CASCADE"))
+            table_exists = (await conn.execute(text("SELECT to_regclass('public.users') IS NOT NULL"))).scalar()
+            if table_exists:
+                # Previously this dropped the table (CASCADE) at startup: a schema mismatch deleted every
+                # user row and dependent object. Refuse to start instead; an operator must migrate it.
+                raise RuntimeError("users table exists without a telegram_user_id column; refusing to drop it. "
+                                   "Migrate or rename the legacy table manually, then restart.")
         await conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
                 telegram_user_id    TEXT PRIMARY KEY,
@@ -1304,11 +1310,9 @@ def format_payout_status(ev: dict, short: bool = False) -> str:
 
 
 # ─── App + middleware ─────────────────────────────────────────────────────────
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("Starting TaliTrade...")
-    health.startup_state.reset()
-    step = health.run_startup_step
+async def _run_schema_steps(step):
+    """Every startup schema/backfill step. Called only while holding the cross-instance schema lock."""
+    from app.services import community_bot
     await step("ensure_trades_table", ensure_trades_table)
     await step("ensure_users_tables", ensure_users_tables)
     await step("ensure_connector_tables", ensure_connector_tables)
@@ -1321,8 +1325,17 @@ async def lifespan(app: FastAPI):
     await step("backfill_legacy_prop_accounts", backfill_legacy_prop_accounts_to_trading_accounts)
     await step("ensure_waitlist_table", ensure_waitlist_table)
     await step("ensure_demo_scores_table", ensure_demo_scores_table)
-    from app.services import community_bot
     await step("community_bot_setup", community_bot.setup)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting TaliTrade...")
+    health.startup_state.reset()
+    step = health.run_startup_step
+    async with schema_lock.startup_schema_lock():
+        await _run_schema_steps(step)
+    from app.services import community_bot
     await setup_telegram_webhook()  # never raises: a Telegram outage must not block startup
     stop_event = asyncio.Event()
     sup = health.supervise_task
@@ -2182,11 +2195,12 @@ async def daily_summary_scheduler():
                         for uid in user_ids:
                             try:
                                 from app.services.bot_reports import api_report
-                                from app.services.community_bot import deliver
+                                from app.services.community_bot import claim_once, deliver
                                 report = await api_report(uid, "summary")
                                 if report:
                                     await deliver(uid, "summary:" + today_key, report)
-                                elif await get_user_primary_account(uid):
+                                elif await get_user_primary_account(uid) and await claim_once(uid, "summary-legacy:" + today_key):
+                                    # Claimed first: another instance (or a restart within the window) must not resend.
                                     await send_daily_summary(today_key, chat_id=uid, tg_uid=uid)
                             except Exception as e:
                                 logger.error(f"Daily summary for {uid}: {e}")
