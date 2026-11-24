@@ -80,6 +80,7 @@ from app.services.provider_onboarding import (
 from app.services.alpaca_provider import AlpacaCredentialValidationError
 from app.services.tradelocker_provider import TradeLockerAuthError
 from app.core import admin_auth
+from app.core import health
 from app.core import ingest_auth
 from app.services.matchtrader_api import config as mt_api_config, routes as mt_api_routes, worker as mt_api_worker
 from app.services.matchtrader_api.store import SqlStore as MtApiStore
@@ -1306,36 +1307,46 @@ def format_payout_status(ev: dict, short: bool = False) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting TaliTrade...")
-    await ensure_trades_table()
-    await ensure_users_tables()
-    await ensure_connector_tables()
-    await ingest_auth.ensure_integration_tokens_table()
+    health.startup_state.reset()
+    step = health.run_startup_step
+    await step("ensure_trades_table", ensure_trades_table)
+    await step("ensure_users_tables", ensure_users_tables)
+    await step("ensure_connector_tables", ensure_connector_tables)
+    await step("ensure_integration_tokens_table", ingest_auth.ensure_integration_tokens_table)
     if mt_api_config.api_enabled():
         # Match-Trader API integration is opt-in: its tables are created only when enabled.
-        await MtApiStore().ensure_schema()
+        await step("mt_api_schema", MtApiStore().ensure_schema)
     if setup_config.enabled():
-        await SetupStore().ensure_schema()
-    await backfill_legacy_prop_accounts_to_trading_accounts()
-    await ensure_waitlist_table()
-    await ensure_demo_scores_table()
+        await step("account_setup_schema", SetupStore().ensure_schema)
+    await step("backfill_legacy_prop_accounts", backfill_legacy_prop_accounts_to_trading_accounts)
+    await step("ensure_waitlist_table", ensure_waitlist_table)
+    await step("ensure_demo_scores_table", ensure_demo_scores_table)
     from app.services import community_bot
-    await community_bot.setup()
-    await setup_telegram_webhook()
+    await step("community_bot_setup", community_bot.setup)
+    await setup_telegram_webhook()  # never raises: a Telegram outage must not block startup
     stop_event = asyncio.Event()
+    sup = health.supervise_task
     tasks = [
-        asyncio.create_task(community_bot.run()),
-        asyncio.create_task(news_scheduler()),
-        asyncio.create_task(weekend_scheduler()),
-        asyncio.create_task(daily_summary_scheduler()),
-        asyncio.create_task(connector_sync_worker_loop(stop_event, worker_id=SYNC_WORKER_ID)),
+        sup(asyncio.create_task(community_bot.run()), "community_bot"),
+        sup(asyncio.create_task(news_scheduler()), "news_scheduler"),
+        sup(asyncio.create_task(weekend_scheduler()), "weekend_scheduler"),
+        sup(asyncio.create_task(daily_summary_scheduler()), "daily_summary_scheduler"),
+        sup(asyncio.create_task(connector_sync_worker_loop(stop_event, worker_id=SYNC_WORKER_ID)), "connector_sync_worker"),
     ]
     if mt_api_config.worker_enabled():
-        tasks.append(asyncio.create_task(mt_api_worker.worker_loop(stop_event)))
-    yield
-    stop_event.set()
-    for t in tasks:
-        t.cancel()
-    logger.info("Shutting down.")
+        tasks.append(sup(asyncio.create_task(mt_api_worker.worker_loop(stop_event)), "mt_api_worker"))
+    health.startup_state.complete = True
+    logger.info("Startup complete: %s background tasks running", len(tasks))
+    try:
+        yield
+    finally:
+        health.startup_state.complete = False
+        stop_event.set()
+        for t in tasks:
+            t.cancel()
+        # Give tasks a bounded window to unwind (release leases, close clients) before the process exits.
+        await asyncio.wait(tasks, timeout=10)
+        logger.info("Shutting down.")
 
 
 app = FastAPI(title="TaliTrade", version="4.0.0", lifespan=lifespan)
@@ -1410,13 +1421,23 @@ def is_frontend_origin_allowed(origin: str | None) -> bool:
 
 
 @app.get("/health")
-async def health(): return {"status": "ok"}
+async def health_live():
+    """Liveness only: never touches the database (see app/core/health.py)."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def health_ready():
+    status, body = await health.readiness(engine)
+    return JSONResponse(status_code=status, content=body)
+
 
 @app.get("/health/db")
 async def health_db():
-    async with engine.connect() as conn:
-        await conn.execute(text("SELECT 1"))
-    return {"status": "ok", "database": "connected"}
+    # Kept for existing monitors. Failures return a sanitized 503 instead of a 500 with a traceback.
+    if await health.check_database(engine):
+        return {"status": "ok", "database": "connected"}
+    return JSONResponse(status_code=503, content={"status": "unavailable", "database": "unavailable"})
 
 
 # ─── Waitlist ─────────────────────────────────────────────────────────────────
