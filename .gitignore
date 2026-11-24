@@ -6,3 +6,11 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+# Secrets: never commit environment files or key material (see SECURITY_HISTORY_REMEDIATION.md)
+.env.*
+!.env.example
+**/.env
+*.pem
+*.key
+*.p12
+*.pfx

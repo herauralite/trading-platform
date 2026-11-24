@@ -101,7 +101,7 @@ async def ingest_tradingview_event(*, token: str, payload: dict[str, Any]) -> di
                    tvc.trading_account_id,
                    tvc.activation_state,
                    ta.account_key
-            FROM tradingview_webhook_connections
+            FROM tradingview_webhook_connections tvc
             JOIN trading_accounts ta ON ta.id = tvc.trading_account_id
             WHERE tvc.webhook_token_hash = :token_hash
             LIMIT 1
@@ -126,7 +126,7 @@ async def ingest_tradingview_event(*, token: str, payload: dict[str, Any]) -> di
                 updated_at = :now,
                 metadata = metadata
                   || '{"onboarding_state":"active"}'::jsonb
-                  || jsonb_build_object('last_event_type', :event_type)
+                  || jsonb_build_object('last_event_type', CAST(:event_type AS TEXT))
             WHERE id = :id
         """), {
             "id": row["id"],
@@ -146,7 +146,7 @@ async def ingest_tradingview_event(*, token: str, payload: dict[str, Any]) -> di
             UPDATE trading_accounts
             SET metadata = metadata
                 || '{"provider_state":"active","onboarding_state":"active"}'::jsonb
-                || jsonb_build_object('last_event_at', :now),
+                || jsonb_build_object('last_event_at', CAST(:now AS TIMESTAMPTZ)),
                 updated_at = :now
             WHERE id = :account_id
         """), {"account_id": row["trading_account_id"], "now": now})
