@@ -418,12 +418,12 @@ def test_startup_log_names_the_certificate_failure_reason_without_the_host():
 
 def test_probe_reports_each_mode_and_never_prints_credentials(fake_postgres_tls_matching_host, capsys, monkeypatch):
     port, ca_path, _ = fake_postgres_tls_matching_host
-    monkeypatch.setenv("DATABASE_URL", f"postgresql+asyncpg://probeuser:S3cretPassw0rd@127.0.0.1:{port}/db")
+    monkeypatch.setenv("DATABASE_URL", f"postgresql+asyncpg://probeuser:CANARY-probe-pw7@127.0.0.1:{port}/db")
     monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", open(ca_path).read())
     monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT", raising=False)
     assert db_tls_probe.main([]) == 0
     out = capsys.readouterr().out
-    assert "S3cretPassw0rd" not in out and "probeuser" not in out and "postgresql" not in out
+    assert "CANARY-probe-pw7" not in out and "probeuser" not in out and "postgresql" not in out
     assert "check public-ca/verify-full: FAIL" in out
     assert "check configured-ca/verify-ca: PASS" in out and "check configured-ca/verify-full: PASS" in out
 
