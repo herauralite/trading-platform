@@ -8,6 +8,15 @@ from dotenv import load_dotenv
 # Explicitly load .env from the backend folder
 load_dotenv(os.path.join(os.path.dirname(__file__), '..', '.env'))
 
+# GUARD: these Alembic revisions are stale and do NOT describe the production schema. The app creates its
+# tables at startup (app/main.py + services, under app/core/schema_lock.py). Revision 9f43dce5905d creates a
+# `users` table with a UUID key and `telegram_id`, incompatible with the runtime `users(telegram_user_id)`.
+# Running `alembic upgrade head` against a real database would create conflicting tables. See README in
+# this folder for the migration plan. Override only on a disposable database.
+if os.getenv("TALITRADE_ALLOW_LEGACY_ALEMBIC") != "1":
+    raise SystemExit("Refusing to run the legacy Alembic revisions: they do not match the runtime schema. "
+                     "See backend/migrations/README. Set TALITRADE_ALLOW_LEGACY_ALEMBIC=1 only on a disposable database.")
+
 config = context.config
 
 db_url = os.getenv("DATABASE_URL").replace("postgresql+asyncpg://", "postgresql+psycopg2://")
