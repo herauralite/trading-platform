@@ -61,16 +61,30 @@ def replay_expiry(claims: dict[str, Any], now: datetime | None = None) -> dateti
     return min(max(exp, now + MIN_REPLAY_WINDOW), now + MAX_REPLAY_WINDOW)
 
 
-async def _ensure_table(conn) -> None:
+_CREATE_TABLE = text("""
+    CREATE TABLE IF NOT EXISTS oidc_consumed_nonces (
+        nonce_hash TEXT PRIMARY KEY,
+        expires_at TIMESTAMPTZ NOT NULL
+    )
+""")
+
+
+async def _ensure_table(engine) -> None:
+    """Create the table once per process, in its own transaction.
+
+    Two first logins at the same moment can both run CREATE TABLE IF NOT EXISTS; on PostgreSQL the loser
+    fails on the type catalog (unique violation) even though the table now exists. Retry once: the second
+    attempt is a no-op. Without this, the losing login failed with a 500 instead of being checked."""
     global _table_ready
     if _table_ready:
         return
-    await conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS oidc_consumed_nonces (
-            nonce_hash TEXT PRIMARY KEY,
-            expires_at TIMESTAMPTZ NOT NULL
-        )
-    """))
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(_CREATE_TABLE)
+    except Exception as exc:
+        logger.info("oidc_consumed_nonces create raced another worker (%s); retrying", type(exc).__name__)
+        async with engine.begin() as conn:
+            await conn.execute(_CREATE_TABLE)
     _table_ready = True
 
 
@@ -80,8 +94,8 @@ async def consume_nonce(claims: dict[str, Any], nonce: str, engine=None) -> None
         from app.core.database import engine as default_engine
         engine = default_engine
     now = datetime.now(timezone.utc)
+    await _ensure_table(engine)
     async with engine.begin() as conn:
-        await _ensure_table(conn)
         await conn.execute(text("DELETE FROM oidc_consumed_nonces WHERE expires_at < :now"), {"now": now})
         inserted = await conn.execute(
             text("INSERT INTO oidc_consumed_nonces (nonce_hash, expires_at) VALUES (:h, :e) "
