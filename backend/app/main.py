@@ -88,6 +88,7 @@ from app.services.matchtrader_api.store import SqlStore as MtApiStore
 from app.services.account_setup import config as setup_config, routes as setup_routes
 from app.services.account_setup.store import SetupStore
 from app.core.ingest_auth import Principal
+from app.core import execution_gate
 from app.core.auth_session import (
     DEFAULT_SESSION_TTL_SECONDS,
     create_session_token,
@@ -1375,6 +1376,10 @@ app.add_middleware(
 MAX_INGEST_BODY_BYTES = 512 * 1024
 MAX_CSV_INGEST_BODY_BYTES = 5 * 1024 * 1024
 _INGEST_BODY_PREFIXES = ("/extension/", "/journal/", "/ingest/")
+
+
+# Read-only MVP: refuse anything that looks like order execution, server-side (app/core/execution_gate.py).
+app.middleware("http")(execution_gate.block_execution_routes)
 
 
 @app.middleware("http")
