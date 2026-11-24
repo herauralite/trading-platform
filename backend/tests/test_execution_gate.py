@@ -99,3 +99,23 @@ def test_broker_clients_never_send_trading_requests():
     for name in ("alpaca_provider.py", "mt5_bridge.py", "fundingpips_connector.py", "fundingpips_hydration.py"):
         source = (SERVICES / name).read_text(encoding="utf-8")
         assert not re.search(r"/v2/orders|/orders['\"/]|place_order|submit_order", source), name
+
+
+@pytest.mark.parametrize("env", [{"RAILWAY_ENVIRONMENT_NAME": "production"}, {"TALITRADE_ENV": "prod"}])
+def test_real_app_still_refuses_execution_when_production_is_misconfigured_to_enable_it(monkeypatch, env):
+    # Someone sets the development flag on the production service: the app must keep refusing.
+    monkeypatch.setenv("TALITRADE_ORDER_EXECUTION", "enabled")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    for method, path in (("POST", "/orders"), ("POST", "/api/v1/place-order"), ("DELETE", "/orders/1"),
+                         ("POST", "/connectors/matchtrader-api/connections/1/execute")):
+        response = request(main.app, method, path)
+        assert response.status_code == 403, (method, path, env)
+
+
+@pytest.mark.parametrize("path", ["/v1//orders", "/api//execute/", "/%6Frders", "/Place_Order", "/x/orders/?a=1",
+                                  "/orders%2F1"])
+def test_direct_api_calls_cannot_slip_past_the_gate_with_path_tricks(path):
+    # A client bypassing the UI controls the raw path: encoding, doubled slashes, case and queries.
+    response = request(main.app, "POST", path)
+    assert response.status_code == 403, (path, response.status_code)
