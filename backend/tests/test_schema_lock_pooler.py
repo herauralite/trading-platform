@@ -153,8 +153,7 @@ def test_concurrent_startups_through_the_pooler_run_schema_steps_one_instance_at
                 try:
                     return await fn()
                 except Exception as exc:  # test database only: show the real error, and who was in the lock
-                    raise AssertionError(f"{name}:{step_name} failed: {exc!r}
-events={events}") from exc
+                    raise AssertionError(f"{name}:{step_name} failed: {exc!r} events={events}") from exc
             async with schema_lock.startup_schema_lock(pooled):
                 events.append((name, "lock:in"))
                 await main._run_schema_steps(step)
