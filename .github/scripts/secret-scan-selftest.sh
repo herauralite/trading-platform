@@ -19,6 +19,7 @@ FIXTURES[neon_database_url]="DATABASE_URL=postgresql://neondb_owner:npg_$(rand 1
 FIXTURES[asyncpg_database_url]="DATABASE_URL=postgresql+asyncpg://app:$(rand 24)@db.internal:5432/app"
 FIXTURES[secret_key]="SECRET_KEY=$(rand 48)"
 FIXTURES[github_token]="GH_TOKEN=ghp_$(rand 36)"
+FIXTURES[control_test_canary]="LEAK_CANARY_DSN=postgresql://user:CANARY-$(rand 12)@db-host.internal/db"
 FIXTURES[control_ci_placeholder]="DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/talitrade_test"
 
 scan() {  # $1 = fixture name; prints gitleaks' exit code
