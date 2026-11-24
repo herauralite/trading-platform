@@ -99,8 +99,9 @@ def test_failed_startup_step_is_reraised_logged_by_type_and_blocks_readiness(cap
     async def boom():
         raise RuntimeError("postgres://user:secret@host/db refused")
 
-    with caplog.at_level(logging.ERROR), pytest.raises(RuntimeError):
+    with caplog.at_level(logging.ERROR), pytest.raises(health.StartupStepFailed) as raised:
         asyncio.run(health.run_startup_step("ensure_trades_table", boom))
+    assert "secret" not in str(raised.value) and raised.value.__suppress_context__
     assert "step=ensure_trades_table" in caplog.text and "exception_type=RuntimeError" in caplog.text
     assert "secret" not in caplog.text
     assert health.startup_state.failed_step == "ensure_trades_table"
@@ -158,3 +159,46 @@ def test_lifespan_runs_every_step_marks_ready_and_shuts_tasks_down(monkeypatch):
     asyncio.run(_run())
     assert calls[:3] == ["ensure_trades_table", "ensure_users_tables", "ensure_connector_tables"]
     assert "community_bot_setup" in calls and "setup_telegram_webhook" in calls
+
+
+_FAILING_APP = '''
+import os
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
+from app.core import health
+
+async def boom():
+    # Built at runtime, like a driver error built from DATABASE_URL: the traceback's source lines can't show it.
+    raise RuntimeError(os.environ["LEAK_CANARY_DSN"] + " refused")
+
+@asynccontextmanager
+async def lifespan(app):
+    await health.run_startup_step("ensure_trades_table", boom)
+    yield
+
+app = FastAPI(lifespan=lifespan)
+'''
+
+
+def test_real_uvicorn_startup_failure_exits_nonzero_without_leaking_exception_text(tmp_path):
+    """End-to-end through uvicorn + Starlette: Starlette hands uvicorn the formatted traceback of a
+    failed lifespan, and uvicorn logs it verbatim. The re-raised error must not carry the original text."""
+    import subprocess
+    import sys
+
+    (tmp_path / "failing_app.py").write_text(_FAILING_APP)
+    backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(
+        os.environ,
+        PYTHONPATH=os.pathsep.join([str(tmp_path), backend_dir]),
+        LEAK_CANARY_DSN="postgresql://user:CANARY-hunter2@db-host.internal/db",
+    )
+    proc = subprocess.run(
+        [sys.executable, "-m", "uvicorn", "failing_app:app", "--port", "0", "--lifespan", "on"],
+        capture_output=True, text=True, timeout=60, env=env, cwd=str(tmp_path),
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 3, output  # uvicorn's STARTUP_FAILURE exit code
+    assert "Application startup failed" in output
+    assert "step=ensure_trades_table" in output and "exception_type=RuntimeError" in output
+    assert "CANARY" not in output and "db-host.internal" not in output, output
