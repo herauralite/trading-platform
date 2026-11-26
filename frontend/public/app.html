@@ -1936,7 +1936,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
       </div>
     </div>
     <div class="tf-row" id="chartIntervalRow" style="display:none" role="group" aria-label="Candle interval">
-      <button type="button" class="tf-btn rip" data-interval="M1" aria-pressed="false" aria-label="1 minute candles">M1</button><button type="button" class="tf-btn active rip" data-interval="M5" aria-pressed="true" aria-label="5 minute candles">M5</button><button type="button" class="tf-btn rip" data-interval="H1" aria-pressed="false" aria-label="1 hour candles">H1</button>
+      <button type="button" class="tf-btn rip" data-interval="M1" aria-pressed="false" aria-label="1 minute candles">M1</button><button type="button" class="tf-btn active rip" data-interval="M5" aria-pressed="true" aria-label="5 minute candles">M5</button><button type="button" class="tf-btn rip" data-interval="H1" aria-pressed="false" aria-label="1 hour candles">H1</button><button type="button" class="tf-btn rip" data-instrument="US30" aria-pressed="false" aria-label="US30 with live price updates" title="US30 (DJI30 on MetaTrader): the forming candle follows the broker's quotes">US30 live</button>
     </div>
     <div id="chartWindowNote" style="display:none;font-size:11px;color:var(--t3);padding:0 14px 8px;line-height:1.5"></div>
     <div class="tf-row" id="chartRangeRow">
@@ -5055,8 +5055,11 @@ document.querySelectorAll('#chartRangeRow .tf-btn').forEach(btn=>{
   });
 });
 
-document.querySelectorAll('#chartIntervalRow .tf-btn').forEach(btn=>{
+document.querySelectorAll('#chartIntervalRow .tf-btn[data-interval]').forEach(btn=>{
   btn.addEventListener('click',()=>{ if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.setInterval(btn.dataset.interval); });
+});
+document.querySelectorAll('#chartIntervalRow .tf-btn[data-instrument]').forEach(btn=>{   // toggles live updates for that instrument
+  btn.addEventListener('click',()=>{ if(!window.TaliMatchTraderMarket) return; const on=TaliMatchTraderMarket.instrument()===btn.dataset.instrument; TaliMatchTraderMarket.setInstrument(on?null:btn.dataset.instrument); });
 });
 document.getElementById('toolCandle').addEventListener('click',function(){
   if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'candle'); applyAccountPreferences(); return; }   // real OHLC candles

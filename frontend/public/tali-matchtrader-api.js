@@ -81,6 +81,10 @@
         var query = 'interval=' + encodeURIComponent(String((o && o.interval) || 'M5')) + (o && o.symbol ? '&symbol=' + encodeURIComponent(String(o.symbol)) : '');
         return request('GET', '/connections/' + id(connectionId) + '/market/candles?' + query, o);
       },
+      // Live instrument (US30): latest cached quote, the broker symbol it resolved to, and the verified candle price side.
+      getLive: function (connectionId, o) {
+        return request('GET', '/connections/' + id(connectionId) + '/market/live?instrument=' + encodeURIComponent(String((o && o.instrument) || 'US30')), o);
+      },
       getSnapshot: function (connectionId, o) { return request('GET', '/connections/' + id(connectionId) + '/snapshot', o); },
       listTrades: function (connectionId, o) {
         o = o || {};

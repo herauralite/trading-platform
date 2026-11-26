@@ -81,6 +81,20 @@ def market_candle_interval_seconds() -> int:
     return _int("TALITRADE_MT_API_MARKET_CANDLE_INTERVAL_SECONDS", 60, 30)
 
 
+def market_live_quote_interval_seconds() -> int:
+    """Quote refresh for an instrument charted live (US30 only, for now). One batched /v1/quotes
+    request per interval per account, shared by every open tab. 6 s = 10 requests/min, which fits
+    the live share of the account-wide budget next to account sync (see ratelimit.LIVE_SHARE)."""
+    return _int("TALITRADE_MT_API_MARKET_LIVE_QUOTE_INTERVAL_SECONDS", 6, 3)
+
+
+def market_live_enabled() -> bool:
+    """Live candle updates for the instruments in market.LIVE_INSTRUMENTS (US30 only, for now).
+    Off by default: merging the code changes nothing until this is turned on for a rollout.
+    Off => the live route answers 404 and the chart keeps using candle snapshots only."""
+    return market_data_enabled() and _flag("TALITRADE_MT_API_MARKET_LIVE_ENABLED")
+
+
 def market_symbols_interval_seconds() -> int:
     return _int("TALITRADE_MT_API_MARKET_SYMBOLS_INTERVAL_SECONDS", 300, 60)
 

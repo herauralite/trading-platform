@@ -487,6 +487,24 @@ async def market_ticker(connection_id: int, response: Response, principal: Princ
         raise HTTPException(status_code=404, detail="Connection not found") from None
 
 
+def require_market_live() -> None:
+    if not config.market_live_enabled():
+        raise HTTPException(status_code=404, detail="Not Found")
+
+
+@router.get("/connections/{connection_id}/market/live", dependencies=[Depends(require_market), Depends(require_market_live)])
+async def market_live(connection_id: int, response: Response, instrument: str = "US30",
+                      principal: Principal = Depends(ingest_auth.require_session_principal)):
+    """Latest cached quote for a live instrument (US30 only, for now), the broker symbol it was
+    resolved to, and the verified candle price side. Polled from TaliTrade's cache, never the broker."""
+    if instrument not in market.LIVE_INSTRUMENTS:
+        raise HTTPException(status_code=422, detail="Unsupported instrument")
+    try:
+        return _market_response(await market.read_live(get_store(), connection_id, principal.user_id, instrument=instrument), response)
+    except market.NotFound:
+        raise HTTPException(status_code=404, detail="Connection not found") from None
+
+
 @router.get("/connections/{connection_id}/market/candles", dependencies=[Depends(require_market)])
 async def market_candles(connection_id: int, response: Response, symbol: str | None = None, interval: str | None = None,
                          principal: Principal = Depends(ingest_auth.require_session_principal)):

@@ -115,11 +115,11 @@ class MatchTraderApiClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _get(self, path: str, params: list[tuple[str, Any]] | None = None, *, low_priority: bool = False) -> Any:
+    async def _get(self, path: str, params: list[tuple[str, Any]] | None = None, *, low_priority: bool = False, live: bool = False) -> Any:
         if path not in ALLOWED_PATHS:
             raise ValueError(f"path not allowed: {path}")
         if self._budget is not None:
-            self._budget.reserve(path, low_priority=low_priority)  # counts failures too
+            self._budget.reserve(path, low_priority=low_priority and not live, live=live)  # counts failures too
         request = self._http.build_request("GET", path, params=params, headers={"Authorization": f"Bearer {self.__token.reveal()}"})
         started = time.monotonic()
         try:
@@ -218,17 +218,17 @@ class MatchTraderApiClient:
         """Every instrument this account offers (unfiltered)."""
         return self._parse("/v1/symbols", schemas.parse_envelope, await self._get("/v1/symbols", low_priority=low_priority), "symbols", schemas.MarketSymbol)
 
-    async def quotes(self, symbols: list[str], *, low_priority: bool = True) -> list[schemas.MarketQuote]:
+    async def quotes(self, symbols: list[str], *, low_priority: bool = True, live: bool = False) -> list[schemas.MarketQuote]:
         """Bid/ask snapshots for one or more symbols in ONE request (repeated ``symbol`` keys).
         Symbols the account does not offer are simply absent from the answer."""
         wanted = [str(s) for s in symbols if s]
         if not wanted:
             raise ValueError("at least one symbol is required")
-        payload = await self._get("/v1/quotes", [("symbol", s) for s in wanted], low_priority=low_priority)
+        payload = await self._get("/v1/quotes", [("symbol", s) for s in wanted], low_priority=low_priority, live=live)
         return self._parse("/v1/quotes", schemas.parse_envelope, payload, "quotes", schemas.MarketQuote)
 
     async def candles(self, symbol: str, interval: str, *, range_from: int | None = None, range_to: int | None = None, limit: int = 100,
-                      low_priority: bool = True) -> list[schemas.MarketCandle]:
+                      low_priority: bool = True, live: bool = False) -> list[schemas.MarketCandle]:
         """Candles for one symbol and interval, ascending by opening time. With ``range_to`` and a
         limit the provider returns the most recent ``limit`` candles ending there."""
         if interval not in CANDLE_INTERVALS:
@@ -239,5 +239,5 @@ class MatchTraderApiClient:
         if range_to is not None:
             params.append(("to", int(range_to)))
         params.append(("limit", max(1, min(int(limit), CANDLE_LIMIT_MAX))))
-        payload = await self._get("/v1/candles", params, low_priority=low_priority)
+        payload = await self._get("/v1/candles", params, low_priority=low_priority, live=live)
         return self._parse("/v1/candles", schemas.parse_envelope, payload, "candles", schemas.MarketCandle)
