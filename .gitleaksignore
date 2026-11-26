@@ -1,0 +1,3 @@
+# Reviewed false positives (fake fixtures in tests). Format: <commit>:<file>:<rule-id>:<line>
+# Fake DSN password in the TLS probe test, renamed to a CANARY value in 767baa9.
+6b9890da773690c6a1b56a9cce14f0469a3cb78f:backend/tests/test_database_tls.py:database-url-with-password:421

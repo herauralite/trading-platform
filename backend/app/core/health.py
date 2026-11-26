@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import ssl
 import traceback
 from typing import Any, Awaitable, Callable
 
@@ -49,6 +50,20 @@ class StartupStepFailed(RuntimeError):
         self.exception_type = exception_type
 
 
+def tls_failure_reason(exc: BaseException) -> str | None:
+    """OpenSSL's reason for a rejected certificate, e.g. 'self-signed certificate in certificate chain' or
+    'Hostname mismatch'. Cut at the first comma: the hostname-mismatch message continues with the host name.
+    Reason strings are fixed OpenSSL texts, never credentials."""
+    e, seen = exc, 0
+    while e is not None and seen < 10:
+        if isinstance(e, ssl.SSLCertVerificationError):
+            reason = (e.verify_message or "").split(",", 1)[0].strip() or "unknown"
+            return f"verify_code={e.verify_code} reason={reason}"
+        e = e.__cause__ or e.__context__
+        seen += 1
+    return None
+
+
 def _raise_location(exc: BaseException) -> str:
     frames = traceback.extract_tb(exc.__traceback__)
     if not frames:
@@ -68,6 +83,9 @@ async def run_startup_step(name: str, step: Callable[[], Awaitable[Any]]) -> Any
         startup_state.failed_step = name
         exc_type = type(exc).__name__
         location = _raise_location(exc)
+        tls = tls_failure_reason(exc)
+        if tls:
+            location = f"{location} tls_{tls}"
         logger.error("Startup step failed: step=%s exception_type=%s at=%s", name, exc_type, location)
         raise StartupStepFailed(name, exc_type, location) from None
     logger.info("Startup step ok: step=%s", name)
