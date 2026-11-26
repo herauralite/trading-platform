@@ -232,7 +232,7 @@ DDL = [
 _CANCEL_REQUESTS = """UPDATE mtapi_sync_requests SET state = 'cancelled', detail = :why, finished_at = NOW()
                       WHERE connection_id = :id AND state IN ('queued', 'running')"""
 
-DROP_ORDER = ["mtapi_history_imports", "mtapi_market_feeds", "mtapi_market_candles", "mtapi_market_quotes", "mtapi_market_symbols", "mtapi_sync_requests", "mtapi_history_intervals", "mtapi_ledgers", "mtapi_closed_positions", "mtapi_pending_orders",
+DROP_ORDER = ["mtapi_history_imports", "mtapi_market_price_basis", "mtapi_market_feeds", "mtapi_market_candles", "mtapi_market_quotes", "mtapi_market_symbols", "mtapi_sync_requests", "mtapi_history_intervals", "mtapi_ledgers", "mtapi_closed_positions", "mtapi_pending_orders",
               "mtapi_positions", "mtapi_account_summary", "mtapi_sync_state", "mtapi_credentials", "mtapi_connections"]
 
 

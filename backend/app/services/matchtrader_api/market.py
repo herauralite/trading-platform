@@ -21,6 +21,19 @@ What the data means
 * A candle's timestamp is its opening time. The newest candle is still forming and is
   overwritten on each refresh. ``tick_count`` counts price ticks; it is not traded volume.
 * The provider does not say which price side candles are built from, so none is claimed.
+
+Live instruments (US30 only, for now; config.market_live_enabled)
+-----------------------------------------------------------------
+* The Trader API used here is REST only: no streaming endpoint is in the client's allowlist or
+  verified for these tokens, so "live" means a faster, shared quote poll, not a stream.
+* The broker's symbol is resolved from the account's own instrument list (US30, DJI30 as
+  MetaTrader names it, and other common names). Missing or ambiguous is reported, never guessed.
+* A 'live:<instrument>' feed row per connection drives one batched /v1/quotes request every
+  config.market_live_quote_interval_seconds(), however many tabs are open. It runs at the
+  budget's "live" priority: above backfill, below account sync.
+* Candles stay the source of history. A quote may only move the forming candle once the candle
+  price side is VERIFIED: when a forming candle and a quote arrive in the same pass, the candle's
+  close is compared with bid, ask and mid; the tallies are kept in mtapi_market_price_basis.
 """
 from __future__ import annotations
 
@@ -47,6 +60,12 @@ FORBIDDEN_RETRY_SECONDS = 3600
 # Instruments looked for first, by normalized name. Only ones the account really offers are used.
 WATCHLIST_PREFERENCES = ("EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "BTCUSD", "US30", "NAS100", "SPX500")
 CHART_PREFERENCE = "EURUSD"
+# Instruments that may be charted live: TaliTrade's name -> names brokers list it under, in order of
+# preference. DJI30 is MetaTrader's name for the same Dow Jones 30 index CFD.
+LIVE_INSTRUMENTS = {"US30": ("US30", "DJI30", "DJ30", "WS30", "USA30", "DOW30", "US30CASH", "DJIA")}
+LIVE_PREFIX = "live:"
+BASIS_MIN_SAMPLES = 3            # matching samples needed before quotes may move a candle
+BASIS_AGREEMENT = 0.9            # ...and the share of conclusive samples that must agree
 
 DDL = [
     """CREATE TABLE IF NOT EXISTS mtapi_market_symbols (
@@ -76,8 +95,15 @@ DDL = [
         last_attempt_at TIMESTAMPTZ, last_success_at TIMESTAMPTZ, last_error_code TEXT,
         PRIMARY KEY (connection_id, key)
     )""",
+    # Evidence for which price a symbol's candles are built from (see basis_sample).
+    """CREATE TABLE IF NOT EXISTS mtapi_market_price_basis (
+        connection_id INTEGER NOT NULL REFERENCES mtapi_connections(id) ON DELETE CASCADE,
+        symbol TEXT NOT NULL, bid_hits INTEGER NOT NULL DEFAULT 0, ask_hits INTEGER NOT NULL DEFAULT 0,
+        mid_hits INTEGER NOT NULL DEFAULT 0, misses INTEGER NOT NULL DEFAULT 0, updated_at TIMESTAMPTZ NOT NULL,
+        PRIMARY KEY (connection_id, symbol)
+    )""",
 ]
-TABLES = ["mtapi_market_feeds", "mtapi_market_candles", "mtapi_market_quotes", "mtapi_market_symbols"]
+TABLES = ["mtapi_market_feeds", "mtapi_market_candles", "mtapi_market_quotes", "mtapi_market_symbols", "mtapi_market_price_basis"]
 
 
 class NotFound(Exception):
@@ -128,6 +154,52 @@ def choose_chart_symbol(symbols: list[dict]) -> dict | None:
     return next((s for s in symbols if _matches(s, CHART_PREFERENCE)), None) or next((s for s in symbols if is_fx_pair(s)), None)
 
 
+def resolve_instrument(symbols: list[dict], instrument: str) -> dict:
+    """Which of the account's own symbols is ``instrument`` (e.g. US30)?
+
+    status: 'resolved' (exactly one), 'ambiguous' (several equally good: nothing is picked) or
+    'missing'. An exact name (symbol or alias, ignoring punctuation and case) beats a name with a
+    short broker suffix (US30.x, US30m); never a substring in the middle of a name."""
+    names = LIVE_INSTRUMENTS[instrument]
+
+    def exact(s: dict) -> bool:
+        return any(normalize(s.get(field)) == name for field in ("symbol", "alias") for name in names)
+
+    def suffixed(s: dict) -> bool:      # US30m, US30.f, US30_cash: letters only, so US300 or US3000 never pass for US30
+        for field in ("symbol", "alias"):
+            value = normalize(s.get(field))
+            if any(value.startswith(n) and 1 <= len(value) - len(n) <= 4 and value[len(n):].isalpha() for n in names):
+                return True
+        return False
+
+    unique = list({s["symbol"]: s for s in symbols if s.get("symbol")}.values())
+    for tier in ([s for s in unique if exact(s)], [s for s in unique if not exact(s) and suffixed(s)]):
+        if len(tier) == 1:
+            return {"instrument": instrument, "status": "resolved", "symbol": tier[0], "candidates": []}
+        if len(tier) > 1:
+            return {"instrument": instrument, "status": "ambiguous", "symbol": None,
+                    "candidates": [{"symbol": s["symbol"], "alias": s.get("alias"), "description": s.get("description")} for s in tier]}
+    return {"instrument": instrument, "status": "missing", "symbol": None, "candidates": []}
+
+
+def basis_sample(close: Decimal | None, bid: Decimal | None, ask: Decimal | None) -> str:
+    """Compare a forming candle's close with a quote taken in the same pass: 'bid', 'ask' or
+    'mid' when exactly one of them equals the close, otherwise 'miss' (the price moved between
+    the two requests, the spread is zero, or something is missing: not evidence either way)."""
+    if close is None or bid is None or ask is None or bid == ask:
+        return "miss"
+    hits = [name for name, value in (("bid", bid), ("ask", ask), ("mid", (bid + ask) / 2)) if value == close]
+    return hits[0] if len(hits) == 1 else "miss"
+
+
+def basis_verdict(counts: dict | None) -> str:
+    """'bid' | 'ask' | 'mid' once enough samples agree, else 'unverified'."""
+    counts = {k: int((counts or {}).get(f"{k}_hits") or 0) for k in ("bid", "ask", "mid")}
+    conclusive = sum(counts.values())
+    side, hits = max(counts.items(), key=lambda kv: kv[1])
+    return side if hits >= BASIS_MIN_SAMPLES and hits >= BASIS_AGREEMENT * conclusive else "unverified"
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if value else None
 
@@ -136,7 +208,8 @@ def _price(value: Decimal | None) -> str | None:
     return format(value, "f") if value is not None else None
 
 
-def feed_status(feed: dict | None, *, has_data: bool, now: datetime, poll_seconds: int, session_open: bool | None = None) -> tuple[str, str | None]:
+def feed_status(feed: dict | None, *, has_data: bool, now: datetime, poll_seconds: int, session_open: bool | None = None,
+                stale_after: float | None = None) -> tuple[str, str | None]:
     """(status, detail). status: loading | fresh | market_closed | stale | permission_denied | unavailable."""
     error = feed.get("last_error_code") if feed else None
     if error == "deferred":
@@ -153,7 +226,7 @@ def feed_status(feed: dict | None, *, has_data: bool, now: datetime, poll_second
     if session_open is False:
         return "market_closed", "Market closed: these are the last prices the broker published."
     last = feed.get("last_success_at") if feed else None
-    if last is None or (now - last).total_seconds() > max(3 * poll_seconds, 60):
+    if last is None or (now - last).total_seconds() > (stale_after if stale_after is not None else max(3 * poll_seconds, 60)):
         return "stale", "Prices have not refreshed recently."
     return "fresh", None
 
@@ -171,7 +244,12 @@ async def due(store: SqlStore) -> dict[int, list[dict]]:
     is active and nobody holds its lease."""
     rows = await store._one("""
         SELECT f.connection_id, f.key, f.symbol, f.interval, f.watchlist, f.last_success_at,
-               EXTRACT(EPOCH FROM NOW() - f.last_success_at) AS success_age
+               EXTRACT(EPOCH FROM NOW() - f.last_success_at) AS success_age,
+               -- context for sharing one quote request: instruments charted live right now, and the ticker's list
+               (SELECT jsonb_agg(l.symbol) FROM mtapi_market_feeds l WHERE l.connection_id = f.connection_id AND l.key LIKE 'live:%'
+                  AND l.interest_until > NOW() AND l.symbol IS NOT NULL) AS live_symbols,
+               (SELECT t.watchlist FROM mtapi_market_feeds t WHERE t.connection_id = f.connection_id AND t.key = 'quotes'
+                  AND t.interest_until > NOW()) AS ticker_watchlist
         FROM mtapi_market_feeds f JOIN mtapi_connections c ON c.id = f.connection_id
         WHERE c.status = 'active' AND f.interest_until > NOW() AND f.next_due_at <= NOW()
           AND (c.lease_owner IS NULL OR c.lease_expires_at < NOW())
@@ -194,8 +272,13 @@ async def seconds_until_next_due(store: SqlStore) -> float | None:
 
 
 async def save(store: SqlStore, connection_id: int, generation: int, owner: str, *, symbols: list[dict] | None, quotes: list[dict] | None,
-               candles: list[dict], feeds: list[dict], watchlist: list[str] | None) -> bool:
-    """Store one market pass and release the lease, in one statement. ``feeds``: {key, ok, err, due_in, drop}."""
+               candles: list[dict], feeds: list[dict], watchlist: list[str] | None, quote_scope: list[str] | None = None,
+               basis: list[dict] | None = None) -> bool:
+    """Store one market pass and release the lease, in one statement. ``feeds``: {key, ok, err, due_in, drop}.
+    ``quote_scope``: the symbols the quotes answer was asked for (only those can be "left out").
+    ``basis``: price-basis samples, {symbol, side} with side in bid | ask | mid | miss."""
+    if quotes is not None and quote_scope is None:
+        quote_scope = [q["symbol"] for q in quotes]
     rows = await store._one(f"""
         WITH {_GUARD},
         sym_put AS (
@@ -219,10 +302,23 @@ async def save(store: SqlStore, connection_id: int, generation: int, owner: str,
             WHERE EXISTS (SELECT 1 FROM g)
             ON CONFLICT (connection_id, symbol) DO UPDATE SET alias = EXCLUDED.alias, bid = EXCLUDED.bid, ask = EXCLUDED.ask,
                 provider_time = EXCLUDED.provider_time, fetched_at = EXCLUDED.fetched_at
+            -- never step back in time: an older or out-of-order snapshot leaves the newer one in place
+            WHERE EXCLUDED.provider_time IS NULL OR mtapi_market_quotes.provider_time IS NULL OR EXCLUDED.provider_time >= mtapi_market_quotes.provider_time
             RETURNING 1),
-        q_del AS (     -- a successful answer replaces the set: instruments it left out have no current quote
+        q_del AS (     -- instruments the answer was asked for but left out have no current quote
             DELETE FROM mtapi_market_quotes q WHERE q.connection_id = :id AND CAST(:has_quotes AS boolean) AND EXISTS (SELECT 1 FROM g)
+              AND q.symbol IN (SELECT jsonb_array_elements_text(CAST(:quote_scope AS jsonb)))
               AND q.symbol NOT IN (SELECT x.symbol FROM jsonb_to_recordset(CAST(:quotes AS jsonb)) AS x(symbol text))
+            RETURNING 1),
+        b_put AS (     -- price-basis evidence accumulates; one row per symbol
+            INSERT INTO mtapi_market_price_basis AS b (connection_id, symbol, bid_hits, ask_hits, mid_hits, misses, updated_at)
+            SELECT CAST(:id AS integer), x.symbol, COUNT(*) FILTER (WHERE x.side = 'bid'), COUNT(*) FILTER (WHERE x.side = 'ask'),
+                   COUNT(*) FILTER (WHERE x.side = 'mid'), COUNT(*) FILTER (WHERE x.side = 'miss'), NOW()
+            FROM jsonb_to_recordset(CAST(:basis AS jsonb)) AS x(symbol text, side text)
+            WHERE EXISTS (SELECT 1 FROM g)
+            GROUP BY x.symbol
+            ON CONFLICT (connection_id, symbol) DO UPDATE SET bid_hits = b.bid_hits + EXCLUDED.bid_hits, ask_hits = b.ask_hits + EXCLUDED.ask_hits,
+                mid_hits = b.mid_hits + EXCLUDED.mid_hits, misses = b.misses + EXCLUDED.misses, updated_at = EXCLUDED.updated_at
             RETURNING 1),
         c_put AS (     -- keyed by opening time: the forming candle is overwritten, never appended twice
             INSERT INTO mtapi_market_candles (connection_id, symbol, interval, open_time, open, high, low, close, tick_count, fetched_at)
@@ -254,12 +350,21 @@ async def save(store: SqlStore, connection_id: int, generation: int, owner: str,
         SELECT EXISTS (SELECT 1 FROM g) AS ok
     """, {"id": connection_id, "gen": generation, "o": owner,
           "symbols": _rows_json(symbols or []), "has_symbols": symbols is not None,
-          "quotes": _rows_json(quotes or []), "has_quotes": quotes is not None,
+          "quotes": _rows_json(quotes or []), "has_quotes": quotes is not None, "quote_scope": json.dumps(quote_scope or []),
+          "basis": json.dumps(basis or []),
           "candles": _rows_json(candles), "feeds": json.dumps(feeds), "watchlist": json.dumps(watchlist) if watchlist is not None else None})
     return bool(rows and rows[0]["ok"])
 
 
 # ── acquisition (worker only) ────────────────────────────────────────────────
+def _count_paths(client) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for path, _seconds in getattr(client, "timings", []) or []:
+        name = path.rsplit("/", 1)[-1]
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def _error_code(exc: BaseException) -> str:
     if isinstance(exc, api.Unauthorized):
         return "unauthorized"
@@ -295,6 +400,7 @@ async def run_pass(store: SqlStore, connection_id: int, feeds: list[dict], *, ow
     """Fetch the due market feeds of one connection and store them. Never raises for broker
     errors: each feed records its own state, and account sync is unaffected."""
     started = time.monotonic()
+    upstream: dict[str, int] = {}
     async with store.session() as session:
         opened = await store.open_pass(connection_id, owner, config.LEASE_SECONDS, claim_request=False)
         if opened is None:
@@ -317,6 +423,8 @@ async def run_pass(store: SqlStore, connection_id: int, feeds: list[dict], *, ow
             candle_rows: list[dict] = []
             outcome: list[dict] = []
             watchlist: list[str] | None = None
+            quote_scope: list[str] = []
+            forming: dict[str, Any] = {}
             now_ms = int(time.time() * 1000)
 
             def record(key: str, exc: BaseException | None, normal: int) -> None:
@@ -344,16 +452,35 @@ async def run_pass(store: SqlStore, connection_id: int, feeds: list[dict], *, ow
                         record("symbols", None, config.market_symbols_interval_seconds())
                     except Exception as exc:
                         record("symbols", exc, config.market_symbols_interval_seconds())
-                # 2) quotes (one batched request) and candles, side by side
+                # 2) quotes (ONE batched request shared by the ticker and every live chart) and candles, side by side
                 jobs: list[tuple[str, Any, int, dict | None]] = []
-                if "quotes" in by_key:
-                    wanted = watchlist if watchlist is not None else list(by_key["quotes"].get("watchlist") or [])
-                    if wanted:
-                        jobs.append(("quotes", client.quotes(wanted), config.market_quote_interval_seconds(), None))
+                context = feeds[0] if feeds else {}
+                live_now = set(context.get("live_symbols") or []) if config.market_live_enabled() else set()
+                live_due = [k for k in by_key if k.startswith(LIVE_PREFIX)] if config.market_live_enabled() else []
+                if not config.market_live_enabled():      # switched off: stop polling those feeds instead of finding them due forever
+                    outcome.extend({"key": k, "ok": False, "err": None, "due_in": 60.0, "drop": True} for k in by_key if k.startswith(LIVE_PREFIX))
+                # A live symbol's candle refresh takes a quote in the same pass: that is how the candle price side is verified.
+                basis_for = {f["symbol"] for k, f in by_key.items() if k.startswith("candles:") and f["symbol"] in live_now}
+                ticker_list = watchlist if watchlist is not None else list((by_key.get("quotes") or {}).get("watchlist") or context.get("ticker_watchlist") or [])
+                quote_keys: list[str] = []
+                wanted: list[str] = []
+                if "quotes" in by_key or (live_due and ticker_list):   # a live request carries the ticker along for free
+                    if ticker_list:
+                        wanted += ticker_list
+                        quote_keys.append("quotes")
                     elif "symbols" not in results or results["symbols"] == "ok":
                         # no instrument list yet (or nothing suitable): come back when there is one
                         outcome.append({"key": "quotes", "ok": False, "err": by_key["quotes"].get("last_error_code") if watchlist is None else None,
                                         "due_in": 5.0 if watchlist is None else float(config.market_symbols_interval_seconds()), "drop": False})
+                for key in live_due:
+                    quote_keys.append(key)
+                    wanted.append(by_key[key]["symbol"])
+                wanted += sorted(basis_for)
+                wanted = list(dict.fromkeys(s for s in wanted if s))
+                live_priority = bool(live_due or basis_for)
+                quote_scope = wanted
+                if wanted:
+                    jobs.append(("quotes", client.quotes(wanted, live=live_priority), config.market_quote_interval_seconds(), None))
                 for key, feed in by_key.items():
                     if not key.startswith("candles:"):
                         continue
@@ -362,19 +489,30 @@ async def run_pass(store: SqlStore, connection_id: int, feeds: list[dict], *, ow
                     # A short gap only needs the forming candle and its neighbours; anything longer reloads the window.
                     recent = age is not None and float(age) <= 2 * INTERVAL_SECONDS.get(interval, 60)
                     limit = 3 if recent else config.market_candle_window()
-                    jobs.append((key, client.candles(feed["symbol"], interval, range_to=now_ms, limit=limit), config.market_candle_interval_seconds(), feed))
+                    jobs.append((key, client.candles(feed["symbol"], interval, range_to=now_ms, limit=limit, live=feed["symbol"] in live_now),
+                                 config.market_candle_interval_seconds(), feed))
                 answers = await asyncio.gather(*(job[1] for job in jobs), return_exceptions=True)
+                upstream.update(_count_paths(client))
                 for (key, _, normal, feed), answer in zip(jobs, answers):
                     if isinstance(answer, BaseException):
                         if not isinstance(answer, Exception):
                             raise answer
-                        record(key, answer, normal)
+                        if key == "quotes":
+                            for k in quote_keys:
+                                record(k, answer, config.market_live_quote_interval_seconds() if k.startswith(LIVE_PREFIX) else normal)
+                        else:
+                            record(key, answer, normal)
                     elif key == "quotes":
                         quotes_rows = list({q.symbol: {"symbol": q.symbol, "alias": q.alias, "bid": q.bid, "ask": q.ask,
                                                        "provider_time": datetime.fromtimestamp(q.timestamp / 1000, tz=timezone.utc) if q.timestamp else None}
                                             for q in answer}.values())
-                        record(key, None, normal)
+                        for k in quote_keys:
+                            record(k, None, config.market_live_quote_interval_seconds() if k.startswith(LIVE_PREFIX) else normal)
                     else:
+                        if answer and feed["symbol"] in basis_for:
+                            newest = max(answer, key=lambda c: c.timestamp)
+                            if newest.timestamp + INTERVAL_SECONDS.get(feed["interval"], 60) * 1000 > now_ms:   # still forming
+                                forming[feed["symbol"]] = newest
                         merged = {c.timestamp: c for c in answer}         # duplicates by opening time: the last one wins
                         candle_rows.extend({"symbol": feed["symbol"], "interval": feed["interval"],
                                             "open_time": datetime.fromtimestamp(ts / 1000, tz=timezone.utc), "open": c.open, "high": c.high,
@@ -384,16 +522,25 @@ async def run_pass(store: SqlStore, connection_id: int, feeds: list[dict], *, ow
                 # The token itself is no longer accepted. Same handling as account sync: ask for a new one.
                 await store.set_status(connection_id, "needs_reauth", "unauthorized", only_from=("active",))
                 return results
+            basis_rows = []
+            if quotes_rows is not None:
+                by_symbol = {row["symbol"]: row for row in quotes_rows}
+                for symbol, candle in forming.items():
+                    quote = by_symbol.get(symbol)
+                    if quote is not None:
+                        basis_rows.append({"symbol": symbol, "side": basis_sample(candle.close, quote["bid"], quote["ask"])})
             if not await save(store, connection_id, generation, owner, symbols=symbols_rows, quotes=quotes_rows, candles=candle_rows,
-                              feeds=outcome, watchlist=watchlist):
+                              feeds=outcome, watchlist=watchlist, quote_scope=quote_scope if quotes_rows is not None else None, basis=basis_rows):
                 return {"skipped": "fenced"}
             opened = None                                         # the save released the lease
             return results
         finally:
             if opened is not None:
                 await store.release_lease(connection_id, owner)
-            logger.info("matchtrader market pass connection=%s seconds=%s feeds=%s db_calls=%s", connection_id,
-                        round(time.monotonic() - started, 3), len(feeds), session.db_calls)
+            # upstream=: broker requests this pass by endpoint (no symbols, no prices): request volume can be read from logs.
+            logger.info("matchtrader market pass connection=%s seconds=%s feeds=%s db_calls=%s upstream=%s", connection_id,
+                        round(time.monotonic() - started, 3), len(feeds), session.db_calls,
+                        ",".join(f"{k}:{v}" for k, v in sorted(upstream.items())) or "none")
 
 
 async def run_due_once(store: SqlStore, *, client_factory, owner: str) -> int:
@@ -558,6 +705,89 @@ async def read_candles(store: SqlStore, connection_id: int, user_id: str, *, sym
             # The newest ``limit`` candles only. Never presented as the instrument's full history.
             "window": {"count": len(candles), "limit": config.market_candle_window(), "is_complete_history": False,
                        "first_open_time": _ms_iso(candles[0]["t"]) if candles else None, "last_open_time": _ms_iso(candles[-1]["t"]) if candles else None},
+            "status": status, "detail": detail, "last_success_at": _iso((feed or {}).get("last_success_at")),
+            "last_error": (feed or {}).get("last_error_code"), "_wake_worker": bool(row["created"]) or status == "loading"}
+
+
+async def read_live(store: SqlStore, connection_id: int, user_id: str, *, instrument: str) -> dict:
+    """The latest cached quote for a live instrument (US30), which broker symbol it is, and which
+    candle price side has been verified. Registers interest so the worker keeps the quote fresh.
+    Database only: however many tabs ask, the worker makes one broker request per interval."""
+    if instrument not in LIVE_INSTRUMENTS:
+        raise ValueError("unsupported instrument")
+    ttl, poll = config.market_interest_seconds(), config.market_live_quote_interval_seconds()
+    first = await store._one(f"""
+        WITH c AS (SELECT c.id, c.status FROM mtapi_connections c WHERE {_OWNED}),
+        touch AS (
+            INSERT INTO mtapi_market_feeds (connection_id, key, interest_until)
+            SELECT c.id, 'symbols', NOW() + make_interval(secs => CAST(:ttl AS double precision)) FROM c WHERE c.status = 'active'
+            ON CONFLICT (connection_id, key) DO UPDATE SET interest_until = EXCLUDED.interest_until RETURNING (xmax = 0) AS created)
+        SELECT c.status, NOW() AS now, (SELECT bool_or(created) FROM touch) AS created,
+               (SELECT to_jsonb(f) FROM mtapi_market_feeds f WHERE f.connection_id = c.id AND f.key = 'symbols') AS symbols_feed,
+               (SELECT jsonb_agg(to_jsonb(s) ORDER BY s.symbol) FROM mtapi_market_symbols s WHERE s.connection_id = c.id) AS symbols
+        FROM c
+    """, {"id": connection_id, "user": user_id, "ttl": ttl})
+    if not first:
+        raise NotFound()
+    head = first[0]
+    now, offered = head["now"], head["symbols"] or []
+    base = {"connection_id": connection_id, "instrument": instrument, "mode": "polling", "poll_interval_seconds": poll,
+            "server_time": _iso(now), "quote": None, "price_basis": {"side": "unverified", "samples": None},
+            "last_success_at": None, "last_error": None}
+    if not offered:
+        symbols_feed = _feed(head["symbols_feed"])
+        status, detail = feed_status(symbols_feed, has_data=False, now=now, poll_seconds=poll)
+        if head["status"] != "active":
+            status, detail = "unavailable", "This connection is not active, so market data is not being loaded."
+        return {**base, "resolution": {"status": "pending", "symbol": None, "candidates": []}, "status": status, "detail": detail,
+                "_wake_worker": bool(head["created"]) or status == "loading"}
+    resolved = resolve_instrument(offered, instrument)
+    chosen = resolved["symbol"]
+    resolution = {"status": resolved["status"], "candidates": resolved["candidates"],
+                  "symbol": None if chosen is None else {"symbol": chosen["symbol"], "alias": chosen.get("alias") or chosen["symbol"],
+                                                        "description": chosen.get("description"), "price_precision": chosen.get("price_precision"),
+                                                        "session_open": chosen.get("session_open")}}
+    if chosen is None:
+        detail = (f"This account offers several instruments that could be {instrument}: "
+                  + ", ".join(c["symbol"] for c in resolved["candidates"]) + ". None was picked.") if resolved["status"] == "ambiguous" \
+            else f"This account does not offer {instrument} (looked for {', '.join(LIVE_INSTRUMENTS[instrument])})."
+        return {**base, "resolution": resolution, "status": "unavailable", "detail": detail, "_wake_worker": False}
+    key = f"{LIVE_PREFIX}{instrument}"
+    rows = await store._one(f"""
+        WITH c AS (SELECT c.id, c.status FROM mtapi_connections c WHERE {_OWNED}),
+        touch AS (
+            INSERT INTO mtapi_market_feeds (connection_id, key, symbol, interest_until)
+            SELECT c.id, CAST(:key AS text), CAST(:symbol AS text), NOW() + make_interval(secs => CAST(:ttl AS double precision))
+            FROM c WHERE c.status = 'active'
+            ON CONFLICT (connection_id, key) DO UPDATE SET interest_until = EXCLUDED.interest_until, symbol = EXCLUDED.symbol,
+                next_due_at = CASE WHEN mtapi_market_feeds.symbol IS DISTINCT FROM EXCLUDED.symbol THEN NOW() ELSE mtapi_market_feeds.next_due_at END
+            RETURNING (xmax = 0) AS created)
+        SELECT (SELECT bool_or(created) FROM touch) AS created,
+               (SELECT to_jsonb(f) FROM mtapi_market_feeds f WHERE f.connection_id = c.id AND f.key = CAST(:key AS text)) AS feed,
+               (SELECT jsonb_build_object('bid', q.bid::text, 'ask', q.ask::text, 'provider_time', q.provider_time, 'fetched_at', q.fetched_at)
+                FROM mtapi_market_quotes q WHERE q.connection_id = c.id AND q.symbol = CAST(:symbol AS text)) AS quote,
+               (SELECT to_jsonb(b) FROM mtapi_market_price_basis b WHERE b.connection_id = c.id AND b.symbol = CAST(:symbol AS text)) AS basis
+        FROM c
+    """, {"id": connection_id, "user": user_id, "key": key, "symbol": chosen["symbol"], "ttl": ttl})
+    if not rows:
+        raise NotFound()
+    row = rows[0]
+    feed, quote, basis = _feed(row["feed"]), row["quote"], row["basis"] or {}
+    if feed and feed.get("symbol") != chosen["symbol"]:
+        feed = None                     # the broker's symbol changed: nothing fetched for the new one yet
+    status, detail = feed_status(feed, has_data=bool(quote), now=now, poll_seconds=poll, session_open=chosen.get("session_open"),
+                                 stale_after=max(3 * poll, 20))
+    if head["status"] != "active":
+        status, detail = ("unavailable", "This connection is not active, so prices are not being refreshed.") if not quote else ("stale", "This connection is not active; this price is no longer refreshed.")
+    quote_out = None
+    if quote:
+        provider = _parse_ts(quote["provider_time"]) if isinstance(quote.get("provider_time"), str) else quote.get("provider_time")
+        quote_out = {"bid": quote.get("bid"), "ask": quote.get("ask"), "provider_time": _iso(provider),
+                     "provider_time_ms": int(provider.timestamp() * 1000) if provider else None, "fetched_at": _iso_text(quote.get("fetched_at"))}
+    samples = {k: int(basis.get(f"{k}_hits") or 0) for k in ("bid", "ask", "mid")}
+    samples["miss"] = int(basis.get("misses") or 0)
+    return {**base, "resolution": resolution, "quote": quote_out,
+            "price_basis": {"side": basis_verdict(basis), "samples": samples, "min_samples": BASIS_MIN_SAMPLES},
             "status": status, "detail": detail, "last_success_at": _iso((feed or {}).get("last_success_at")),
             "last_error": (feed or {}).get("last_error_code"), "_wake_worker": bool(row["created"]) or status == "loading"}
 
