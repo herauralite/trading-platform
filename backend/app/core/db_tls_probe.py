@@ -12,6 +12,8 @@ Checks:
   public-ca/verify-full      certifi bundle, chain + host name (the strict default for public hosts)
   configured-ca/verify-ca    TALITRADE_DB_SSL_ROOT_CERT(_PEM), chain only          (if a CA is configured)
   configured-ca/verify-full  TALITRADE_DB_SSL_ROOT_CERT(_PEM), chain + host name   (if a CA is configured)
+  ... x509_strict=off         the same with only OpenSSL's strict RFC 5280 profile flag cleared (what
+                             TALITRADE_DB_SSL_X509_STRICT=off does); chain and host name are still checked
   presented-ca/verify-full   the self-signed root the server itself sent, chain + host name. This one proves
                              nothing about trust (the CA came over the same connection); it only shows whether
                              the certificate NAMES the host, i.e. whether verify-full can ever pass with that CA.
@@ -96,10 +98,13 @@ def presented_chain(host: str, port: int) -> list[dict[str, Any]]:
     return [_describe(der) for der in chain]
 
 
-def check(host: str, port: int, *, cafile: str | None = None, cadata: str | None = None, hostname: bool) -> str:
+def check(host: str, port: int, *, cafile: str | None = None, cadata: str | None = None, hostname: bool,
+          x509_strict: bool = True) -> str:
     ctx = ssl.create_default_context(cafile=cafile, cadata=cadata)
     ctx.verify_mode = ssl.CERT_REQUIRED
     ctx.check_hostname = hostname
+    if not x509_strict:   # same flag TALITRADE_DB_SSL_X509_STRICT=off clears in app.core.database
+        ctx.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
     try:
         with _tls_socket(host, port, ctx, host):
             return "PASS"
@@ -117,10 +122,16 @@ def probe(url: str, *, root_cert: str | None = None, root_cert_pem: str | None =
     if root_cert or root_cert_pem:
         checks["configured-ca/verify-ca"] = check(host, port, cafile=root_cert, cadata=root_cert_pem, hostname=False)
         checks["configured-ca/verify-full"] = check(host, port, cafile=root_cert, cadata=root_cert_pem, hostname=True)
+        checks["configured-ca/verify-ca x509_strict=off"] = check(host, port, cafile=root_cert, cadata=root_cert_pem,
+                                                                  hostname=False, x509_strict=False)
+        checks["configured-ca/verify-full x509_strict=off"] = check(host, port, cafile=root_cert, cadata=root_cert_pem,
+                                                                    hostname=True, x509_strict=False)
     roots = [c for c in chain if c["self_signed"]]
     if roots:
         pem = ssl.DER_cert_to_PEM_cert(roots[-1]["_der"])
         checks["presented-ca/verify-full (names only, not trust)"] = check(host, port, cadata=pem, hostname=True)
+        checks["presented-ca/verify-full x509_strict=off (names only, not trust)"] = check(
+            host, port, cadata=pem, hostname=True, x509_strict=False)
         report["_presented_ca_pem"] = pem
     report["checks"] = checks
     return report
