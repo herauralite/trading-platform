@@ -29,14 +29,18 @@ session tokens.
 Owner: repository owner. Claude is not authorized to rotate production credentials. Never paste a
 credential into chat, an issue, a PR or a log. Production API service = Railway `scintillating-connection`.
 
-### Status (2026-11-26)
+### Status (2026-11-26, 04:20Z)
+
+How the checks were made (no values anywhere): SHA-256 of each value committed in `backend/.env` history was
+computed locally; inside the production API container a one-off script compared the hashes of the live variables
+against them and printed only `True`/`False`.
 
 | Credential | State | Evidence (no values) |
 |---|---|---|
-| Production DB (`DATABASE_URL`, Railway Postgres on `*.railway.internal`) | **Rotated** by the owner (no further regeneration) | Railway redeploys 2026-11-26 00:23Z ok, 00:28Z failed (`InvalidPasswordError`), 01:03Z ok; `/health/ready` and `/health/db` 200. Linked-account sync confirmation pending. |
-| Historical Neon `DATABASE_URL` (the value in history) | **Unknown**: production no longer uses Neon | Owner: delete the Neon project/role, or reset its password, so the leaked DSN no longer works. |
-| `TELEGRAM_BOT_TOKEN` | Not rotated | Steps in 1.1 |
-| `SECRET_KEY` | Not rotated; tooling live since #155 (4b2dab5) | Steps in 1.2 |
+| Production DB (`DATABASE_URL`, Railway Postgres on `*.railway.internal`) | **Rotated** by the owner | Redeploys 2026-11-26 00:23Z ok, 00:28Z failed (`InvalidPasswordError`), 01:03Z ok; health 200; linked-account sync confirmed by the owner. Live value is not any committed DSN (`LEAKED_DATABASE_URL_IN_USE=False`). |
+| Historical Neon `DATABASE_URL` (both values in history) | **Not in use; revocation unconfirmed** | Production does not use it (above) and `diplomatic-manifestation` has no variables at all. Owner: delete the Neon project or role, or reset its password, and record that here. |
+| `TELEGRAM_BOT_TOKEN` | **Leaked token revoked** (rotation complete) | Live token differs from the committed one (`LEAKED_TELEGRAM_TOKEN_IN_USE=False`) but belongs to the same bot (`SAME_BOT_ID_AS_LEAKED_TOKEN=True`). Telegram keeps one valid token per bot, so the committed token was revoked. The live token works: webhook registered (HTTP 200) on every deploy, and the live trade alert passed. |
+| `SECRET_KEY` | **Committed value not in use; no rotation required for the leak** | `LEAKED_SECRET_KEY_IN_USE=False`; live key is 32 characters, 32 distinct, not a placeholder; `SECRET_KEY_PREVIOUS` unset. Sessions forged with the committed value are rejected, and stored credentials are not encrypted with it (sync works). Rotate only if the *current* value is suspected exposed: steps in 1.2. |
 
 ### 1.1 Telegram bot token
 
@@ -95,7 +99,9 @@ The rewrite only shortens how long the data stays exposed. Clones, forks, caches
 may already have copies. **Do it only after every credential in 1. is rotated, and only with explicit
 owner approval: it force-pushes every branch.**
 
-Inventory (2026-11-26, read-only): 151 remote branches, 131 of which contain `a88818d`. A full-history
+Inventory (2026-11-26 04:20Z, read-only): **all 155 branches, all 148 `refs/pull/*` refs and all 13 other open
+PRs** (#145, #141, #138, #136, #123, #98, #83, #35, #29, #14, #12, #5, and this one) contain leaked commits. No tags;
+no forks; one collaborator (the owner) plus the automated Codex branches. A full-history
 pickaxe scan for the Telegram-token and DSN-with-password patterns matches **only `backend/.env`**
 (commits `bd81baf`, `f41b4de`, `e1ed682`, `185a982`, `4658918`), so removing that one path is enough.
 `git-filter-repo` is not installed on the owner's machine (`pip install git-filter-repo`).
@@ -120,8 +126,10 @@ pickaxe scan for the Telegram-token and DSN-with-password patterns matches **onl
 * `.github/workflows/secret-scan.yml`: gitleaks scans the commits each PR or push adds, with findings
   redacted. It also fails if any `.env` file is tracked.
 * `.gitignore` ignores `.env.*` (except `.env.example`), `**/.env`, and key-material extensions.
-* Owner action, **still disabled as of 2026-11-26** (GitHub API `security_and_analysis`): turn on
-  secret scanning and push protection (Settings → Code security). Both are free on public repositories.
+* **GitHub secret scanning and push protection: still disabled** (GitHub API `security_and_analysis`,
+  2026-11-26 04:20Z). Tracked separately from the gitleaks CI job: gitleaks only scans commits CI sees, while
+  push protection blocks a secret before it reaches GitHub. Owner: Settings → Code security → enable both (free
+  on public repositories), then re-check the API.
 
 ## Remaining exposure until the items above are done
 

@@ -1,0 +1,26 @@
+# Disposable rehearsal of the proposed Railway Postgres certificate regeneration (#154 rollout step 2).
+# Runs Railway's published postgres-ssl image in throwaway containers on the runner. It never touches
+# production: no Railway credentials, no production hostnames, and a random password generated per run.
+name: pg-cert-rehearsal
+
+# Manual only: run it before a planned certificate regeneration/renewal (DATABASE_TLS_RUNBOOK.md).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rehearse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        major: ["16", "17", "18"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rehearse regeneration and rollback
+        env:
+          IMAGE: ghcr.io/railwayapp-templates/postgres-ssl:${{ matrix.major }}
+        run: bash scripts/pg_cert_rehearsal.sh
