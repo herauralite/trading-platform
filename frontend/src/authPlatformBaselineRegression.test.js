@@ -45,18 +45,12 @@ test('react app resolves account-presence from workspace inventory once hydrated
   assert.equal(appSource.includes('setWorkspaceApiHydrated(false)'), true)
 })
 
-// The homepage is public/landing.html (served at /). The earlier demo leaderboard flow was removed from it;
-// The waitlist still uses Telegram. The dashboard link goes to the same sign-in as a direct visit.
-test('homepage bootstraps Telegram config, links to the app sign-in and posts waitlist signups', async () => {
+test('homepage sends open-beta users directly to app sign-in', async () => {
   const landingHtml = await readFrontendFile('public/landing.html')
 
-  assert.equal(landingHtml.includes('<script src="/tali-api-base.js"></script>'), true)
-  assert.equal(landingHtml.includes("const configUrl = window.TaliApiBase.buildApiUrl('/auth/telegram/config');"), true)
-  assert.equal(landingHtml.includes("s.setAttribute('data-onauth', 'onHomepageTelegramAuth(user)');"), true)
-  assert.match(landingHtml, /<a href="\/app">[^<]*<\/a>/)
-  assert.doesNotMatch(landingHtml, /checkPassword|homepageAuthGate|requireHomepageAuth/)
-  assert.equal(landingHtml.includes("fetch(getBaseApiUrl() + '/waitlist/verified', {"), true)
-  assert.equal(landingHtml.includes('demo/leaderboard'), false)                       // the removed demo flow is not half-present
+  assert.ok(landingHtml.includes('Join the open beta'))
+  assert.ok(landingHtml.includes('href="/app">Join the open beta'))
+  assert.doesNotMatch(landingHtml, /checkPassword|homepageAuthGate|requireHomepageAuth|onHomepageTelegramAuth|waitlist\/verified|beta invite/i)
 })
 
 test('vercel rewrites preserve direct loads for /app, /app/accounts, and /app/connections', async () => {
