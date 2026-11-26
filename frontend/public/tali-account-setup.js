@@ -1286,14 +1286,9 @@
     return html;
   }
   // Routine refreshes redraw only when something changed, and then keep focus and any open explanation where they were.
-  var ringSnapshotTimes = Object.create(null);
-  function ringRefreshMotion(container, key) {
-    var snapshot = host.getSnapshot && host.getSnapshot(key);
-    var stamp = snapshot && snapshot.summary && snapshot.summary.fetched_at;
-    var previous = ringSnapshotTimes[key];
-    if (!stamp || !Number.isFinite(Date.parse(stamp))) return;
-    ringSnapshotTimes[key] = stamp;
-    if (!previous || Date.parse(stamp) <= Date.parse(previous) || Date.now() - Date.parse(stamp) > 90000) return;
+  // The halo sweep marks a figure that just changed on a circle already shown for this account: never on the first view,
+  // an account switch, a poll with the same figures, or a redraw for another reason.
+  function ringHalo(container) {
     if (reducedMotion()) return;
     var rail = container.querySelector('.su-ring-space');
     if (rail) { rail.classList.remove('is-refreshed'); void rail.offsetWidth; rail.classList.add('is-refreshed'); }
@@ -1326,8 +1321,9 @@
     if (m && m.raf && global.cancelAnimationFrame) global.cancelAnimationFrame(m.raf);
     container._ringMotion = null;
   }
+  // Returns true when a circle already shown for this account got a new figure.
   function ringMotion(container, key) {
-    var m = container._ringMotion;
+    var m = container._ringMotion, changed = false;
     if (!m || m.key !== key) { stopRingMotion(container); m = container._ringMotion = { key: key, rings: Object.create(null), raf: 0 }; }  // a new account starts clean
     var still = reducedMotion() || typeof global.requestAnimationFrame !== 'function', seen = Object.create(null), moving = false;
     Array.prototype.forEach.call(container.querySelectorAll('.pg-ring'), function (b) {
@@ -1336,6 +1332,7 @@
       var to = Number(dial.getAttribute('data-fill')) || 0, st = m.rings[id];
       seen[id] = true;
       if (!st) st = m.rings[id] = { shown: 0, vel: 0, to: 0, done: true };
+      else if (st.to !== to) changed = true;
       st.dial = dial;
       if (still) { st.shown = st.to = to; st.vel = 0; st.done = true; paintArc(dial, to, true); return; }
       if (st.to !== to) {
@@ -1349,6 +1346,7 @@
     Object.keys(m.rings).forEach(function (id) { if (!seen[id]) delete m.rings[id]; });
     if (still && m.raf && global.cancelAnimationFrame) { global.cancelAnimationFrame(m.raf); m.raf = 0; }
     if (moving && !m.raf) m.raf = global.requestAnimationFrame(function (t) { ringFrame(container, m, t); });
+    return changed;
   }
   function ringFrame(container, m, now) {
     m.raf = 0;
@@ -1371,15 +1369,14 @@
     ensureDom();
     loadAll(); loadOne(key);
     var html = cardHtml(key);
-    if (container._setupHtml === html && container.getAttribute('data-setup-key') === key) { ringRefreshMotion(container, key); return; }
+    if (container._setupHtml === html && container.getAttribute('data-setup-key') === key) return;
     var kept = cardState(container);
     container.setAttribute('data-setup-key', key);
     container.innerHTML = html;
     container._setupHtml = html;
     if (kept.key === key) restoreCardState(container, kept);   // another account's state never carries over
     bindCard(container);
-    ringMotion(container, key);
-    ringRefreshMotion(container, key);
+    if (ringMotion(container, key)) ringHalo(container);
   }
   function cardState(container) {
     var s = { key: container.getAttribute('data-setup-key'), help: [], rings: Array.prototype.map.call(container.querySelectorAll('.pg-ring'), function (b) { return b.getAttribute('data-id'); }) }, a = doc.activeElement;
