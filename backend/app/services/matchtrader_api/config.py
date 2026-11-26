@@ -126,7 +126,6 @@ def service_status(user_id: str | None = None) -> dict:
     status = {"secure_storage": crypto.is_configured(), "worker": worker_enabled(), "connect_enabled": connect_enabled() or pilot}
     status["accepting_connections"] = all(status.values())
     status["market_data"] = market_data_enabled() and worker_enabled()   # informational; not part of accepting_connections
-    status["market_live"] = market_live_enabled() and worker_enabled()  # US30 live candle updates (rollout flag)
     from app.services.account_setup import config as setup_config
     status["account_setup"] = setup_config.enabled()                     # the dashboard offers account setup only when this is on
     return status
