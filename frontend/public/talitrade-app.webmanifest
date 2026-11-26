@@ -1,0 +1,14 @@
+{
+  "id": "/app",
+  "name": "TaliTrade",
+  "short_name": "TaliTrade",
+  "start_url": "/app",
+  "scope": "/app",
+  "display": "standalone",
+  "background_color": "#070b10",
+  "theme_color": "#070b10",
+  "icons": [
+    { "src": "/talitrade-icon.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/talitrade-app-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
