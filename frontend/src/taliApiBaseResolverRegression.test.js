@@ -33,13 +33,10 @@ test('api base resolver only returns blank when same-origin proxy is explicitly 
   assert.equal(resolver.resolveApiBase(), '')
 })
 
-test('homepage and app auth flows use shared TaliApiBase backend strategy', async () => {
-  const landingHtml = await readFile(new URL('../public/landing.html', import.meta.url), 'utf8')
+test('app auth flow uses shared TaliApiBase backend strategy', async () => {
   const appHtml = await readFile(new URL('../app.html', import.meta.url), 'utf8')
   const publicAppHtml = await readFile(new URL('../public/app.html', import.meta.url), 'utf8')
 
-  assert.equal(landingHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
-  assert.equal(landingHtml.includes('window.TaliApiBase.resolveApiBase()'), true)
 
   assert.equal(appHtml.includes("window.TaliApiBase.buildApiUrl('/auth/telegram/config')"), true)
   assert.equal(appHtml.includes('return window.TaliApiBase.resolveApiBase();'), true)

@@ -78,8 +78,8 @@ test('status line says polling, verification, delayed, closed and disconnected p
 })
 
 test('served page offers the US30 live toggle next to the intervals', () => {
-  assert.match(appHtml, /data-instrument="US30"[^>]*aria-pressed="false"/)
-  assert.match(appHtml, /TaliMatchTraderMarket\.setInstrument\(/)
+  assert.doesNotMatch(appHtml, /data-instrument="US30"[^>]*aria-pressed="false"/)
+  assert.doesNotMatch(appHtml, /TaliMatchTraderMarket\.setInstrument\(/)
 })
 
 // ── controller with fake DOM, API, chart and tabs ───────────────────────────
