@@ -109,7 +109,7 @@ def _import_database(env_overrides):
 def test_import_fails_closed_in_production_with_require():
     result = _import_database({"DATABASE_URL": "postgresql+asyncpg://u:pw@db.example/x",
                                "RAILWAY_ENVIRONMENT_NAME": "production", "TALITRADE_DB_SSL_MODE": "require"})
-    assert result.returncode != 0 and "not allowed in production" in result.stderr
+    assert result.returncode != 0 and "refused in production" in result.stderr
 
 
 def test_import_fails_clearly_without_database_url():
@@ -293,6 +293,10 @@ async def main():
             chain.append(type(e).__name__)
             e = e.__cause__ or e.__context__
         print("CHAIN=" + ",".join(chain))
+        from app.core import health
+        print("TLS=" + str(health.tls_failure_reason(exc)))
+    else:
+        print("CONNECTED_TLS")
 
 asyncio.run(main())
 """
@@ -350,9 +354,44 @@ def test_only_real_railway_private_hosts_count_as_private(host, private):
     assert database.is_railway_private_host(host.strip().lower().rstrip(".")) is private
 
 
-def test_unset_mode_defaults_to_require_on_railway_private_network_even_in_production():
+def test_unset_mode_is_verify_full_on_railway_private_network_too():
+    # No silent downgrade: encrypted-but-unverified is an explicit owner exception, never a default.
     ctx = database.build_ssl_context(mode=None, production=True, host="postgres.railway.internal")
-    assert ctx.verify_mode == ssl.CERT_NONE   # the configuration production ran on before #144
+    assert ctx.verify_mode == ssl.CERT_REQUIRED and ctx.check_hostname is True
+
+
+def test_require_on_private_network_in_production_needs_the_recorded_owner_exception():
+    with pytest.raises(RuntimeError, match="owner-approved exception"):
+        database.build_ssl_context(mode="require", production=True, host="postgres.railway.internal",
+                                   unverified_exception="")
+    ctx = database.build_ssl_context(mode="require", production=True, host="postgres.railway.internal",
+                                     unverified_exception="railway-private-network")
+    assert ctx.verify_mode == ssl.CERT_NONE
+    assert "identity NOT verified" in database.describe_tls(ctx, host="postgres.railway.internal")
+
+
+def test_unknown_exception_value_stops_startup():
+    with pytest.raises(ValueError, match="may only be"):
+        database.build_ssl_context(mode="require", production=True, host="postgres.railway.internal",
+                                   unverified_exception="yes")
+
+
+def test_x509_strict_off_requires_a_pinned_ca():
+    with pytest.raises(ValueError, match="requires a pinned CA"):
+        database.build_ssl_context(mode="verify-full", production=True, host="postgres.railway.internal",
+                                   x509_strict="off")
+
+
+def test_x509_strict_off_clears_only_the_strict_flag(tmp_path):
+    _, ca_pem = _make_ca_and_server_cert(tmp_path)
+    on = database.build_ssl_context(mode="verify-full", root_cert_pem=ca_pem, host="postgres.railway.internal")
+    off = database.build_ssl_context(mode="verify-full", root_cert_pem=ca_pem, host="postgres.railway.internal",
+                                     x509_strict="off")
+    strict = getattr(ssl, "VERIFY_X509_STRICT", 0)
+    assert off.verify_mode == ssl.CERT_REQUIRED and off.check_hostname is True
+    assert (on.verify_flags & ~strict) == off.verify_flags and not (off.verify_flags & strict)
+    line = database.describe_tls(off, host="postgres.railway.internal")
+    assert "hostname=yes" in line and "x509_strict=off" in line and "railway.internal" not in line
 
 
 def test_unset_mode_stays_verify_full_for_public_hosts_in_production():
@@ -361,9 +400,10 @@ def test_unset_mode_stays_verify_full_for_public_hosts_in_production():
 
 
 @pytest.mark.parametrize("host", ["monorail.proxy.rlwy.net", "db.railway.internal.attacker.example", "10.0.0.5"])
-def test_require_is_still_refused_in_production_outside_the_private_network(host):
-    with pytest.raises(RuntimeError, match="not allowed in production"):
-        database.build_ssl_context(mode="require", production=True, host=host)
+def test_require_is_refused_in_production_outside_the_private_network_even_with_the_exception(host):
+    with pytest.raises(RuntimeError, match="refused in production"):
+        database.build_ssl_context(mode="require", production=True, host=host,
+                                   unverified_exception="railway-private-network")
 
 
 def test_explicit_verification_on_the_private_network_is_honoured(tmp_path):
@@ -374,6 +414,7 @@ def test_explicit_verification_on_the_private_network_is_honoured(tmp_path):
 
 
 def test_import_succeeds_in_production_on_railway_private_network_without_tls_settings():
+    # Import only builds the (verify-full) context; it does not connect.
     result = _import_database({"DATABASE_URL": "postgresql+asyncpg://u:pw@postgres.railway.internal:5432/railway",
                                "RAILWAY_ENVIRONMENT_NAME": "production"})
     assert result.returncode == 0, result.stderr
@@ -388,22 +429,25 @@ socket.getaddrinfo = _fake
 """ + _ENGINE_CONNECT
 
 
-@pytest.mark.parametrize("extra_env,expect_handshake", [
-    ({}, True),                                             # no TLS settings: private-network default
-    ({"TALITRADE_DB_SSL_MODE": "verify-full"}, False),      # explicit strict mode still refuses the private CA
+@pytest.mark.parametrize("extra_env,expect_handshake,expect_text", [
+    ({}, False, "TLS=verify_code="),                        # no TLS settings: verify-full, private CA refused
+    ({"TALITRADE_DB_SSL_MODE": "require"}, False, "owner-approved exception"),   # refused at import
+    ({"TALITRADE_DB_SSL_MODE": "require",                   # explicit owner exception: encrypted, unverified
+      "TALITRADE_DB_TLS_UNVERIFIED_EXCEPTION": "railway-private-network"}, True, "TLS=None"),
 ])
-def test_engine_with_production_settings_on_the_railway_private_name(fake_postgres_tls, extra_env, expect_handshake):
+def test_engine_with_production_settings_on_the_railway_private_name(fake_postgres_tls, extra_env, expect_handshake,
+                                                                     expect_text):
     """The 2026-11-24 outage, end to end: production env, DATABASE_URL host postgres.railway.internal, a server
-    whose certificate chains to a private CA. Default settings must connect; explicit verify-full must refuse."""
+    whose certificate chains to a private CA. Defaults must refuse (no silent downgrade); only the recorded owner
+    exception connects without verification."""
     port, _, handshakes = fake_postgres_tls
     env = {k: v for k, v in os.environ.items() if not k.startswith(("TALITRADE_DB_SSL", "RAILWAY_", "TALITRADE_ENV"))}
     env.update({"DATABASE_URL": f"postgresql+asyncpg://u:pw@postgres.railway.internal:{port}/db",
                 "RAILWAY_ENVIRONMENT_NAME": "production", **extra_env})
     result = subprocess.run([sys.executable, "-c", _ENGINE_CONNECT_PRIVATE_NAME], cwd=BACKEND_DIR, env=env,
                             capture_output=True, text=True, timeout=60)
-    assert result.returncode == 0, result.stderr
-    assert ("SSLCertVerificationError" in result.stdout) is (not expect_handshake), result.stdout
-    assert bool(handshakes) is expect_handshake
+    assert bool(handshakes) is expect_handshake, result.stdout + result.stderr
+    assert expect_text in result.stdout + result.stderr, result.stdout + result.stderr
 
 
 def test_startup_log_names_the_certificate_failure_reason_without_the_host():
@@ -455,3 +499,159 @@ def test_import_warns_about_a_soon_expiring_pinned_ca(tmp_path):
                                "TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem})
     assert result.returncode == 0, result.stderr
     assert "pinned CA expires in 0 days" in result.stderr and "re-pin" in result.stderr
+
+
+# ── Railway postgres-ssl certificate profile, end to end through SQLAlchemy + asyncpg ──
+# Mirrors railwayapp-templates/postgres-ssl init-ssl.sh: root `openssl req -x509 -subj /CN=root-ca` (default v3_ca:
+# basicConstraints CA:TRUE, SKI/AKI, NO keyUsage) and a server certificate CN=localhost with
+# basicConstraints critical CA:TRUE, keyUsage digitalSignature/nonRepudiation/keyEncipherment/dataEncipherment,
+# SAN DNS:localhost (+ DNS:$RAILWAY_PRIVATE_DOMAIN when that was set at generation time). The server sends
+# leaf + root, as production does. Production today: SAN localhost only (probe, 2026-11-26).
+
+PRIVATE_NAME = "postgres.railway.internal"
+
+
+def _railway_profile_certs(directory, san_names):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    directory.mkdir(parents=True, exist_ok=True)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    ca_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "root-ca")])
+    ca = (x509.CertificateBuilder().subject_name(ca_name).issuer_name(ca_name).public_key(ca_key.public_key())
+          .serial_number(x509.random_serial_number()).not_valid_before(now - datetime.timedelta(minutes=1))
+          .not_valid_after(now + datetime.timedelta(days=820))
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), critical=False)
+          .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+          .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+          .sign(ca_key, hashes.SHA256()))
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    leaf = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")]))
+            .issuer_name(ca_name).public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now - datetime.timedelta(minutes=1)).not_valid_after(now + datetime.timedelta(days=820))
+            .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()), critical=False)  # OpenSSL 3 default
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(ca_key.public_key()), critical=False)
+            .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
+            .add_extension(x509.KeyUsage(digital_signature=True, content_commitment=True, key_encipherment=True,
+                                         data_encipherment=True, key_agreement=False, key_cert_sign=False,
+                                         crl_sign=False, encipher_only=False, decipher_only=False), critical=False)
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in san_names]), critical=False)
+            .sign(ca_key, hashes.SHA256()))
+
+    def pem(cert):
+        return cert.public_bytes(serialization.Encoding.PEM)
+    (directory / "chain.pem").write_bytes(pem(leaf) + pem(ca))
+    (directory / "server.key").write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                                                              serialization.NoEncryption()))
+    return pem(ca).decode()
+
+
+@contextlib.contextmanager
+def _railway_profile_server(directory, san_names):
+    ca_pem = _railway_profile_certs(directory, san_names)
+    server_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_ctx.load_cert_chain(directory / "chain.pem", directory / "server.key")
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    sock.listen(5)
+    stop, handshakes = threading.Event(), []
+
+    def serve():
+        sock.settimeout(0.2)
+        while not stop.is_set():
+            try:
+                conn, _ = sock.accept()
+            except OSError:
+                continue
+            try:
+                conn.settimeout(5)
+                if len(conn.recv(8)) == 8:
+                    conn.sendall(b"S")
+                    with server_ctx.wrap_socket(conn, server_side=True):
+                        handshakes.append(True)
+            except (ssl.SSLError, OSError):
+                pass
+            finally:
+                conn.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+    try:
+        yield sock.getsockname()[1], ca_pem, handshakes
+    finally:
+        stop.set()
+        thread.join(timeout=2)
+        sock.close()
+
+
+def _connect_private_name(port, env_overrides):
+    env = {k: v for k, v in os.environ.items()
+           if not k.startswith(("TALITRADE_DB_SSL", "TALITRADE_DB_TLS", "RAILWAY_", "TALITRADE_ENV"))}
+    env.update({"DATABASE_URL": f"postgresql+asyncpg://u:CANARY-tls-pw9@{PRIVATE_NAME}:{port}/db",
+                "RAILWAY_ENVIRONMENT_NAME": "production", **env_overrides})
+    result = subprocess.run([sys.executable, "-c", _ENGINE_CONNECT_PRIVATE_NAME], cwd=BACKEND_DIR, env=env,
+                            capture_output=True, text=True, timeout=60)
+    assert "CANARY-tls-pw9" not in result.stdout
+    return result.stdout + result.stderr
+
+
+def test_railway_profile_valid_chain_and_matching_name_connects_with_verify_full(tmp_path):
+    """Target configuration: pinned Railway CA, verify-full (default), strict profile flag off, server certificate
+    regenerated with the private domain in its SAN."""
+    with _railway_profile_server(tmp_path, ["localhost", PRIVATE_NAME]) as (port, ca_pem, handshakes):
+        out = _connect_private_name(port, {"TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem,
+                                           "TALITRADE_DB_SSL_X509_STRICT": "off"})
+        assert handshakes, out
+        assert "TLS=None" in out, out    # TLS verified; the fake server then fails the Postgres protocol, not TLS
+
+
+@pytest.mark.skipif(sys.version_info < (3, 13), reason="Python < 3.13 does not enable VERIFY_X509_STRICT by default")
+def test_railway_profile_with_strict_x509_reproduces_production_code_92(tmp_path):
+    with _railway_profile_server(tmp_path, ["localhost", PRIVATE_NAME]) as (port, ca_pem, handshakes):
+        out = _connect_private_name(port, {"TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem})
+        assert not handshakes, out
+        assert "TLS=verify_code=92" in out, out
+
+
+def test_railway_profile_untrusted_ca_is_refused(tmp_path):
+    with _railway_profile_server(tmp_path / "server", ["localhost", PRIVATE_NAME]) as (port, _, handshakes):
+        wrong_ca = _railway_profile_certs(tmp_path / "other", ["localhost", PRIVATE_NAME])   # another Railway-style CA
+        out = _connect_private_name(port, {"TALITRADE_DB_SSL_ROOT_CERT_PEM": wrong_ca,
+                                           "TALITRADE_DB_SSL_X509_STRICT": "off"})
+        assert not handshakes, out
+        assert "SSLCertVerificationError" in out and "TLS=verify_code=" in out, out
+
+
+def test_railway_profile_localhost_only_certificate_fails_hostname_check(tmp_path):
+    """Production's current certificate (SAN localhost only): the trusted chain passes, the name does not."""
+    with _railway_profile_server(tmp_path, ["localhost"]) as (port, ca_pem, handshakes):
+        out = _connect_private_name(port, {"TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem,
+                                           "TALITRADE_DB_SSL_X509_STRICT": "off"})
+        assert not handshakes, out
+        assert "TLS=verify_code=62 reason=Hostname mismatch" in out, out
+        assert PRIVATE_NAME not in out.split("TLS=", 1)[1].splitlines()[0]
+
+
+def test_probe_reports_strict_and_non_strict_results_for_the_railway_profile(tmp_path, capsys, monkeypatch):
+    with _railway_profile_server(tmp_path, ["localhost"]) as (port, ca_pem, _):
+        monkeypatch.setenv("DATABASE_URL", f"postgresql://u:CANARY-probe-pw10@127.0.0.1:{port}/db")
+        monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", ca_pem)
+        assert db_tls_probe.main([]) == 0
+        out = capsys.readouterr().out
+    assert "CANARY-probe-pw10" not in out
+    assert "check configured-ca/verify-ca x509_strict=off: PASS" in out
+    assert "check configured-ca/verify-full x509_strict=off: FAIL verify_code=" in out   # 127.0.0.1 not in SAN
+    if sys.version_info >= (3, 13):
+        assert "check configured-ca/verify-ca: FAIL verify_code=92" in out
+
+
+def test_railway_profile_default_trust_store_reproduces_production_code_19(tmp_path):
+    """Unset TLS settings in production (verify-full, public bundle) against Railway's self-signed root: the
+    engine refuses, exactly as the 2026-11-26 probe reported (code 19), with no handshake."""
+    with _railway_profile_server(tmp_path, ["localhost", PRIVATE_NAME]) as (port, _, handshakes):
+        out = _connect_private_name(port, {})
+        assert not handshakes, out
+        assert "TLS=verify_code=19 reason=self-signed certificate in certificate chain" in out, out

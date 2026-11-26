@@ -58,50 +58,79 @@ def is_railway_private_host(host: str) -> bool:
     return host.endswith(RAILWAY_PRIVATE_SUFFIX) and len(host) > len(RAILWAY_PRIVATE_SUFFIX)
 
 
+UNVERIFIED_EXCEPTION_ENV = "TALITRADE_DB_TLS_UNVERIFIED_EXCEPTION"
+UNVERIFIED_EXCEPTION_VALUE = "railway-private-network"
+X509_STRICT_ENV = "TALITRADE_DB_SSL_X509_STRICT"
+
+
 def effective_ssl_mode(mode: str | None = None, host: str | None = None) -> str:
-    """The TLS mode to use. Explicit TALITRADE_DB_SSL_MODE wins. Unset, it is verify-full, except on Railway's
-    private network, where Railway's Postgres presents a certificate from its own generated CA that public
-    trust stores cannot verify (see 2026-11-24: verify-full by default crash-looped production)."""
+    """The TLS mode to use: TALITRADE_DB_SSL_MODE if set, otherwise verify-full for every host.
+
+    There is deliberately no automatic downgrade for *.railway.internal. Encrypted-but-unverified TLS there is
+    an owner exception that has to be configured explicitly (see build_ssl_context). `host` is accepted for
+    call-site compatibility and ignored."""
     raw = mode if mode is not None else os.getenv("TALITRADE_DB_SSL_MODE")
     if raw is not None and raw.strip():
         return raw.strip().lower()
-    host = database_host() if host is None else host
-    return "require" if is_railway_private_host(host) else DEFAULT_DB_SSL_MODE
+    return DEFAULT_DB_SSL_MODE
+
+
+def _x509_strict(value: str | None) -> bool:
+    raw = (value if value is not None else os.getenv(X509_STRICT_ENV) or "on").strip().lower()
+    if raw in ("on", "1", "true", "yes"):
+        return True
+    if raw in ("off", "0", "false", "no"):
+        return False
+    raise ValueError(f"{X509_STRICT_ENV} must be 'on' or 'off'")
 
 
 def build_ssl_context(mode: str | None = None, root_cert: str | None = None, root_cert_pem: str | None = None,
-                      production: bool | None = None, host: str | None = None) -> ssl.SSLContext:
+                      production: bool | None = None, host: str | None = None,
+                      unverified_exception: str | None = None, x509_strict: str | None = None) -> ssl.SSLContext:
     """TLS settings for the database connection. Verification never silently falls back.
 
     TALITRADE_DB_SSL_MODE:
-      verify-full  (default for every host except *.railway.internal) the server certificate chain must
-                   validate AND match the host name in DATABASE_URL. Trust anchors:
-                   TALITRADE_DB_SSL_ROOT_CERT (PEM file path), or TALITRADE_DB_SSL_ROOT_CERT_PEM (PEM text),
-                   or the certifi public CA bundle (correct for providers with publicly trusted certificates).
-      verify-ca    chain must validate against the configured CA; host name is not compared. Use with a
-                   private CA whose server certificate does not name the host.
-      require      encrypted, server NOT authenticated. In production this is refused, except for a
-                   *.railway.internal host (private, WireGuard-encrypted network), where it is the default.
-    An unknown mode, an unreadable/invalid CA, or `require` to a non-private host in production stops startup."""
+      verify-full  (default, every host) the server certificate chain must validate AND match the host name in
+                   DATABASE_URL. Trust anchors: TALITRADE_DB_SSL_ROOT_CERT (PEM file path), or
+                   TALITRADE_DB_SSL_ROOT_CERT_PEM (PEM text), or the certifi public CA bundle.
+      verify-ca    chain must validate against the configured CA; host name is not compared.
+      require      ENCRYPTED, SERVER IDENTITY NOT VERIFIED. In production this is refused unless the owner has
+                   recorded the exception TALITRADE_DB_TLS_UNVERIFIED_EXCEPTION=railway-private-network AND the
+                   host is <name>.railway.internal (WireGuard-encrypted private network).
+    TALITRADE_DB_SSL_X509_STRICT (default on): Python 3.13+ enables OpenSSL's strict RFC 5280 profile checks,
+      which reject a CA certificate that has no keyUsage extension. Railway's postgres-ssl image creates its
+      root CA exactly that way (verify_code=92). `off` clears only that flag. Chain signatures, validity,
+      basicConstraints and (verify-full) the host name are still checked: this is OpenSSL's and libpq's default
+      policy. It is allowed only with a pinned CA, never with the public bundle.
+    An unknown value, an unreadable/invalid CA, or a refused combination stops startup."""
     host = database_host() if host is None else host
     mode = effective_ssl_mode(mode, host)
     root_cert = root_cert if root_cert is not None else (os.getenv("TALITRADE_DB_SSL_ROOT_CERT") or "").strip() or None
     root_cert_pem = root_cert_pem if root_cert_pem is not None else (os.getenv("TALITRADE_DB_SSL_ROOT_CERT_PEM") or "").strip() or None
     production = is_production_environment() if production is None else production
+    exception = (unverified_exception if unverified_exception is not None
+                 else os.getenv(UNVERIFIED_EXCEPTION_ENV) or "").strip().lower()
+    strict = _x509_strict(x509_strict)
     if mode not in DB_SSL_MODES:
         raise ValueError(f"TALITRADE_DB_SSL_MODE must be one of {', '.join(DB_SSL_MODES)}")
     if root_cert and root_cert_pem:
         raise ValueError("Set only one of TALITRADE_DB_SSL_ROOT_CERT and TALITRADE_DB_SSL_ROOT_CERT_PEM")
+    if exception and exception != UNVERIFIED_EXCEPTION_VALUE:
+        raise ValueError(f"{UNVERIFIED_EXCEPTION_ENV} may only be '{UNVERIFIED_EXCEPTION_VALUE}'")
     if mode == "require":
-        if production and not is_railway_private_host(host):
-            raise RuntimeError("TALITRADE_DB_SSL_MODE=require is not allowed in production for a database outside "
-                               "Railway's private network: use verify-full (default) so the server is authenticated")
+        if production and not (exception == UNVERIFIED_EXCEPTION_VALUE and is_railway_private_host(host)):
+            raise RuntimeError(
+                "TALITRADE_DB_SSL_MODE=require (server identity NOT verified) is refused in production. It needs an "
+                f"owner-approved exception: {UNVERIFIED_EXCEPTION_ENV}={UNVERIFIED_EXCEPTION_VALUE}, and the database "
+                "host must be on Railway's private network (*.railway.internal)")
         if root_cert or root_cert_pem:
             raise ValueError("A database root certificate is set but TALITRADE_DB_SSL_MODE is 'require': choose verify-ca or verify-full")
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
         return context
+    if not strict and not (root_cert or root_cert_pem):
+        raise ValueError(f"{X509_STRICT_ENV}=off requires a pinned CA (TALITRADE_DB_SSL_ROOT_CERT or _PEM)")
     if root_cert_pem:
         context = ssl.create_default_context(cadata=root_cert_pem)
     else:
@@ -109,7 +138,22 @@ def build_ssl_context(mode: str | None = None, root_cert: str | None = None, roo
     context.verify_mode = ssl.CERT_REQUIRED
     context.check_hostname = mode == "verify-full"
     context.minimum_version = ssl.TLSVersion.TLSv1_2
+    if not strict:
+        context.verify_flags &= ~getattr(ssl, "VERIFY_X509_STRICT", 0)
     return context
+
+
+def describe_tls(context: ssl.SSLContext, host: str | None = None) -> str:
+    """One sanitized line for the startup log: what is and is not verified. Never includes the host name."""
+    host = database_host() if host is None else host
+    pinned = bool((os.getenv("TALITRADE_DB_SSL_ROOT_CERT") or "").strip() or (os.getenv("TALITRADE_DB_SSL_ROOT_CERT_PEM") or "").strip())
+    if context.verify_mode == ssl.CERT_NONE:
+        return (f"Database TLS: encrypted, server identity NOT verified (mode=require, owner exception="
+                f"{(os.getenv(UNVERIFIED_EXCEPTION_ENV) or '').strip() or 'none'}, "
+                f"railway_private_network={is_railway_private_host(host)})")
+    strict = bool(context.verify_flags & getattr(ssl, "VERIFY_X509_STRICT", 0))
+    return (f"Database TLS: server identity verified (chain=yes, hostname={'yes' if context.check_hostname else 'no'}, "
+            f"trust={'pinned CA' if pinned else 'public CA bundle'}, x509_strict={'on' if strict else 'off'})")
 
 
 CA_EXPIRY_WARNING_DAYS = 60
@@ -139,11 +183,7 @@ if _ca_days is not None:
         "Database TLS: pinned CA expires in %s days%s", _ca_days,
         "; Railway regenerates its Postgres CA ~30 days before server-certificate expiry: re-pin "
         "TALITRADE_DB_SSL_ROOT_CERT_PEM before then" if _ca_days <= CA_EXPIRY_WARNING_DAYS else "")
-if ssl_context.verify_mode == ssl.CERT_NONE:
-    logger.warning("Database TLS: encrypted, server certificate NOT verified (mode=require, railway_private_network=%s)",
-                   is_railway_private_host(database_host()))
-else:
-    logger.info("Database TLS: certificate verification on (hostname check=%s)", ssl_context.check_hostname)
+(logger.warning if ssl_context.verify_mode == ssl.CERT_NONE else logger.info)(describe_tls(ssl_context))
 
 engine = create_async_engine(
     DATABASE_URL,
