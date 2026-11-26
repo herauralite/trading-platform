@@ -18,10 +18,6 @@
 main{overflow:hidden}
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}.button{transition:none}.button:hover{transform:none}}
 
-#homepageAuthGate{display:none;position:fixed;inset:0;z-index:1650;align-items:center;justify-content:center;padding:20px;}
-#homepageAuthGate.open{display:flex;}
-#homepageAuthGate.open #homepageAuthCard{animation:modalIn .24s cubic-bezier(.22,1,.36,1) forwards;}
-@keyframes modalIn{from{opacity:0;transform:scale(.96) translateY(14px)}to{opacity:1;transform:scale(1) translateY(0)}}
 .ui-icon{display:inline-block;width:1em;height:1em;vertical-align:-.13em;flex:none}.community-footer{display:grid;grid-template-columns:2fr 1fr 1fr;align-items:start;gap:32px}.community-footer h2{font-size:15px;margin:16px 0}.community-footer p,.community-footer section>a:not(.brand),.community-footer summary{font-size:13px;color:#aebfcb;line-height:1.7}.community-footer section>a{display:block;margin-bottom:8px}.community-footer .brand{display:flex}.community-footer p{max-width:350px}.community-footer summary{cursor:pointer}.community-footer small{grid-column:1/-1}@media(max-width:650px){.community-footer{grid-template-columns:1fr;gap:12px}}</style>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg"/>
 <meta property="og:url" content="https://www.talitrade.com"/>
@@ -47,10 +43,10 @@ main{overflow:hidden}
         <p class="eyebrow"><span class="status-dot"></span> BUILT FOR PROP FIRM TRADERS</p>
         <h1 id="hero-title">Built to keep<br>traders <span class="blue">funded.</span></h1>
         <p class="hero-intro">Your prop firm sets the rules.<br>You set your limits.</p>
-        <p class="hero-detail">Track your accounts and trades in one place. We are building personal risk plans and Telegram warnings to help you follow your limits, from your first challenge to your next payout.</p>
+        <p class="hero-detail">Track your prop-firm accounts, trade history, and challenge progress in one place. We are building personal risk plans and Telegram warnings to help you follow your limits, from your first challenge to your next payout.</p>
         <div class="hero-actions"><a class="button" href="#early-access">Join the waitlist <span aria-hidden="true"><svg class="ui-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19 19 5 M5 5h14v14"/></svg></span></a><a class="text-link" href="#how-it-works">Take a closer look <span aria-hidden="true"><svg class="ui-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v17 M5 13l7 7 7-7"/></svg></span></a></div>
         <p class="microcopy">Early access invites via Telegram. No card needed.</p>
-        <div class="hero-notes"><span><i><svg class="ui-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6L21 6"/></svg></i> No extension needed</span></div>
+        <div class="hero-notes"><span><i><svg class="ui-icon" aria-hidden="true" focusable="false" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 12 6 6L21 6"/></svg></i> No extension needed for Match-Trader</span></div>
       </div>
 
       <figure class="candle-stage"><canvas id="orbit" role="img" aria-label="A rotating holographic Earth with cyan candlesticks orbiting in front and behind"></canvas></figure>
@@ -65,38 +61,11 @@ main{overflow:hidden}
     <section class="faq wrap" id="questions"><div><p class="eyebrow">A FEW THINGS TO KNOW</p><h2>Before you<br>jump in.</h2></div><div class="faq-list"><details><summary>Who is TaliTrade for?<span>+</span></summary><p>TaliTrade is being built for prop firm traders who want their account information and trading history in one focused workspace.</p></details><details><summary>Which platforms can I connect?<span>+</span></summary><p>The current focus is Match-Trader. Your broker must enable Trader API access for your account. Support for a platform does not mean every broker using it is supported.</p></details><details><summary>Can TaliTrade place trades for me?<span>+</span></summary><p>This connection is for viewing and tracking data. Use a read-only API token. TaliTrade does not need permission to open, modify, or close your trades.</p></details><details><summary>How much trade history will I see?<span>+</span></summary><p>Available history varies by broker and account. Your workspace is being designed to make imported coverage clear, so you know which period you're reviewing.</p></details><details><summary>How do beta invites work?<span>+</span></summary><p>Early-access invitations will be sent in stages via Telegram. Joining the waitlist does not guarantee immediate access.</p></details></div></section>
   </main>
 
-  <div id="homepageAuthGate" style="display:none;position:fixed;inset:0;z-index:1650;align-items:center;justify-content:center;padding:20px;">
-  <div style="position:absolute;inset:0;background:rgba(2,6,14,0.88);backdrop-filter:blur(14px);" onclick="closeHomepageAuthGate()"></div>
-  <div id="homepageAuthCard" style="position:relative;z-index:1;max-width:420px;width:100%;border-radius:22px;background:linear-gradient(160deg,#0d1929,#08111e);border:1px solid rgba(45,174,255,0.15);padding:38px;box-shadow:0 60px 120px rgba(0,0,0,0.7),inset 0 1px 0 rgba(255,255,255,0.04);">
-    <div style="position:absolute;top:-80px;right:-60px;width:240px;height:240px;background:radial-gradient(circle,rgba(45,174,255,0.08),transparent 68%);pointer-events:none;"></div>
-    <button onclick="closeHomepageAuthGate()" style="position:absolute;top:16px;right:16px;width:30px;height:30px;border-radius:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.07);color:rgba(255,255,255,0.4);font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;">✕</button>
-
-    <div style="display:inline-flex;align-items:center;gap:7px;background:rgba(45,174,255,0.08);border:1px solid rgba(45,174,255,0.18);border-radius:999px;padding:5px 12px 5px 8px;margin-bottom:24px;">
-      <div style="width:7px;height:7px;border-radius:50%;background:#2daeff;box-shadow:0 0 8px #2daeff88;animation:livePulse 1.6s ease-in-out infinite;"></div>
-      <span style="font-size:11px;font-weight:700;color:#7dd3fc;letter-spacing:.8px;text-transform:uppercase;">Beta Access</span>
-    </div>
-
-    <h2 style="font-size:24px;font-weight:800;color:#f0f8ff;letter-spacing:-.6px;line-height:1.1;margin-bottom:8px;">Enter access password</h2>
-    <p style="font-size:14px;color:rgba(148,163,184,0.85);line-height:1.6;margin-bottom:26px;">TaliTrade is currently in private beta. Enter your password to continue.</p>
-
-    <label style="display:block;font-size:10px;font-weight:800;color:rgba(148,163,184,0.6);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;">Password</label>
-    <div id="pwInputWrap" style="display:flex;align-items:center;background:rgba(0,0,0,0.3);border:1.5px solid rgba(255,255,255,0.08);border-radius:12px;overflow:hidden;transition:border-color .2s,box-shadow .2s;margin-bottom:10px;">
-      <input id="pwInput" type="password" placeholder="••••••••••••" autocomplete="off" style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f0ff;font-family:'JetBrains Mono',monospace;caret-color:#2daeff;" onkeydown="if(event.key==='Enter')checkPassword()"/>
-    </div>
-    <div id="pwError" style="font-size:12px;color:#f87171;margin-bottom:14px;display:none;">Incorrect password. Try again.</div>
-
-    <button onclick="checkPassword()" style="width:100%;padding:15px;background:linear-gradient(135deg,#60c8ff,#2daeff);border:none;border-radius:12px;font-size:15px;font-weight:800;color:#020e1c;cursor:pointer;font-family:'Inter',sans-serif;transition:opacity .15s;">
-      Continue →
-    </button>
-    <p style="text-align:center;margin-top:12px;font-size:12px;color:rgba(100,116,139,0.7);">Beta access only. Apply via waitlist to get access.</p>
-  </div>
-</div>
-
-<!-- FOOTER -->
+  <!-- FOOTER -->
 <footer class="community-footer wrap">
   <section aria-label="About TaliTrade"><a class="brand" href="#"><svg viewBox="0 0 36 36" aria-hidden="true"><path d="M3 7h21v6h-7v18h-6V13H3z" fill="currentColor"/><path d="M16 7h17v6h-5v18h-6V13h-6z" fill="currentColor" opacity=".35"/></svg><span>Tali<span class="blue">Trade</span></span></a><h2>About TaliTrade</h2><p>TaliTrade is built to help traders keep their funded accounts. We bring account history into view and are building tools to track personal limits alongside challenge and payout rules.</p></section>
   <section><h2>Community</h2><a href="https://www.instagram.com/talitrade/">Instagram · @talitrade</a><a href="https://x.com/talitrade">X · @talitrade</a><a href="https://t.me/talitrade">Channel · @talitrade</a></section>
-  <section><h2>Get in touch</h2><a href="mailto:support@talitrade.com">support@talitrade.com</a><a href="/app" onclick="return requireHomepageAuth(event, 'platform_entry')">Dashboard</a><details><summary>Privacy</summary><p>Waitlist signup records your verified Telegram ID. Signing in associates your Telegram ID with your trading accounts. Send /alerts in the bot to receive private updates, or /stop to turn those updates off. Email support with questions about your data.</p></details></section>
+  <section><h2>Get in touch</h2><a href="mailto:support@talitrade.com">support@talitrade.com</a><a href="/app">Dashboard</a><a href="/privacy">Privacy</a></section>
   <small>© 2026 TaliTrade</small>
 </footer>
   
@@ -212,7 +181,6 @@ async function hydrateDemoTelegramConfig() {
   }
 }
 
-let homepageAuthIntent = 'cta';
 let homepageAuthWidgetLoaded = false;
 
 function setHomepageAuthError(message) {
@@ -224,58 +192,10 @@ function setHomepageAuthError(message) {
   if (retryBtn) retryBtn.style.display = message ? 'block' : 'none';
 }
 
-function getHomepageAuthCopy(intent) {
-  if (intent === 'platform_entry') return 'Sign in with Telegram to open TaliTrade Platform.';
-  return 'Sign in with Telegram to continue.';
-}
-
-function openHomepageAuthGate(intent = 'cta') {
-  const modal = document.getElementById('homepageAuthGate');
-  if (modal) {
-    modal.style.display = 'flex';
-    modal.classList.add('open');
-    document.body.style.overflow = 'hidden';
-    setTimeout(()=>{ const i=document.getElementById('pwInput'); if(i) i.focus(); }, 200);
-  }
-}
-
-function closeHomepageAuthGate() {
-  const modal = document.getElementById('homepageAuthGate');
-  if (!modal) return;
-  modal.style.display = 'none';
-  modal.classList.remove('open');
-  document.body.style.overflow = '';
-  AUTH_DIAGNOSTICS.length = 0;
-  const diagEl = document.getElementById('homepageAuthDiag');
-  if (diagEl) { diagEl.textContent = ''; diagEl.style.display = 'none'; }
-}
-
 function retryHomepageAuthSetup() {
   homepageAuthWidgetLoaded = false;
   homepageConfigFailed = false;
   ensureHomepageAuthWidget();
-}
-
-function requireHomepageAuth(e, intent = 'platform_entry') {
-  if (e) e.preventDefault();
-  openHomepageAuthGate('platform_entry');
-  return false;
-}
-
-function checkPassword(){
-  const val = document.getElementById('pwInput').value;
-  const err = document.getElementById('pwError');
-  const wrap = document.getElementById('pwInputWrap');
-  if(val === 'tali2024dev'){
-    err.style.display = 'none';
-    closeHomepageAuthGate();
-    window.location.href = '/app';
-  } else {
-    err.style.display = 'block';
-    wrap.style.borderColor = 'rgba(239,68,68,0.5)';
-    document.getElementById('pwInput').value = '';
-    setTimeout(()=>{ wrap.style.borderColor = ''; }, 1500);
-  }
 }
 
 window.onHomepageTelegramAuth = async function(user){

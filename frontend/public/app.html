@@ -12,7 +12,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>TaliTrade</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
 :root{
@@ -153,15 +152,7 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .mbox-label{font-size:10px;font-weight:500;letter-spacing:1px;text-transform:uppercase;color:var(--t3);margin-bottom:5px;}
 .mbox-val{font-family:'JetBrains Mono',monospace;font-size:18px;font-weight:600;line-height:1;}
 .mbox-sub{font-size:10px;color:var(--t3);margin-top:3px;}
-.ticker-wrap{background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;padding:9px 0;margin-bottom:10px;position:relative;}
-.ticker-wrap::before,.ticker-wrap::after{content:'';position:absolute;top:0;bottom:0;width:32px;z-index:2;pointer-events:none;}
-.ticker-wrap::before{left:0;background:linear-gradient(90deg,var(--s1),transparent);}
-.ticker-wrap::after{right:0;background:linear-gradient(-90deg,var(--s1),transparent);}
-.ticker-inner{display:flex;gap:36px;white-space:nowrap;animation:scrollT 36s linear infinite;width:max-content;padding:0 12px;}
-.ticker-wrap:hover .ticker-inner{animation-play-state:paused;}
 @keyframes scrollT{from{transform:translateX(0);}to{transform:translateX(-50%);}}
-.tick-i{display:flex;align-items:center;gap:6px;font-family:'JetBrains Mono',monospace;font-size:10px;}
-.tick-s{color:var(--t2);font-weight:500;}.t-up{color:var(--green);}.t-dn{color:var(--red);}.t-sep{color:var(--t3);}.t-px{color:var(--text);}.t-flat{color:var(--t3);}
 .risk-stack{display:flex;flex-direction:column;gap:8px;margin-bottom:10px;}
 .rcard{background:var(--s1);border-radius:var(--r);border:1px solid var(--border);overflow:hidden;position:relative;transition:border-color .25s,transform .3s var(--out);}
 .rcard:hover{transform:translateY(-2px);}
@@ -445,94 +436,12 @@ body.compact-mode .sec-head{margin:8px 0 6px;}
 .lb-profit{font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:600;}
 .footer-card{display:flex;align-items:center;justify-content:space-between;padding:12px 4px 0;border-top:1px solid var(--border);}
 .footer-card span{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--t3);letter-spacing:0.5px;text-transform:uppercase;}
-#page-chart{padding:0 0 80px;}
-.chart-page-inner{max-width:680px;margin:0 auto;}
-.inst-scroll{overflow-x:auto;white-space:nowrap;padding:10px 12px 6px;border-bottom:1px solid var(--border);scrollbar-width:none;}
-.inst-scroll::-webkit-scrollbar{display:none;}
-.inst-track{display:inline-flex;gap:6px;}
-.inst-btn{display:inline-flex;flex-direction:column;align-items:flex-start;padding:7px 12px;border-radius:10px;border:1px solid var(--border);background:var(--s1);transition:border-color .2s,background .2s,transform .2s var(--spring);flex-shrink:0;min-width:80px;}
-.inst-btn:hover{border-color:var(--border2);transform:translateY(-1px);}
-.inst-btn.active{border-color:var(--blue);background:var(--blue-dim);}
-.inst-sym{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--text);line-height:1.2;}
-.inst-price{font-family:'JetBrains Mono',monospace;font-size:10px;line-height:1.2;}
-.inst-chg{font-family:'JetBrains Mono',monospace;font-size:9px;}
-.price-header{padding:12px 12px 8px;display:flex;align-items:flex-end;justify-content:space-between;gap:8px;}
-.ph-sym{font-size:13px;font-weight:600;color:var(--t2);margin-bottom:3px;}
-.ph-price{font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;line-height:1;color:var(--text);transition:color .3s;}
-.ph-price.up{color:var(--green);}.ph-price.dn{color:var(--red);}
-.ph-change{font-family:'JetBrains Mono',monospace;font-size:12px;margin-top:3px;}
-.ph-ohlc{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;}
-.ph-ohlc-cell{background:var(--s2);border-radius:6px;padding:5px 8px;text-align:right;}
-.ph-ohlc-l{font-size:8px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;}
-.ph-ohlc-v{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:500;}
-.tf-row{display:flex;gap:4px;padding:0 12px 10px;overflow-x:auto;scrollbar-width:none;}
-.tf-row::-webkit-scrollbar{display:none;}
-.tf-btn{font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:600;padding:5px 11px;border-radius:7px;border:1px solid var(--border);background:transparent;color:var(--t3);transition:all .2s var(--spring);flex-shrink:0;}
-.tf-btn:hover{border-color:var(--border2);color:var(--t2);}
-.tf-btn.active{background:var(--blue);border-color:var(--blue);color:#fff;}
-button.tf-btn{cursor:pointer;line-height:inherit;}
-.tf-btn:focus-visible,.chart-tool-btn:focus-visible{outline:2px solid var(--blue);outline-offset:2px;}
-.chart-container{margin:0 12px;border-radius:var(--r);overflow:hidden;border:1px solid var(--border);background:var(--s1);position:relative;}
-#chartEl{width:100%;height:300px;}
-.chart-tools{position:absolute;top:8px;right:8px;display:flex;gap:4px;z-index:10;}
-.chart-tool-btn{width:28px;height:28px;border-radius:7px;background:rgba(30,44,58,0.9);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;transition:background .18s,transform .2s var(--spring);backdrop-filter:blur(8px);}
-.chart-tool-btn:hover{background:var(--s3);border-color:var(--border2);}
-.chart-tool-btn.active{background:var(--blue-dim);border-color:var(--blue);}
-.chart-state-overlay{position:absolute;inset:46px 14px 14px;display:flex;align-items:center;justify-content:center;text-align:center;padding:16px;border:1px dashed var(--border);border-radius:10px;background:rgba(23,33,43,0.7);color:var(--t2);font-size:12px;line-height:1.6;z-index:9;backdrop-filter:blur(2px);}
-.chart-state-overlay.hidden{display:none;}
-.chart-state-title{font-size:13px;font-weight:600;color:var(--text);margin-bottom:4px;}
-.live-tag{position:absolute;top:8px;left:8px;z-index:10;display:flex;align-items:center;gap:5px;background:rgba(30,44,58,0.9);border:1px solid var(--border);border-radius:7px;padding:4px 9px;backdrop-filter:blur(8px);}
-.live-tag-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:dotBlink 1.4s ease-in-out infinite;}
-.live-tag-txt{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;color:var(--green);letter-spacing:1px;}
-.order-panel{margin:10px 12px 0;background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-.order-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border);}
-.order-tab{padding:11px;text-align:center;font-size:12px;font-weight:700;letter-spacing:0.5px;transition:background .2s,color .2s;color:var(--t3);}
-.order-tab.buy.active{background:rgba(77,205,138,0.12);color:var(--green);}
-.order-tab.sell.active{background:rgba(224,92,92,0.12);color:var(--red);}
-.order-tab:hover{background:var(--s2);}
-.order-body{padding:14px;}
-.order-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;}
-.order-field{background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;}
-.of-label{font-size:9px;font-weight:500;letter-spacing:1.5px;text-transform:uppercase;color:var(--t3);margin-bottom:5px;}
-.of-row{display:flex;align-items:center;justify-content:space-between;}
-.of-val{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:600;color:var(--text);}
-.of-controls{display:flex;gap:4px;}
-.of-btn{width:22px;height:22px;border-radius:5px;background:var(--s3);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--t2);transition:background .15s,transform .15s var(--spring);}
-.of-btn:hover{background:var(--blue-dim);color:var(--blue);transform:scale(1.1);}
-.risk-preview{background:var(--s2);border:1px solid var(--border);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
-.rp-label{font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:3px;}
-.rp-val{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:600;color:var(--text);}
-.exec-btn{width:100%;padding:13px;border-radius:10px;font-size:14px;font-weight:700;border:none;transition:transform .2s var(--spring),filter .2s;position:relative;overflow:hidden;}
-.exec-btn:hover{transform:translateY(-2px);filter:brightness(1.1);}
-.exec-btn.buy-btn{background:linear-gradient(135deg,#3de296,var(--green));color:#0d1f15;}
-.exec-btn.sell-btn{background:linear-gradient(135deg,#f07070,var(--red));color:#fff;}
-.exec-btn .btn-shine{position:absolute;inset:0;background:linear-gradient(105deg,transparent 35%,rgba(255,255,255,0.15) 50%,transparent 65%);transform:translateX(-100%);transition:transform 0s;}
-.exec-btn:hover .btn-shine{transform:translateX(100%);transition:transform .6s var(--out);}
-.depth-card{margin:10px 12px 0;background:var(--s1);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;}
-.depth-head{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border);}
-.depth-title{font-size:11px;font-weight:600;color:var(--t2);}
-.depth-row{display:grid;grid-template-columns:1fr 1fr;padding:3px 12px;position:relative;transition:background .15s;}
-.depth-row:hover{background:var(--s2);}
-.depth-bar-bg{position:absolute;top:0;bottom:0;}
-.depth-row.bid .depth-bar-bg{background:rgba(77,205,138,0.06);left:0;}
-.depth-row.ask .depth-bar-bg{background:rgba(224,92,92,0.06);right:0;}
-.depth-price{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;position:relative;z-index:1;}
-.depth-size{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3);text-align:right;position:relative;z-index:1;}
-.depth-price.bid{color:var(--green);}.depth-price.ask{color:var(--red);}
-.depth-mid{border-top:1px solid var(--border);padding:6px 14px;display:flex;align-items:center;justify-content:space-between;background:var(--s2);}
-.depth-mid-price{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;}
-.depth-mid-lbl{font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;}
 .profile-hero{text-align:center;padding:24px 18px;margin-bottom:16px;background:radial-gradient(ellipse at 50% 0%,rgba(42,171,238,.12),transparent 72%),var(--s1)}.profile-avatar{width:104px;height:104px;margin:16px auto 12px;border-radius:26px;display:grid;place-items:center;background:var(--s2);outline:1px solid var(--border2);outline-offset:3px;color:var(--blue);font-size:38px;font-weight:700}.profile-avatar img{width:100%;height:100%;object-fit:contain;border-radius:inherit}.profile-hero h1{font-size:24px;overflow-wrap:anywhere}.profile-hero p{color:var(--t2);overflow-wrap:anywhere}.profile-hero button{margin-top:16px;min-height:44px}.profile-details{border-bottom:1px solid var(--border);margin-bottom:8px}.profile-details summary{padding:15px 4px;cursor:pointer;font-weight:600;color:var(--text)}.profile-exit{display:block;margin:16px auto;min-height:44px}.settings-group [role=switch]:focus-visible,.settings-group [role=button]:focus-visible{outline:2px solid var(--blue);outline-offset:-2px}
 </style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════════
-     TWO-STEP GATE
-     Step 1: Dev password  (set TALI_DEV_PASSWORD below)
-     Step 2: Telegram link
-     Register domain with BotFather: /setdomain → www.talitrade.com
-═══════════════════════════════════════════════════════════════ -->
+<!-- Telegram sign-in -->
 <div id="gate" style="
   position:fixed;inset:0;z-index:99999;
   background:#17212b;
@@ -549,38 +458,13 @@ button.tf-btn{cursor:pointer;line-height:inherit;}
       <div style="width:40px;height:40px;border-radius:50%;background:linear-gradient(135deg,#2aabee,#1a8bc4);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#fff;flex-shrink:0;box-shadow:0 8px 24px rgba(42,171,238,0.3);">T</div>
       <div>
         <div style="font-size:17px;font-weight:700;color:#e8f4fd;letter-spacing:0.2px;">TaliTrade</div>
-        <div id="gate-subtitle" style="font-size:11px;color:#2aabee;letter-spacing:0.4px;font-weight:500;">Developer Access</div>
+        <div id="gate-subtitle" style="font-size:11px;color:#2aabee;letter-spacing:0.4px;font-weight:500;">Sign in</div>
       </div>
     </div>
 
-    <!-- ── STEP 1: Password ── -->
-    <div id="gate-step1" style="background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
-      <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Private Beta</div>
-      <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Enter the access code to continue.</div>
-
-      <div id="gate-input-wrap" style="display:flex;align-items:center;background:#17212b;border:1.5px solid rgba(255,255,255,0.07);border-radius:10px;overflow:hidden;transition:border-color .2s,box-shadow .2s;margin-bottom:12px;">
-        <svg style="margin-left:14px;flex-shrink:0;opacity:0.4;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#8bafc7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-        <input id="gate-input" type="password" placeholder="Access code" autocomplete="off"
-          style="flex:1;background:transparent;border:none;outline:none;padding:14px 16px;font-size:15px;color:#e8f4fd;font-family:'JetBrains Mono',monospace;caret-color:#2aabee;letter-spacing:2px;" />
-        <div id="gate-check" style="padding:0 14px;display:none;">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4dcd8a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
-      </div>
-
-      <div id="gate-pw-error" style="font-size:12px;color:#e05c5c;margin-bottom:12px;display:none;padding-left:4px;">Incorrect access code. Try again.</div>
-
-      <button onclick="gateSubmit()" style="width:100%;padding:14px;background:linear-gradient(135deg,#2aabee,#1a8bc4);border:none;border-radius:10px;font-size:14px;font-weight:700;color:#fff;cursor:pointer;letter-spacing:0.3px;transition:transform .2s cubic-bezier(.34,1.56,.64,1),filter .2s;font-family:'Inter',sans-serif;">
-        Continue →
-      </button>
-      <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
-        Not a developer? <a href="https://www.talitrade.com" style="color:#2aabee;text-decoration:none;">www.talitrade.com</a>
-      </div>
-    </div>
-
-    <!-- ── STEP 2: Telegram ── -->
     <div id="gate-step2" style="display:none;background:#1e2c3a;border:1px solid rgba(255,255,255,0.06);border-radius:16px;padding:28px;box-shadow:0 40px 80px rgba(0,0,0,0.4);">
-      <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Link Telegram</div>
-      <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Connect your Telegram account to enable alerts and account linking.</div>
+      <div style="font-size:20px;font-weight:700;color:#e8f4fd;margin-bottom:6px;letter-spacing:-0.3px;">Sign in with Telegram</div>
+      <div style="font-size:13px;color:#4d7490;margin-bottom:28px;line-height:1.5;">Sign in to open your workspace and connect your trading accounts.</div>
 
       <div id="tg-widget-wrap" style="display:flex;justify-content:center;margin-bottom:20px;min-height:44px;align-items:center;">
         <div id="tg-widget-loading" style="font-size:12px;color:#4d7490;">Loading widget…</div>
@@ -593,18 +477,17 @@ button.tf-btn{cursor:pointer;line-height:inherit;}
       <div id="gate-signing" role="status" aria-live="polite" style="display:none;text-align:center;padding:8px 0;font-size:13px;color:#2aabee;">Linking account…</div>
 
       <div style="text-align:center;margin-top:18px;font-size:11px;color:#2b3a4d;">
-        Your Telegram ID is used only for alerts. <a href="https://www.talitrade.com" style="color:#2aabee;text-decoration:none;">Privacy</a>
+        We use your Telegram ID to sign you in, link your accounts, and deliver alerts. <a href="/privacy" style="color:#2aabee;text-decoration:none;">Privacy</a>
       </div>
     </div>
 
     <div style="text-align:center;margin-top:24px;font-size:10px;color:#2b3a4d;letter-spacing:0.5px;text-transform:uppercase;">
-      TaliTrade Platform v4.0 · Internal Build
+      TaliTrade
     </div>
   </div>
 </div>
 
 <style>
-#gate-input-wrap:focus-within { border-color:rgba(42,171,238,0.45)!important; box-shadow:0 0 0 3px rgba(42,171,238,0.08)!important; }
 @keyframes gateOut { from{opacity:1;transform:scale(1);} to{opacity:0;transform:scale(1.04);pointer-events:none;} }
 @keyframes stepIn  { from{opacity:0;transform:translateY(10px);} to{opacity:1;transform:translateY(0);} }
 #gate.unlocking { animation: gateOut .45s cubic-bezier(.23,1,.32,1) forwards; }
@@ -614,14 +497,11 @@ button.tf-btn{cursor:pointer;line-height:inherit;}
 <script src="/tali-api-base.js"></script>
 <script src="/tali-matchtrader-api.js"></script>
 <script src="/tali-matchtrader-dashboard.js"></script>
-<script src="/tali-matchtrader-market.js"></script>
 <script src="/tali-account-setup.js"></script>
 <script>
 // ── CONFIG ───────────────────────────────────────────────────────────────────
-const TALI_DEV_PASSWORD = String((window.__TALI_CONFIG__ && window.__TALI_CONFIG__.devGatePassword) || '').trim();
 const TALI_USER_KEY = 'tali_user_v1';
 const TALI_SESSION_TOKEN_KEY = 'tali_session_token_v1';
-const TALI_PW_KEY = 'tali_pw_ok';
 const TALI_TG_DONE_KEY = 'tali_tg_done';
 const TALI_AUTH_STATE_KEY = 'tali_tg_oidc_state';
 const TALI_AUTH_NONCE_KEY = 'tali_tg_oidc_nonce';
@@ -849,7 +729,6 @@ function clearStoredSession() {
   localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
   localStorage.removeItem(TALI_USER_KEY);
   sessionStorage.removeItem(TALI_TG_DONE_KEY);
-  if (window.TaliMatchTraderMarket) TaliMatchTraderMarket.reset();
   if (window.TaliMatchTrader) TaliMatchTrader.reset();
 }
 
@@ -943,54 +822,16 @@ function handleSessionRejected() {
 }
 
 (function() {
-  if (!TALI_DEV_PASSWORD) {
-    sessionStorage.setItem(TALI_PW_KEY, '1');
-  }
-  const pwOk = sessionStorage.getItem(TALI_PW_KEY) === '1';
-  if (pwOk) {
-    document.getElementById('gate-step1').style.display = 'none';
-    document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
-    // An OIDC callback in the URL means a sign-in is completing: let the Telegram step finish it.
-    if (getSessionToken() && !parseTelegramOidcCallbackFromLocation()) {
-      // After the whole page is parsed: the restore touches state defined in later scripts.
-      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void restoreSessionOrShowSignIn(); });
-      else void restoreSessionOrShowSignIn();
-      return;
-    }
-    const notice = sessionStorage.getItem(TALI_SESSION_NOTICE_KEY);
-    sessionStorage.removeItem(TALI_SESSION_NOTICE_KEY);
-    void showTelegramStep().then(() => { if (notice === 'expired') setGateTelegramError(TALI_SESSION_EXPIRED_TEXT); });
+  // An OIDC callback means sign-in is completing. Let the Telegram step finish it.
+  if (getSessionToken() && !parseTelegramOidcCallbackFromLocation()) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => { void restoreSessionOrShowSignIn(); });
+    else void restoreSessionOrShowSignIn();
     return;
   }
-  document.getElementById('gate-input').addEventListener('keydown', function(e) {
-    if (e.key === 'Enter') gateSubmit();
-    document.getElementById('gate-pw-error').style.display = 'none';
-    document.getElementById('gate-input-wrap').style.borderColor = '';
-  });
-  document.getElementById('gate-input').addEventListener('input', function() {
-    document.getElementById('gate-check').style.display = this.value.length > 3 ? 'flex' : 'none';
-  });
+  const notice = sessionStorage.getItem(TALI_SESSION_NOTICE_KEY);
+  sessionStorage.removeItem(TALI_SESSION_NOTICE_KEY);
+  void showTelegramStep().then(() => { if (notice === 'expired') setGateTelegramError(TALI_SESSION_EXPIRED_TEXT); });
 })();
-
-window.gateSubmit = function() {
-  const val = document.getElementById('gate-input').value;
-  if (!TALI_DEV_PASSWORD || val === TALI_DEV_PASSWORD) {
-    sessionStorage.setItem(TALI_PW_KEY, '1');
-    document.getElementById('gate-step1').style.display = 'none';
-    document.getElementById('gate-subtitle').textContent = 'Step 2 of 2';
-    showTelegramStep();
-  } else {
-    const wrap = document.getElementById('gate-input-wrap');
-    wrap.style.borderColor = 'rgba(224,92,92,0.5)';
-    wrap.style.boxShadow = '0 0 0 3px rgba(224,92,92,0.08)';
-    document.getElementById('gate-pw-error').style.display = 'block';
-    document.getElementById('gate-input').value = '';
-    wrap.style.transform = 'translateX(-6px)';
-    setTimeout(() => { wrap.style.transform = 'translateX(6px)'; }, 60);
-    setTimeout(() => { wrap.style.transform = 'translateX(-4px)'; }, 120);
-    setTimeout(() => { wrap.style.transform = 'translateX(0)'; wrap.style.transition = 'all .2s'; }, 180);
-  }
-};
 
 function renderTelegramOidcButton() {
   const wrap = document.getElementById('tg-widget-wrap');
@@ -1517,9 +1358,7 @@ function applyUserToTopbar(user) {
       e.stopPropagation();
       localStorage.removeItem(TALI_USER_KEY);
       localStorage.removeItem(TALI_SESSION_TOKEN_KEY);
-      if (window.TaliMatchTraderMarket) TaliMatchTraderMarket.reset();
       if (window.TaliMatchTrader) TaliMatchTrader.reset();   // drop API account data, timers and in-flight requests
-      sessionStorage.removeItem(TALI_PW_KEY);
       sessionStorage.removeItem(TALI_TG_DONE_KEY);
       sessionStorage.removeItem(TALI_AUTH_STATE_KEY);
       sessionStorage.removeItem(TALI_AUTH_NONCE_KEY);
@@ -1660,13 +1499,7 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
       <div class="stat-box rip"><div class="stat-box-label">Open Positions</div><div class="stat-box-val txt-dim" id="ovPositions">—</div><div class="stat-box-sub" id="ovPositionsSub">Live account exposure</div></div>
     </div>
   </div>
-  <div class="ticker-wrap">
-    <div class="ticker-inner" id="tickerInner" data-market-status="message">
-      <span class="tick-i"><span class="tick-s">Markets</span><span class="t-flat">Connect a Match-Trader account to see its prices</span></span><span class="t-sep">·</span>
-      <span class="tick-i"><span class="tick-s">Markets</span><span class="t-flat">Connect a Match-Trader account to see its prices</span></span><span class="t-sep">·</span>
-    </div>
-  </div>
-  <div class="sec-head"><div class="sec-label">Risk Parameters</div><div class="sec-meta" id="riskMeta">10K 2-Step</div></div>
+  <div class="sec-head"><div class="sec-label">Risk Parameters</div><div class="sec-meta" id="riskMeta">—</div></div>
   <div class="sk-wrap" id="riskWrap">
     <!-- SKELETON risk stack -->
     <div class="risk-stack sk-fade sk-in" id="skelRisk" style="position:relative">
@@ -1713,42 +1546,42 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <!-- REAL risk stack -->
     <div class="risk-stack sk-fade sk-out" id="realRisk">
       <div class="rcard breach rip" id="rcard1">
-        <div class="rcard-head"><div class="rcard-icon" style="background:var(--red-dim);color:var(--red)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="rcard-info"><div class="rcard-title">Risk per Trade</div><div class="rcard-sub" id="r1sub">Max $300</div></div><div class="rcard-right"><div class="rpct txt-red"><span id="rp1">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-red" style="margin-top:3px" id="r1tag">—</div></div></div>
-        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r1usedLbl">$0 used</span><span id="r1leftLbl">$300 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-red" id="rb1" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
+        <div class="rcard-head"><div class="rcard-icon" style="background:var(--red-dim);color:var(--red)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></div><div class="rcard-info"><div class="rcard-title">Risk per Trade</div><div class="rcard-sub" id="r1sub">—</div></div><div class="rcard-right"><div class="rpct txt-red"><span id="rp1">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-red" style="margin-top:3px" id="r1tag">—</div></div></div>
+        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r1usedLbl">—</span><span id="r1leftLbl">—</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-red" id="rb1" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
         <div class="divider"></div>
-        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r1usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r1remVal">$300.00</div></div></div>
+        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r1usedVal">—</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r1remVal">—</div></div></div>
         <div class="divider"></div><div class="chip-row" id="r1chips"></div>
       </div>
       <div class="rcard breach rip" id="rcard2">
         <div class="rcard-head"><div class="rcard-icon" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/></svg></div><div class="rcard-info"><div class="rcard-title">Daily Loss Limit</div><div class="rcard-sub" id="r2sub">Max $500</div></div><div class="rcard-right"><div class="rpct txt-orange"><span id="rp2">0</span><span style="font-size:14px;opacity:.6">%</span></div><div class="tag tag-orange" style="margin-top:3px" id="r2tag">—</div></div></div>
-        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r2usedLbl">$0 used</span><span id="r2leftLbl">$500 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-orange" id="rb2" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
+        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r2usedLbl">—</span><span id="r2leftLbl">—</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-orange" id="rb2" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
         <div class="divider"></div>
-        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r2usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r2remVal">$500.00</div></div></div>
+        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val" id="r2usedVal">—</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r2remVal">—</div></div></div>
         <div class="divider"></div><div class="chip-row" id="r2chips"></div>
       </div>
       <div class="rcard safe-c rip" id="rcard3">
         <div class="rcard-head"><div class="rcard-icon" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="rcard-info"><div class="rcard-title">Overall Loss Limit</div><div class="rcard-sub" id="r3sub">Max $1,000</div></div><div class="rcard-right"><div class="rpct txt-dim"><span id="rp3">0</span><span style="font-size:14px;opacity:.5">%</span></div><div class="tag tag-blue" style="margin-top:3px" id="r3tag">Safe</div></div></div>
-        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r3usedLbl" style="color:var(--t3)">$0 used</span><span id="r3leftLbl">$1,000 left</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-blue" id="rb3" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
+        <div class="rbar-wrap"><div class="rbar-labels"><span class="uv" id="r3usedLbl" style="color:var(--t3)">—</span><span id="r3leftLbl">—</span></div><div class="bar-bg" style="margin-bottom:10px"><div class="bar-fill bar-blue" id="rb3" style="width:0%"></div><div class="bar-tick" style="left:50%"></div><div class="bar-tick" style="left:80%"></div></div></div>
         <div class="divider"></div>
-        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val txt-dim" id="r3usedVal">$0.00</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r3remVal">$1,000.00</div></div></div>
+        <div class="usd-row"><div class="usd-cell"><div class="usd-lbl">Used</div><div class="usd-val txt-dim" id="r3usedVal">—</div></div><div class="usd-cell"><div class="usd-lbl">Remaining</div><div class="usd-val" id="r3remVal">—</div></div></div>
         <div class="divider"></div><div class="chip-row" id="r3chips"></div>
       </div>
     </div>
   </div>
   <div class="alert-bar rip" id="alertBar">
     <div class="alert-ico" id="alertIco" style="background:var(--green-dim);border:1px solid rgba(77,205,138,0.2);color:var(--green)"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg></div>
-    <div style="flex:1"><div style="font-size:13px;font-weight:600" id="alertTitle">All limits safe</div><div style="font-size:11px;color:var(--t3)" id="alertSub">No alerts fired · monitoring active</div></div>
-    <div class="alert-pill" id="alertPill" style="color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)">0 alerts</div>
+    <div style="flex:1"><div style="font-size:13px;font-weight:600" id="alertTitle">Risk monitoring unavailable</div><div style="font-size:11px;color:var(--t3)" id="alertSub">Connect an account to see risk data.</div></div>
+    <div class="alert-pill" id="alertPill" style="color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)">—</div>
   </div>
 
-  <div class="footer-card"><span>TaliTrade v3.2</span><span id="footerTime">--:--:--</span><span id="footerAcct">10K 2-Step</span></div>
+  <div class="footer-card"><span>TaliTrade</span><span id="footerTime">--:--:--</span><span id="footerAcct">—</span></div>
 </div>
 
 <!-- NEWS -->
 <div id="page-news" class="page">
   <div class="sec-head"><div class="sec-label">High-Impact News</div><div class="sec-meta">DJI30 · NAS100 · SP500</div></div>
   <div id="newsList"><div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">Loading...</div></div>
-  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>News</span></div>
+  <div class="footer-card" style="margin-top:12px"><span>TaliTrade</span><span></span><span>News</span></div>
 </div>
 
 <!-- ANALYTICS -->
@@ -1780,14 +1613,14 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
   </div>
   <div class="sec-head"><div class="sec-label">Recent Trades</div><div class="sec-meta" id="recentTradesMeta"></div></div>
   <div class="card card-p" id="recentTradesEl"><div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading...</div></div>
-  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v1.0</span><span></span><span>Analytics</span></div>
+  <div class="footer-card" style="margin-top:12px"><span>TaliTrade</span><span></span><span>Analytics</span></div>
 </div>
 
 <!-- JOURNAL (merged into analytics, hidden standalone) -->
 <div id="page-journal" class="page" style="display:none!important">
   <div class="sec-head"><div class="sec-label">Trade Journal</div><div class="sec-meta" id="journalMeta">—</div></div>
   <div id="journalEntries"><div style="text-align:center;padding:48px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.4" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>Trades log automatically<br>when you close positions</div></div>
-  <div class="footer-card"><span>TaliTrade v3.2</span><span></span><span>Journal</span></div>
+  <div class="footer-card"><span>TaliTrade</span><span></span><span>Journal</span></div>
 </div>
 
 <!-- ACCOUNT -->
@@ -1802,9 +1635,8 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
   <div class="sec-head"><div class="sec-label">Preferences</div></div>
   <div class="settings-group">
     <div class="sg-item rip" id="prefCompactRow" role="switch" tabindex="0"><div class="sg-ico" style="background:var(--blue-dim);color:var(--blue)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><line x1="7" y1="9" x2="17" y2="9"/><line x1="7" y1="15" x2="14" y2="15"/></svg></div><div class="sg-info"><div class="sg-title">Compact display</div><div class="sg-sub" id="prefCompactSub">Default spacing</div></div><div class="toggle" data-pref-toggle="compact" id="prefCompactToggle"></div></div>
-    <div class="sg-item rip" id="prefChartRow" role="button" tabindex="0"><div class="sg-ico" style="background:var(--green-dim);color:var(--green)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div><div class="sg-info"><div class="sg-title">Chart style</div><div class="sg-sub" id="prefChartSub">Preferred style for market charts</div></div><div class="sg-right" id="prefChartMode" style="color:var(--t2);font-size:11px">Candle</div></div>
     <div class="sg-item rip" id="prefHistoryRow" role="switch" tabindex="0"><div class="sg-ico" style="background:var(--orange-dim);color:var(--orange)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">History filters</div><div class="sg-sub" id="prefHistorySub">Remember selected filter and date range</div></div><div class="tag" id="prefHistoryTag">Saved</div></div>
-    <div class="sg-item rip" id="openRulesRow" role="button" tabindex="0"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">10K 2-Step Master</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
+    <div class="sg-item rip" id="openRulesRow" role="button" tabindex="0"><div class="sg-ico" style="background:var(--s3);color:var(--t2)"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><circle cx="3" cy="6" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="3" cy="18" r="1" fill="currentColor" stroke="none"/></svg></div><div class="sg-info"><div class="sg-title">Trading Rules</div><div class="sg-sub" id="sgRulesSub">Not set up</div></div><div class="sg-right" style="color:var(--t3);font-size:16px">›</div></div>
   </div>
   <button type="button" id="profileSignOut" class="btn btn-ghost profile-exit">Sign out</button>
 </div>
@@ -1915,86 +1747,14 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
   <div class="card" id="leaderboardList">
     <div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">Loading leaderboard…</div>
   </div>
-  <div class="footer-card" style="margin-top:12px"><span>TaliTrade v3.2</span><span></span><span>Challenges</span></div>
+  <div class="footer-card" style="margin-top:12px"><span>TaliTrade</span><span></span><span>Challenges</span></div>
 </div>
 
 <!-- CHARTS -->
-<div id="page-chart" class="page">
-  <div class="chart-page-inner">
-    <div class="inst-scroll"><div class="inst-track" id="instTrack">
-      <div class="inst-btn active rip"><div class="inst-sym">Active Account</div><div class="inst-price" id="chartAcctId">No account</div><div class="inst-chg" id="chartAcctType">Connect account</div></div>
-      <div class="inst-btn rip"><div class="inst-sym">Source</div><div class="inst-price txt-blue" id="instSourceVal">Trade timeline</div><div class="inst-chg" id="instSourceSub">balanceAfter / equity</div></div>
-      <div class="inst-btn rip"><div class="inst-sym" id="instMarkersLabel">Markers</div><div class="inst-price txt-blue" id="instMarkersVal">Closed trades</div><div class="inst-chg" id="instMarkersSub">Win/Loss overlays</div></div>
-    </div></div>
-    <div class="price-header">
-      <div><div class="ph-sym" id="ph-sym">Account Equity · Legacy</div><div class="ph-price" id="ph-price">$—</div><div class="ph-change" id="ph-change">Waiting for active account data</div></div>
-      <div class="ph-ohlc">
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel0">Points</div><div class="ph-ohlc-v" id="ohlc-o">0</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel1">Trades</div><div class="ph-ohlc-v" id="ohlc-h">0</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel2">Wins</div><div class="ph-ohlc-v txt-green" id="ohlc-l">0</div></div>
-        <div class="ph-ohlc-cell"><div class="ph-ohlc-l" id="ohlcLabel3">Losses</div><div class="ph-ohlc-v txt-red" id="ohlc-v">0</div></div>
-      </div>
-    </div>
-    <div class="tf-row" id="chartIntervalRow" style="display:none" role="group" aria-label="Candle interval">
-      <button type="button" class="tf-btn rip" data-interval="M1" aria-pressed="false" aria-label="1 minute candles">M1</button><button type="button" class="tf-btn active rip" data-interval="M5" aria-pressed="true" aria-label="5 minute candles">M5</button><button type="button" class="tf-btn rip" data-interval="H1" aria-pressed="false" aria-label="1 hour candles">H1</button><button type="button" class="tf-btn rip" data-instrument="US30" aria-pressed="false" aria-label="US30 with live price updates" title="US30 (DJI30 on MetaTrader): the forming candle follows the broker's quotes">US30 live</button>
-    </div>
-    <div id="chartWindowNote" style="display:none;font-size:11px;color:var(--t3);padding:0 14px 8px;line-height:1.5"></div>
-    <div class="tf-row" id="chartRangeRow">
-      <div class="tf-btn rip" data-range="7d">7D</div><div class="tf-btn active rip" data-range="30d">30D</div>
-      <div class="tf-btn rip" data-range="all">All</div>
-    </div>
-    <div class="chart-container">
-      <div class="live-tag"><div class="live-tag-dot"></div><div class="live-tag-txt" id="chartLiveTag">LIVE</div></div>
-      <div class="chart-tools">
-        <div class="chart-tool-btn rip" id="toolCandle" role="button" tabindex="0" title="Candle view is available for Match-Trader API accounts" aria-label="Candle view is available for Match-Trader API accounts"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="8" y1="3" x2="8" y2="6"/><rect x="6" y="6" width="4" height="9" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="4" x2="16" y2="8"/><rect x="14" y="8" width="4" height="6" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg></div>
-        <div class="chart-tool-btn active rip" id="toolLine" role="button" tabindex="0" title="Line: account equity over time" aria-label="Line: account equity over time"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
-      </div>
-      <div id="chartStateOverlay" class="chart-state-overlay hidden"></div>
-      <div id="chartEl"></div>
-    </div>
-    <div class="order-panel" id="orderPanel">
-      <div class="order-tabs">
-        <div class="order-tab buy active rip" id="tabBuy">▲ BUY / LONG</div>
-        <div class="order-tab sell rip" id="tabSell">▼ SELL / SHORT</div>
-      </div>
-      <div class="order-body">
-        <div class="order-row">
-          <div class="order-field"><div class="of-label">Size (Lots)</div><div class="of-row"><div class="of-val" id="sizeVal">1.00</div><div class="of-controls"><div class="of-btn rip" id="sizeDown">−</div><div class="of-btn rip" id="sizeUp">+</div></div></div></div>
-          <div class="order-field"><div class="of-label">Order Type</div><div class="of-row"><div class="of-val" id="orderType">Market</div><div class="of-controls"><div class="of-btn rip" id="typeToggle">⇄</div></div></div></div>
-        </div>
-        <div class="order-row">
-          <div class="order-field"><div class="of-label">Stop Loss</div><div class="of-row"><div class="of-val txt-red" id="slVal">—</div><div class="of-controls"><div class="of-btn rip" id="slDown">−</div><div class="of-btn rip" id="slUp">+</div></div></div></div>
-          <div class="order-field"><div class="of-label">Take Profit</div><div class="of-row"><div class="of-val txt-green" id="tpVal">—</div><div class="of-controls"><div class="of-btn rip" id="tpDown">−</div><div class="of-btn rip" id="tpUp">+</div></div></div></div>
-        </div>
-        <div class="risk-preview">
-          <div><div class="rp-label">Risk $</div><div class="rp-val txt-red" id="riskDollar">—</div></div>
-          <div><div class="rp-label">Reward $</div><div class="rp-val txt-green" id="rewardDollar">—</div></div>
-          <div><div class="rp-label">R:R</div><div class="rp-val" id="rrRatio">—</div></div>
-          <div><div class="rp-label">Risk %</div><div class="rp-val" id="riskPct">—</div></div>
-          <div><div class="rp-label">Margin</div><div class="rp-val" id="marginReq">—</div></div>
-          <div><div class="rp-label">Limit Left</div><div class="rp-val txt-orange" id="tradeRiskLeft">—</div></div>
-        </div>
-        <button class="exec-btn buy-btn rip" id="execBtn" type="button"><span class="btn-shine"></span>Review BUY</button><p id="orderAccessStatus" role="status" style="font-size:11px;color:var(--t3);line-height:1.5;margin:10px 0 0">Order entry is not enabled on this server. No order will be sent.</p>
-      </div>
-    </div>
-    <div class="depth-card" id="depthCard">
-      <div class="depth-head"><div class="depth-title">Market Depth</div><div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--t3)">Spread: <span id="spreadVal" class="txt-blue">2.50</span></div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--border)"><div style="padding:4px 12px;font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase;border-right:1px solid var(--border)">SIZE · BID</div><div style="padding:4px 12px;font-size:9px;color:var(--t3);letter-spacing:1px;text-transform:uppercase">ASK · SIZE</div></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr" id="depthRows"></div>
-      <div class="depth-mid"><div class="depth-mid-lbl">Mid</div><div class="depth-mid-price" id="depthMid">17,234.25</div><div class="depth-mid-lbl">Last</div></div>
-    </div>
-    <div class="footer-card" style="margin:12px 12px 0"><span>TaliTrade v3.2</span><span></span><span>Charts</span></div>
-  </div>
-</div>
-
 <nav class="bnav">
   <div class="bnav-item active rip" data-page="dash">
     <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg></div>
     <div class="bnav-label">Dashboard</div>
-  </div>
-  <div class="bnav-item rip" data-page="chart">
-    <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="8" y1="4" x2="8" y2="7"/><rect x="6" y="7" width="4" height="8" rx="0.5"/><line x1="8" y1="15" x2="8" y2="20"/><line x1="16" y1="5" x2="16" y2="9"/><rect x="14" y="9" width="4" height="5" rx="0.5"/><line x1="16" y1="14" x2="16" y2="19"/></svg><div class="bnav-dot"></div></div>
-    <div class="bnav-label">Charts</div>
   </div>
   <div class="bnav-item rip" data-page="analytics">
     <div class="bnav-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/><line x1="2" y1="20" x2="22" y2="20"/></svg></div>
@@ -2047,7 +1807,6 @@ document.querySelectorAll('.bnav-item').forEach(item=>{
     document.querySelectorAll('.bnav-item').forEach(i=>i.classList.remove('active'));
     item.classList.add('active');
     showPage(p);
-    if(p==='chart')setTimeout(initChart,200);
     if(p==='analytics'){fetchAnalytics();fetchJournal();}
     if(p==='payout')fetchPayout();
     if(p==='news')fetchNews();
@@ -2081,7 +1840,6 @@ const historyState={
 const ACCOUNT_PREF_KEYS={
   compact:'tali_pref_compact',
   history:'tali_pref_history',
-  chart:'tali_pref_chart_style',
   activeAccount:'tali_pref_active_acct'
 };
 
@@ -2235,11 +1993,6 @@ function applyAccountPreferences(){
   const remember=localStorage.getItem('tali_pref_remember_history')!=='0';
   document.getElementById('prefHistoryRow').setAttribute('aria-checked',String(remember));
   document.getElementById('prefHistoryTag').textContent=remember?'On':'Off';
-  const chartStyle=localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line';
-  if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.setMode(chartStyle);
-  const modeEl=document.getElementById('prefChartMode');
-  if(modeEl)modeEl.textContent=chartStyle==='line'?'Line':'Candle';
-
   const histPref=readJsonStorage(ACCOUNT_PREF_KEYS.history,{});
   if(histPref&&typeof histPref==='object'){
     historyState.filter=histPref.filter||historyState.filter;
@@ -2800,7 +2553,6 @@ function switchAccount(id){
   if(id===activeAcct){closeAcctSheet();return;}
   closeAcctSheet();
   activeAcct=id;
-  if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.onContextChange();
   if(window.TaliMatchTrader) TaliMatchTrader.onContextChange();   // late responses for the previous account are dropped
   if(window.TaliAccountSetup) TaliAccountSetup.onContextChange(); // an open setup sheet is saved for later; a waiting invitation opens on its own account
   rememberActiveAccountPreference();
@@ -2845,7 +2597,6 @@ function switchAccount(id){
   fetchAnalytics();
   fetchPayout();
   fetchNews();
-  refreshChartForActiveAccount('switch');
   const curPage=document.querySelector('.page.active');
   if(curPage&&curPage.id==='page-analytics')fetchJournal();
   if(curPage&&curPage.id!=='page-analytics')fetchJournal();
@@ -2901,11 +2652,6 @@ document.getElementById('prefCompactRow')?.addEventListener('click',()=>{
   localStorage.setItem(ACCOUNT_PREF_KEYS.compact,isCompact?'1':'0');
   applyAccountPreferences();
 });
-document.getElementById('prefChartRow')?.addEventListener('click',()=>{
-  const next=(localStorage.getItem(ACCOUNT_PREF_KEYS.chart)||'line')==='line'?'candle':'line';
-  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,next);
-  applyAccountPreferences();
-});
 document.getElementById('prefHistoryRow').addEventListener('click',()=>{
   const enable=localStorage.getItem('tali_pref_remember_history')==='0';
   localStorage.setItem('tali_pref_remember_history',enable?'1':'0');
@@ -2931,8 +2677,6 @@ let drawerNotifs={alerts:[],news:[]};
 let drawerTab='all';
 const DRAWER_READ_STORAGE_KEY='tali_legacy_drawer_read_v1';
 let drawerReadState=readJsonStorage(DRAWER_READ_STORAGE_KEY,{});
-// Same reason: renderNoAccountState() -> refreshChartForActiveAccount() reads these during boot.
-let chartInited=false,chart=null,lineSeries=null;
 const overviewState={status:null,analytics:null,payout:null};
 const dashboardState={
   status:null,
@@ -3181,14 +2925,6 @@ function renderMatchTraderUnavailable(kind){
 }
 
 if(window.TaliMatchTrader){
-  TaliMatchTraderMarket.attach({
-    getActiveAccount:()=>activeAcct,
-    isApiAccount:(id)=>TaliMatchTrader.isApiAccount(id),
-    connectionIdForAccount:(id)=>TaliMatchTrader.connectionIdForAccount(id),
-    showChartState:(title,subtitle)=>showChartState(escapeHtml(title),escapeHtml(subtitle)),
-    hideChartState:()=>hideChartState(),
-  });
-  TaliMatchTraderMarket.startTicker();
   if(window.TaliAccountSetup) TaliAccountSetup.attach({
     getUserId:()=>{ try{ const u=JSON.parse(localStorage.getItem(TALI_USER_KEY)||'null'); return u&&(u.id||u.telegram_user_id||u.telegramUserId||u.username)||''; }catch(e){ return ''; } },
     getActiveAccount:()=>activeAcct,
@@ -3318,10 +3054,18 @@ function showOnboardingCard(show=true){
 function renderNoAccountState(kind='default'){
   const statusEl=document.getElementById('tb-status');
   if(statusEl){
-    statusEl.textContent='waiting for extension...';
+    statusEl.textContent='No account connected';
     statusEl.style.color='var(--t3)';
   }
   showOnboardingCard(true);
+  ['riskMeta','footerAcct','sgRulesSub'].forEach(id=>{document.getElementById(id).textContent='Not set up';});
+  document.getElementById('alertTitle').textContent='Risk monitoring unavailable';
+  document.getElementById('alertSub').textContent='Connect an account to see risk data.';
+  document.getElementById('alertPill').textContent='—';
+  document.getElementById('alertPill').style.cssText='';
+  document.getElementById('alertIco').style.cssText='';
+  document.getElementById('alertIco').textContent='';
+  document.getElementById('alertBar').style.borderColor='';
   overviewState.status=null;
   overviewState.analytics=null;
   overviewState.payout=null;
@@ -3341,8 +3085,8 @@ function renderNoAccountState(kind='default'){
   const payoutMeta=document.getElementById('payoutMeta');
   if(payoutMeta)payoutMeta.textContent='No account connected';
 
-  const analyticsEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>No account connected yet.<br><span style="font-size:11px">Install the extension and open FundingPips to start syncing.</span></div>`;
-  const journalEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.35" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No journal yet.<br><span style="font-size:11px">Closed trades appear here after the extension syncs your FundingPips history.</span></div>`;
+  const analyticsEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.3" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10"/><path d="M7 12h10"/><path d="M7 16h6"/></svg>No account connected yet.<br><span style="font-size:11px">Connect an account to start syncing.</span></div>`;
+  const journalEmpty=`<div style="text-align:center;padding:32px;color:var(--t3);font-size:12px;line-height:2"><svg style="display:block;margin:0 auto 10px;opacity:.35" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>No journal yet.<br><span style="font-size:11px">Closed trades appear here after your account syncs.</span></div>`;
   const recentEmpty=`<div style="text-align:center;padding:20px;color:var(--t3);font-size:12px">No trade history yet</div>`;
 
   const journalEntries=document.getElementById('journalEntries');
@@ -3414,7 +3158,6 @@ function renderNoAccountState(kind='default'){
   if(analyticsEmptyHost && kind==='analytics') {
     analyticsEmptyHost.innerHTML='<div id="analyticsNoAcct">'+analyticsEmpty+'</div>';
   }
-  refreshChartForActiveAccount('no-account');
   refreshAccountSettingsSurface();
 }
 
@@ -3458,7 +3201,7 @@ async function fetchStatus(){
   if(!taliSessionAccepted) return;   // nothing to show before sign-in or while the stored session is being checked
   const requestSeq=++statusFetchSeq;
   const requestedAcct=activeAcct;
-  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(activeAcct))){ if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.refreshTicker(false); return TaliMatchTrader.refreshSnapshot(activeAcct); }
+  if(window.TaliMatchTrader && TaliMatchTrader.isApiAccount(activeAcct)) return TaliMatchTrader.refreshSnapshot(activeAcct);
   try{
     const res=await fetch(API+'/extension/status',{headers:taliAuthHeaders()});
     if(res.status===401){ handleSessionRejected(); return; }   // the session expired or was revoked while the page was open
@@ -3477,7 +3220,7 @@ async function fetchStatus(){
     if(!acct){
       // Check if we ever had data for this account
       const hadData=activeAcct?liveAccountsCache[activeAcct]:null;
-      statusEl.textContent=hadData?'extension offline':'waiting for extension...';
+      statusEl.textContent=hadData?'sync offline':'No account connected';
       statusEl.style.color=hadData?'var(--orange)':'var(--t3)';
       overviewState.status={
         ...(overviewState.status||{}),
@@ -3501,7 +3244,6 @@ async function fetchStatus(){
       accountContextSnapshot.accountLabel='';
       refreshAccountSettingsSurface();
       if(!activeAcct||!hasLinkedAccounts()) renderNoAccountState();
-      refreshChartForActiveAccount('status-empty');
       return;
     }
     revealDash();
@@ -3538,7 +3280,7 @@ async function fetchStatus(){
       equitySub:profit!=null?'Floating '+pnl(profit):'Including floating P&L',
       equityTone:'txt-blue',
       syncVal:isStale?'Stale':'Live',
-      syncSub:isStale?('Last update '+feedAge+' · extension offline'):('Updated '+taliFeedClock(acct.freshness)),
+      syncSub:isStale?('Last update '+feedAge+' · sync offline'):('Updated '+taliFeedClock(acct.freshness)),
       syncTone:isStale?'txt-orange':'txt-green',
       positionsVal:acct.hasPositions?String(acct.openPositionCount||0):'0',
       positionsSub:isStale?('at last update ('+feedAge+')'):(acct.hasPositions?'position(s) open':'No open positions'),
@@ -3615,15 +3357,20 @@ async function fetchStatus(){
       aPill.textContent=alerts.length+' alerts';aPill.style.cssText='color:var(--red);background:var(--red-dim);border:1px solid rgba(224,92,92,0.2)';
       document.getElementById('bellDot').style.display='block';
     } else {
+      const riskAvailable=maxRisk!=null&&!isStale;
       aBar.style.borderColor='';
-      aIco.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>';
-      aIco.style.background='var(--green-dim)';aIco.style.border='1px solid rgba(77,205,138,0.2)';aIco.style.color='var(--green)';
-      aTitle.textContent='All limits safe';aSub.textContent='No alerts fired · monitoring active';
-      aPill.textContent='0 alerts';aPill.style.cssText='color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)';
+      aIco.innerHTML=riskAvailable
+        ?'<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/></svg>'
+        :'';
+      aIco.style.background=riskAvailable?'var(--green-dim)':'';
+      aIco.style.border=riskAvailable?'1px solid rgba(77,205,138,0.2)':'';
+      aIco.style.color=riskAvailable?'var(--green)':'';
+      aTitle.textContent=riskAvailable?'No risk alerts':'Risk monitoring unavailable';
+      aSub.textContent=isStale?'Account data is delayed.':riskAvailable?'No alerts on the latest account update.':'Waiting for account risk data.';
+      aPill.textContent=riskAvailable?'0 alerts':'—';
+      aPill.style.cssText=riskAvailable?'color:var(--green);background:var(--green-dim);border:1px solid rgba(77,205,138,0.2)':'';
       document.getElementById('bellDot').style.display='none';
     }
-    if(ri)document.getElementById('tradeRiskLeft').textContent=usd(ri.remaining);
-    refreshChartForActiveAccount('status');
     refreshAccountSettingsSurface();
   }catch(e){
     if(requestSeq!==statusFetchSeq||requestedAcct!==activeAcct) return;
@@ -3672,7 +3419,6 @@ if(activeAcct) fetchAllTrades(activeAcct).then(trades=>{
       overviewState.status={balance:inferredBal,balanceSub:'Inferred from trade history',balanceTone:'txt-green'};
       renderOverviewCards();
     }
-    refreshChartForActiveAccount('bootstrap');
   }
 }).catch(()=>{});
 
@@ -4720,7 +4466,6 @@ async function fetchAnalytics(){
     if(gsEl){gsEl.textContent=streak>0?streak+'d':'0';gsEl.className='stat-box-val '+(streak>=3?'txt-green':streak>0?'txt-blue':'txt-dim');}
     if(gsSubEl)gsSubEl.textContent=streak>=3?'🔥 on fire!':streak>0?'keep it going':'start a streak';
     currentSym=(bestSym&&bestSym[0])||currentSym;
-    refreshChartForActiveAccount();
 
     // Equity curve
     const curveTrades=trades.slice().sort((a,b)=>new Date(a.closedAt||a.loggedAt||0)-new Date(b.closedAt||b.loggedAt||0));
@@ -4750,7 +4495,6 @@ async function fetchAnalytics(){
     }
     if(!historyState.rows.length) await loadHistoryPage(true);
     else renderHistoryPanel();
-    refreshChartForActiveAccount('analytics');
   }catch(e){
     if(requestSeq!==analyticsFetchSeq||requestedAcct!==activeAcct) return;
     console.error('fetchAnalytics error:',e);
@@ -4836,293 +4580,6 @@ async function fetchChallenges(){
     host.innerHTML='<div class="card card-p" style="text-align:center;color:var(--red);font-size:12px">Could not load challenge state.</div>';
   }
 }
-
-// CHART ENGINE
-// (chartInited and the rest of this line are declared earlier, next to overviewState: boot calls use them before this point)
-let currentPrice=0,currentSym='Account Equity',lotSize=1.0,slPrice=0,tpPrice=0,orderSide='buy';
-let orderTypeIdx=0;const orderTypes=['Market','Limit','Stop'];
-let chartRefreshSeq=0;
-let chartRange='30d';
-function fmtP(p){
-  if(p==null||!Number.isFinite(Number(p))) return '$—';
-  const n=Number(p);
-  return '$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
-}
-function chartUnix(value){
-  const ms=new Date(value||0).getTime();
-  if(!Number.isFinite(ms)||ms<=0) return null;
-  return Math.floor(ms/1000);
-}
-function showChartState(title,subtitle){
-  const el=document.getElementById('chartStateOverlay');
-  if(!el) return;
-  el.innerHTML='<div><div class="chart-state-title">'+title+'</div><div>'+subtitle+'</div></div>';
-  el.classList.remove('hidden');
-}
-function hideChartState(){
-  const el=document.getElementById('chartStateOverlay');
-  if(el) el.classList.add('hidden');
-}
-function resetChartSeries(){
-  if(lineSeries) lineSeries.setData([]);
-  if(lineSeries) lineSeries.setMarkers([]);
-}
-function applyChartRangeButtons(){
-  document.querySelectorAll('#chartRangeRow .tf-btn').forEach(btn=>{
-    btn.classList.toggle('active',btn.dataset.range===chartRange);
-  });
-}
-function filterByRange(points){
-  if(chartRange==='all'||!points.length) return points;
-  const days=chartRange==='7d'?7:30;
-  const cutoff=Math.floor(Date.now()/1000)-(days*86400);
-  return points.filter(p=>p.time>=cutoff);
-}
-function buildChartPayloadFromTrades(trades,statusSnapshot){
-  const sorted=(trades||[]).slice().sort((a,b)=>new Date(a.closedAt||a.loggedAt||0)-new Date(b.closedAt||b.loggedAt||0));
-  const timeline=[];
-  const markers=[];
-  const seenPoint=new Map();
-  const markerKeys=new Set();
-  let runningBalance=(statusSnapshot?.balance ?? acctBalances[activeAcct] ?? null);
-  let wins=0,losses=0;
-
-  sorted.forEach((t,idx)=>{
-    const ts=chartUnix(t.closedAt||t.loggedAt);
-    if(!ts) return;
-    const pnlVal=Number(t.pnl||0);
-    if(Number.isFinite(pnlVal)&&pnlVal!==0){
-      if(pnlVal>0) wins++; else losses++;
-    }
-
-    const rawBalance=t.balanceAfter;
-    let value=Number(rawBalance);
-    if(!Number.isFinite(value)){
-      if(runningBalance==null) runningBalance=Number(statusSnapshot?.balance ?? t.accountSize ?? 0);
-      if(Number.isFinite(pnlVal)){
-        runningBalance=Number(runningBalance||0)+pnlVal;
-        value=runningBalance;
-      }
-    }else{
-      runningBalance=value;
-    }
-    if(!Number.isFinite(value)) return;
-    seenPoint.set(ts,{time:ts,value:Number(value.toFixed(2))});
-
-    if(Number.isFinite(pnlVal) && pnlVal!==0){
-      const markerText=(pnlVal>0?'WIN ':'LOSS ')+(t.pnlText||pnl(pnlVal));   // the account's own currency when the row carries it
-      const key=ts+'|'+markerText+'|'+(t.symbol||'');
-      if(!markerKeys.has(key)){
-        markerKeys.add(key);
-        markers.push({
-          time:ts,
-          position:pnlVal>0?'aboveBar':'belowBar',
-          color:pnlVal>0?'#4dcd8a':'#e05c5c',
-          shape:pnlVal>0?'arrowUp':'arrowDown',
-          text:markerText
-        });
-      }
-    }else if(idx===sorted.length-1){
-      const key=ts+'|close';
-      if(!markerKeys.has(key)){
-        markerKeys.add(key);
-        markers.push({time:ts,position:'aboveBar',color:'#2aabee',shape:'circle',text:'Close'});
-      }
-    }
-  });
-
-  const points=Array.from(seenPoint.values()).sort((a,b)=>a.time-b.time);
-  const liveEquity=Number(statusSnapshot?.equity);
-  if(Number.isFinite(liveEquity)){
-    const now=Math.floor(Date.now()/1000);
-    const last=points[points.length-1];
-    if(!last || now-last.time>120){
-      points.push({time:now,value:Number(liveEquity.toFixed(2))});
-    }
-  }
-  return {points,markers,wins,losses,tradeCount:sorted.length};
-}
-function updateChartSummary(payload,filtered){
-  const last=filtered[filtered.length-1]||payload.points[payload.points.length-1]||null;
-  const first=filtered[0]||payload.points[0]||null;
-  const delta=(last&&first)?(last.value-first.value):null;
-  const pct=(delta!=null&&first&&first.value)?((delta/first.value)*100):null;
-
-  const symEl=document.getElementById('ph-sym');
-  if(symEl) symEl.textContent='Account Equity · '+(activeAcct||'No account');
-  const priceEl=document.getElementById('ph-price');
-  if(priceEl) priceEl.textContent=last?fmtP(last.value):'$—';
-  const chgEl=document.getElementById('ph-change');
-  if(chgEl){
-    if(delta==null){
-      chgEl.textContent='No chartable equity data yet';
-      chgEl.className='ph-change';
-    }else{
-      chgEl.textContent=(delta>=0?'+':'')+fmtP(delta).replace('$','')+' ('+(pct>=0?'+':'')+pct.toFixed(2)+'%)';
-      chgEl.className='ph-change '+(delta>=0?'txt-green':'txt-red');
-    }
-  }
-
-  const pCount=document.getElementById('ohlc-o'); if(pCount) pCount.textContent=String(filtered.length||payload.points.length||0);
-  const tCount=document.getElementById('ohlc-h'); if(tCount) tCount.textContent=String(payload.tradeCount||0);
-  const wCount=document.getElementById('ohlc-l'); if(wCount) wCount.textContent=String(payload.wins||0);
-  const lCount=document.getElementById('ohlc-v'); if(lCount) lCount.textContent=String(payload.losses||0);
-
-  if(last){
-    currentPrice=last.value;
-    slPrice=Number((currentPrice*0.99).toFixed(2));
-    tpPrice=Number((currentPrice*1.01).toFixed(2));
-    const slEl=document.getElementById('slVal'); if(slEl) slEl.textContent=fmtP(slPrice);
-    const tpEl=document.getElementById('tpVal'); if(tpEl) tpEl.textContent=fmtP(tpPrice);
-    const execPrice=document.getElementById('execPrice'); if(execPrice) execPrice.textContent=fmtP(currentPrice);
-    const depthMid=document.getElementById('depthMid'); if(depthMid) depthMid.textContent=fmtP(currentPrice);
-    updateRiskCalc();
-  }
-}
-
-async function refreshChartForActiveAccount(reason='poll'){
-  if(!chartInited||!lineSeries) return;
-  const requestId=++chartRefreshSeq;
-  const accountId=activeAcct;
-  const acctInfo=accountId?ACCOUNTS[accountId]:null;
-  const acctIdEl=document.getElementById('chartAcctId');
-  const acctTypeEl=document.getElementById('chartAcctType');
-  if(acctIdEl) acctIdEl.textContent=acctInfo?.displayName||accountId||'No account';   // readable name, never the internal API key
-  if(acctTypeEl) acctTypeEl.textContent=acctInfo?.label||'Connect account';
-  if(window.TaliMatchTraderMarket&&!(window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(accountId))) TaliMatchTraderMarket.leaveChart();
-
-  if((window.TaliMatchTrader&&TaliMatchTrader.isApiAccount(accountId))){
-    // A market-price chart of the broker's candles. It is not an account-equity timeline and is labelled accordingly.
-    TaliMatchTraderMarket.showChart({chart,lineSeries});
-    return;
-  }
-  if(!accountId){
-    resetChartSeries();
-    showChartState('No active account','Select or connect an account to view an equity timeline.');
-    updateChartSummary({points:[],tradeCount:0,wins:0,losses:0},[]);
-    return;
-  }
-
-  try{
-    if(reason==='switch') showChartState('Loading chart','Pulling timeline for '+accountId+'…');
-    const trades=await fetchAllTrades(accountId);
-    if(requestId!==chartRefreshSeq||accountId!==activeAcct) return;
-    const payload=buildChartPayloadFromTrades(trades,overviewState.status||{});
-    const filtered=filterByRange(payload.points);
-
-    if(!payload.points.length){
-      resetChartSeries();
-      showChartState('No chart data yet','This account has no chartable balance/equity timeline yet.');
-      updateChartSummary(payload,filtered);
-      return;
-    }
-
-    if(!filtered.length){
-      resetChartSeries();
-      showChartState('No data in selected range','Try 30D or All to include older account activity.');
-      updateChartSummary(payload,filtered);
-      return;
-    }
-
-    hideChartState();
-    lineSeries.setData(filtered);
-    const markerTimes=new Set(filtered.map(p=>p.time));
-    lineSeries.setMarkers(payload.markers.filter(m=>markerTimes.has(m.time)));
-    chart.timeScale().fitContent();
-    updateChartSummary(payload,filtered);
-  }catch(_){
-    if(requestId!==chartRefreshSeq||accountId!==activeAcct) return;
-    resetChartSeries();
-    showChartState('Chart unavailable','Could not load account timeline right now.');
-  }
-}
-
-function initChart(){
-  if(chartInited)return;chartInited=true;
-  const el=document.getElementById('chartEl');
-  chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:300,layout:{background:{type:'Solid',color:'#1e2c3a'},textColor:'#8bafc7'},grid:{vertLines:{color:'rgba(255,255,255,0.04)'},horzLines:{color:'rgba(255,255,255,0.04)'}},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},rightPriceScale:{borderColor:'rgba(255,255,255,0.06)'},timeScale:{borderColor:'rgba(255,255,255,0.06)',timeVisible:true},handleScroll:true,handleScale:true});
-  lineSeries=chart.addLineSeries({color:'#2aabee',lineWidth:2,visible:true,lastValueVisible:true,priceLineVisible:true});
-  new ResizeObserver(()=>{if(chart)chart.applyOptions({width:el.clientWidth});}).observe(el);
-  applyChartRangeButtons();
-  refreshChartForActiveAccount('init');
-}
-
-document.querySelectorAll('#chartRangeRow .tf-btn').forEach(btn=>{
-  btn.addEventListener('click',()=>{
-    chartRange=btn.dataset.range||'30d';
-    applyChartRangeButtons();
-    refreshChartForActiveAccount('range');
-  });
-});
-
-document.querySelectorAll('#chartIntervalRow .tf-btn[data-interval]').forEach(btn=>{
-  btn.addEventListener('click',()=>{ if(window.TaliMatchTraderMarket) TaliMatchTraderMarket.setInterval(btn.dataset.interval); });
-});
-document.querySelectorAll('#chartIntervalRow .tf-btn[data-instrument]').forEach(btn=>{   // toggles live updates for that instrument
-  btn.addEventListener('click',()=>{ if(!window.TaliMatchTraderMarket) return; const on=TaliMatchTraderMarket.instrument()===btn.dataset.instrument; TaliMatchTraderMarket.setInstrument(on?null:btn.dataset.instrument); });
-});
-document.getElementById('toolCandle').addEventListener('click',function(){
-  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'candle'); applyAccountPreferences(); return; }   // real OHLC candles
-  this.classList.add('active');
-  document.getElementById('toolLine').classList.remove('active');
-  showChartState('Candle view unavailable','Market OHLC feed is not connected in this shell. Showing equity line instead.');
-  setTimeout(()=>{
-    document.getElementById('toolLine').classList.add('active');
-    document.getElementById('toolCandle').classList.remove('active');
-    if(activeAcct) hideChartState();
-  },1200);
-  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
-  applyAccountPreferences();
-});
-document.getElementById('toolLine').addEventListener('click',function(){
-  if(window.TaliMatchTraderMarket&&TaliMatchTraderMarket.inMarketMode()){ localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line'); applyAccountPreferences(); return; }     // candle closes
-  this.classList.add('active');
-  document.getElementById('toolCandle').classList.remove('active');
-  localStorage.setItem(ACCOUNT_PREF_KEYS.chart,'line');
-  applyAccountPreferences();
-  refreshChartForActiveAccount('style');
-});
-['toolCandle','toolLine'].forEach(id=>{   // keyboard: Enter or Space activates the chart-mode controls
-  const el=document.getElementById(id);
-  if(el) el.addEventListener('keydown',e=>{ if(e.key==='Enter'||e.key===' '){ e.preventDefault(); el.click(); } });
-});
-
-document.getElementById('toolLine').classList.add('active');
-document.getElementById('toolCandle').classList.remove('active');
-
-document.getElementById('tabBuy').addEventListener('click',function(){orderSide='buy';this.classList.add('active');document.getElementById('tabSell').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn buy-btn rip';b.textContent='Review '+orderSide.toUpperCase();});
-document.getElementById('tabSell').addEventListener('click',function(){orderSide='sell';this.classList.add('active');document.getElementById('tabBuy').classList.remove('active');const b=document.getElementById('execBtn');b.className='exec-btn sell-btn rip';b.textContent='Review '+orderSide.toUpperCase();});
-const step=()=>currentPrice>=1000?5:currentPrice>=10?0.5:0.0001;
-document.getElementById('sizeUp').addEventListener('click',()=>{lotSize=parseFloat(Math.min(lotSize+0.25,100).toFixed(2));document.getElementById('sizeVal').textContent=lotSize.toFixed(2);updateRiskCalc();});
-document.getElementById('sizeDown').addEventListener('click',()=>{lotSize=parseFloat(Math.max(lotSize-0.25,0.01).toFixed(2));document.getElementById('sizeVal').textContent=lotSize.toFixed(2);updateRiskCalc();});
-document.getElementById('slUp').addEventListener('click',()=>{slPrice=parseFloat((slPrice+step()).toFixed(5));document.getElementById('slVal').textContent=fmtP(slPrice);updateRiskCalc();});
-document.getElementById('slDown').addEventListener('click',()=>{slPrice=parseFloat((slPrice-step()).toFixed(5));document.getElementById('slVal').textContent=fmtP(slPrice);updateRiskCalc();});
-document.getElementById('tpUp').addEventListener('click',()=>{tpPrice=parseFloat((tpPrice+step()).toFixed(5));document.getElementById('tpVal').textContent=fmtP(tpPrice);updateRiskCalc();});
-document.getElementById('tpDown').addEventListener('click',()=>{tpPrice=parseFloat((tpPrice-step()).toFixed(5));document.getElementById('tpVal').textContent=fmtP(tpPrice);updateRiskCalc();});
-document.getElementById('typeToggle').addEventListener('click',()=>{orderTypeIdx=(orderTypeIdx+1)%orderTypes.length;document.getElementById('orderType').textContent=orderTypes[orderTypeIdx];});
-function updateRiskCalc(){
-  ['riskDollar','rewardDollar','rrRatio','riskPct','marginReq','tradeRiskLeft'].forEach(id=>{document.getElementById(id).textContent='—';});
-}
-
-document.getElementById('execBtn').addEventListener('click',function(){
-  document.getElementById('orderAccessStatus').textContent='Trading requires an API token with order permissions and a trading-enabled TaliTrade server. This server does not submit orders. Keep your read-only token for now; no order was sent.';
-});
-function updateDepth(){
-  const container=document.getElementById('depthRows');if(!container)return;
-  const p=currentPrice;let bHTML='<div style="border-right:1px solid var(--border)">',aHTML='<div>';
-  for(let i=0;i<5;i++){
-    const bp=parseFloat((p-(i+1)*0.5*(p>=1000?1:p>=10?0.05:0.0001)).toFixed(p<10?5:2));
-    const ap=parseFloat((p+(i+1)*0.5*(p>=1000?1:p>=10?0.05:0.0001)).toFixed(p<10?5:2));
-    const bs=(Math.random()*8+1).toFixed(2),as2=(Math.random()*8+1).toFixed(2);
-    const bw=20+Math.random()*60,aw=20+Math.random()*60;
-    bHTML+=`<div class="depth-row bid rip"><div class="depth-bar-bg" style="width:${bw}%"></div><div class="depth-price bid">${fmtP(bp)}</div><div class="depth-size">${bs}</div></div>`;
-    aHTML+=`<div class="depth-row ask rip"><div class="depth-bar-bg" style="width:${aw}%;right:0;left:auto"></div><div class="depth-price ask">${fmtP(ap)}</div><div class="depth-size">${as2}</div></div>`;
-  }
-  container.innerHTML=bHTML+'</div>'+aHTML+'</div>';
-}
-updateDepth();
-setInterval(()=>{if(document.getElementById('page-chart').classList.contains('active'))updateDepth();},2200);
-updateRiskCalc();
 
 // ── NOTIFICATION DRAWER ──────────────────────────────────────────────────────
 // (drawer state - drawerNotifs, drawerTab, drawerReadState - is declared earlier, next to overviewState,

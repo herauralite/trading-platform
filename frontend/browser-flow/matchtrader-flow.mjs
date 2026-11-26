@@ -193,7 +193,8 @@ section('startup, no account')
 {
   const news = [{ title: 'Synthetic CPI release', currency: 'USD', impact: 'high', time_et: '8:30 AM', start_at: new Date(Date.now() + 30 * 60000).toISOString() }]
   const p = await boot(makeBackend({ news }))
-  check('empty-account startup has no page errors (drawerNotifs / chartInited were used before initialization)', p.allErrors().length === 0, p.allErrors().join(' | '))
+  check('unconnected account does not claim risk monitoring', p.text('alertTitle') === 'Risk monitoring unavailable' && p.text('riskMeta') === 'Not set up')
+  check('empty-account startup has no page errors', p.allErrors().length === 0, p.allErrors().join(' | '))
   check('no-account state finished rendering', p.w.eval('activeAcct') === '' && p.w.eval('Object.keys(ACCOUNTS).length') === 0 && p.text('ovBalance') !== undefined)
   p.w.eval('pushNewsToDrawer(' + JSON.stringify(news) + ')')
   check('notifications still collect items', p.w.eval('drawerNotifs.news.length') === 1)
@@ -257,7 +258,7 @@ section('Match-Trader API onboarding')
   tokenInput(p).value = TOKEN
   p.w.TaliMatchTrader.reset()                                         // what the sign-out handler calls
   check('logout clears the token field and the provider state', tokenInput(p).value === '' && p.w.TaliMatchTrader.isAvailable() === false)
-  check('the sign-out handler really calls that reset', /localStorage\.removeItem\(TALI_SESSION_TOKEN_KEY\);\s*if \(window\.TaliMatchTraderMarket\) TaliMatchTraderMarket\.reset\(\);\s*if \(window\.TaliMatchTrader\) TaliMatchTrader\.reset\(\)/.test(rawHtml))
+  check('the sign-out handler really calls that reset', /localStorage\.removeItem\(TALI_SESSION_TOKEN_KEY\);\s*if \(window\.TaliMatchTrader\) TaliMatchTrader\.reset\(\)/.test(rawHtml))
   await p.w.TaliMatchTrader.loadConnections()
   p.w.eval('closeAddAccountFlow(); openAddAccountFlow()'); await sleep(200)
   p.cardButton('matchtraderApi').click()
@@ -493,8 +494,6 @@ section('reloading with a stored session')
   check('profile displays the session identity', !!p.text('profileName') && !!p.$('#profileAvatar'))
   p.$('#prefCompactRow').click()
   check('compact control updates layout and switch state', p.w.document.body.classList.contains('compact-mode') && p.$('#prefCompactRow').getAttribute('aria-checked') === 'true')
-  p.$('#prefChartRow').click()
-  check('market chart preference updates renderer and storage', p.w.TaliMatchTraderMarket.mode() === 'candle' && p.w.localStorage.getItem('tali_pref_chart_style') === 'candle')
   p.w.eval("setHistoryFilter('wins')")
   check('history filter selection is saved', JSON.parse(p.w.localStorage.getItem('tali_pref_history')).filter === 'wins')
   p.$('#prefHistoryRow').click()
@@ -509,100 +508,14 @@ section('reloading with a stored session')
   p.w.close()
 }
 
-// ── 6. market ticker and price chart ──
-section('market ticker and price chart')
+// ── 6. read-only workspace ──
+section('read-only workspace')
 {
-  const T = Date.parse('2026-11-13T19:35:00Z'), M5 = 300000
-  const bar = (i, o, h, l, c, ticks = 20) => ({ t: T + i * M5, o: String(o), h: String(h), l: String(l), c: String(c), ticks })
-  const m5 = [bar(2, 1.0803, 1.0808, 1.0801, 1.0806), bar(0, 1.08, 1.0805, 1.0798, 1.0802), bar(1, 1.0802, 1.0806, 1.08, 1.0803), bar(1, 1.0802, 1.0806, 1.08, 1.0803),
-              bar(3, 1.0806, 1.0811, 1.0804, 1.0809), bar(4, 1.0809, 1.0812, 1.0807, 1.081), bar(5, 1.081, 1.0811, 1.0809, 1.08105, 3)]      // out of order, one duplicate
-  const h1 = [0, 1, 2].map((i) => ({ t: T - (3 - i) * 3600000, o: '1.07', h: '1.09', l: '1.06', c: String(1.075 + i / 1000), ticks: 900 }))
-  const market = { mode: 'on', candles: { M5: m5, H1: h1, M1: [] }, hold: {} }
-  const backend = makeBackend({ connected: true, synced: true, market, legacyAccounts: [{ account_id: '900100', accountId: '900100', label: 'Legacy 100K', accountType: 'evaluation', account_type: 'evaluation', is_active: true, isActive: true }] })
-  const p = await boot(backend, { wait: 2500 })
-  p.w.eval("switchAccount('mtapi:7')"); await sleep(600)
-  const strip = () => p.w.document.getElementById('tickerInner')
-  const stripText = () => strip().textContent
-  check('the ticker shows the account’s real instruments with bid / ask', /EURUSD\s*1\.08512 \/ 1\.08519/.test(stripText()) && /4100\.10 \/ 4100\.55/.test(stripText()), stripText().slice(0, 200))
-  check('the price basis and the polling are stated; nothing claims streaming', /Bid \/ Ask · auto-updating about every 15 s/.test(stripText()) && !/live|stream|tick-by-tick/i.test(stripText()), stripText().slice(0, 120))
-  const cells = [...strip().querySelectorAll('.tick-i')].map((n) => n.textContent)
-  check('both scrolling copies carry the same content', cells.length % 2 === 0 && cells.slice(0, cells.length / 2).join('|') === cells.slice(cells.length / 2).join('|'), cells.join(' | '))
-  check('no sample numbers, no percentage change, provider text escaped', !/2,341\.80|67,450|18\.34|%/.test(stripText()) && !/2,341\.80|67,450|>18\.34</.test(rawHtml) && stripText().includes('XAU<b>USD</b>') && !strip().querySelector('b'))
-  const readsBefore = backend.db.marketReads.ticker
-  for (let i = 0; i < 6; i++) p.w.TaliMatchTraderMarket.refreshTicker(false)
-  await sleep(200)
-  check('repeated refreshes inside one interval do not add requests', backend.db.marketReads.ticker === readsBefore, `${readsBefore} -> ${backend.db.marketReads.ticker}`)
-
-  // chart
-  p.w.document.querySelector('.bnav-item[data-page="chart"]').click(); await sleep(500)
-  const chart = p.w.__chart
-  const header = () => p.text('ph-sym') + ' | ' + p.text('ph-change')
-  check('the chart is a labelled market-price chart, not account equity', /^EURUSD · Market price · M5 candles/.test(p.text('ph-sym')) && !/Equity/i.test(header()) && p.text('instSourceVal') === 'Broker candles' && /not specified/.test(p.text('instSourceSub')), header())
-  const lineTimes = chart.line.data.map((d) => d.time)
-  check('candles are converted from epoch milliseconds to seconds, sorted and de-duplicated', lineTimes.length === 6 && lineTimes[0] === T / 1000 && lineTimes.every((t, i) => i === 0 || t > lineTimes[i - 1]), JSON.stringify(lineTimes))
-  check('line mode plots candle closes', chart.line.data[5].value === 1.08105 && chart.line.options.visible === true && chart.candle.options.visible === false)
-  check('the header shows the last candle and the provider’s timing, in UTC', p.text('ph-price') === '1.08105' && /Auto-updating about every 60 s · last candle opened Nov 13, 20:00 UTC/.test(p.text('ph-change')) && p.text('chartLiveTag') === 'AUTO', p.text('ph-price') + ' ' + p.text('ph-change'))
-  check('the loaded window is stated and not presented as complete history', /Showing the latest 6 M5 candles/.test(p.text('chartWindowNote')) && /Older candles are not loaded/.test(p.text('chartWindowNote')), p.text('chartWindowNote'))
-  check('order ticket is visible while synthetic depth stays hidden', p.w.document.getElementById('orderPanel').style.display !== 'none' && p.w.document.getElementById('depthCard').style.display === 'none' && /cannot place orders/.test(p.text('chartWindowNote')))
-  check('the chart names the account by its readable label, never the internal key', p.text('chartAcctId') === 'Fake Broker · …0001' && !/mtapi:/.test(p.text('chartAcctId')), p.text('chartAcctId'))
-  const ivButtons = [...p.w.document.querySelectorAll('#chartIntervalRow [data-interval]')]
-  check('M1/M5/H1 are real buttons in a labelled group, M5 announced as selected', ivButtons.every((b) => b.tagName === 'BUTTON' && b.type === 'button') && p.$('#chartIntervalRow').getAttribute('role') === 'group' && ivButtons.map((b) => b.getAttribute('aria-pressed')).join() === 'false,true,false', ivButtons.map((b) => b.tagName + ':' + b.getAttribute('aria-pressed')).join())
-  check('the candle control describes real candles in market mode', /open, high, low and close/.test(p.$('#toolCandle').getAttribute('title')) && p.$('#toolCandle').getAttribute('aria-label') === p.$('#toolCandle').getAttribute('title') && !/requires market OHLC/.test(p.$('#toolCandle').getAttribute('title')), p.$('#toolCandle').getAttribute('title'))
-  p.$('#toolCandle').dispatchEvent(new p.w.KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
-  const c0 = chart.candle.data[0]
-  check('candle mode shows real OHLC', chart.candle.options.visible === true && chart.line.options.visible === false && c0.open === 1.08 && c0.high === 1.0805 && c0.low === 1.0798 && c0.close === 1.0802 && p.w.document.getElementById('toolCandle').classList.contains('active'), JSON.stringify(c0))
-
-  // the forming candle changes and a new candle opens: updated in place, view untouched
-  market.candles.M5 = [bar(4, 1.0809, 1.0812, 1.0807, 1.081), bar(5, 1.081, 1.0816, 1.0809, 1.0814, 9), bar(6, 1.0814, 1.0815, 1.0813, 1.08145, 1)]
-  const sets = chart.candle.sets, rangeSets = chart.rangeSets, fits = chart.fits
-  await p.w.TaliMatchTraderMarket.refreshChart(); await sleep(100)
-  check('a refresh updates the forming candle and appends the new one without redrawing', chart.candle.sets === sets && chart.candle.updates.length === 2 && chart.candle.data.length === 7 && chart.candle.data[5].close === 1.0814 && chart.candle.data[6].time === (T + 6 * M5) / 1000, JSON.stringify({ sets: chart.candle.sets, updates: chart.candle.updates.length, n: chart.candle.data.length }))
-  check('pan and zoom are left alone by a refresh', chart.rangeSets === rangeSets && chart.fits === fits && chart.range.from === 3)
-  check('no duplicate candles after the refresh', new Set(chart.candle.data.map((d) => d.time)).size === chart.candle.data.length)
-
-  // interval switch while an older answer is still in flight
-  let releaseM5
-  market.hold.M5 = new Promise((r) => { releaseM5 = r })
-  const slowRefresh = p.w.TaliMatchTraderMarket.refreshChart()            // an M5 read that will answer late
-  p.w.document.querySelector('#chartIntervalRow [data-interval="H1"]').click()
-  await sleep(300)
-  check('the selected interval is announced after a switch', [...p.w.document.querySelectorAll('#chartIntervalRow [data-interval]')].map((b) => b.getAttribute('aria-pressed')).join() === 'false,false,true')
-  check('switching interval loads that interval’s own candles', /H1 candles/.test(p.text('ph-sym')) && chart.candle.data.length === 3 && backend.db.requests.some((r) => r.path.includes('market/candles?interval=H1')), p.text('ph-sym') + ' ' + chart.candle.data.length)
-  releaseM5(); market.hold = {}; await slowRefresh; await sleep(100)
-  check('the late M5 answer does not overwrite the H1 chart', /H1 candles/.test(p.text('ph-sym')) && chart.candle.data.length === 3 && chart.candle.data[2].close === 1.077, p.text('ph-sym') + ' ' + JSON.stringify(chart.candle.data.map((d) => d.close)))
-  p.w.document.querySelector('#chartIntervalRow [data-interval="M1"]').click(); await sleep(300)
-  check('an interval with no candles yet says so instead of drawing anything', chart.candle.data.length === 0 && /Loading candles|No candles/.test(p.text('chartStateOverlay')), p.text('chartStateOverlay'))
-
-  // closed market
-  market.mode = 'closed'
-  p.w.document.querySelector('#chartIntervalRow [data-interval="M5"]').click(); await sleep(300)
-  p.w.TaliMatchTraderMarket.refreshTicker(true); await sleep(200)
-  check('a closed market is shown as closed, with the last published prices', /Market closed · last candle opened/.test(p.text('ph-change')) && p.text('chartLiveTag') === 'CLOSED' && /market closed · last published prices/.test(stripText()) && /· closed/.test(stripText()), p.text('ph-change') + ' || ' + stripText().slice(0, 140))
-
-  // account switch: the older account gets its own chart back and no market requests
-  const marketBefore = backend.db.marketReads.ticker + backend.db.marketReads.candles
-  p.w.eval("switchAccount('900100')"); await sleep(700)
-  check('outside market mode the candle control says where candles are available', /available for Match-Trader API accounts/.test(p.$('#toolCandle').getAttribute('title')) && p.text('chartAcctId') === '900100', p.$('#toolCandle').getAttribute('title') + ' | ' + p.text('chartAcctId'))
-  check('switching to the older account leaves market mode and restores its labels', p.w.TaliMatchTraderMarket.inMarketMode() === false && p.text('instSourceVal') === 'Trade timeline' && p.w.document.getElementById('orderPanel').style.display !== 'none' && p.w.document.getElementById('chartIntervalRow').style.display === 'none' && chart.candle.data.length === 0 && p.text('chartLiveTag') === 'LIVE', p.text('instSourceVal'))
-  check('no market data is requested or shown for an account that is not an API account', backend.db.marketReads.ticker + backend.db.marketReads.candles === marketBefore && /Prices are shown for Match-Trader API accounts/.test(stripText()) && !/1\.08512/.test(stripText()), stripText().slice(0, 120))
-  p.w.eval("switchAccount('mtapi:7')"); await sleep(700)
-  check('switching back shows the market chart again', p.w.TaliMatchTraderMarket.inMarketMode() === true && /EURUSD · Market price/.test(p.text('ph-sym')) && chart.candle.data.length === 3, p.text('ph-sym') + ' ' + chart.candle.data.length)
-
-  // permission denied, then feature off
-  market.mode = 'denied'
-  p.w.TaliMatchTraderMarket.refreshTicker(true); await p.w.TaliMatchTraderMarket.refreshChart(); await sleep(200)
-  p.w.document.querySelector('#chartIntervalRow [data-interval="H1"]').click(); await sleep(300)
-  check('a token without market-data permission is reported as that, on the ticker and the chart', /Market data is not permitted for this API token/.test(stripText()) && /Market data not permitted/.test(p.text('chartStateOverlay')) && /not allowed to read market data/.test(p.text('chartStateOverlay')), stripText().slice(0, 100) + ' || ' + p.text('chartStateOverlay'))
-  check('account data is unaffected by the market-data problem', p.w.eval("showPage('dash'); 1") === 1 && p.text('ovBalance') === '$50,123.45', p.text('ovBalance'))
-  check('no page errors during the market flow', p.allErrors().length === 0, p.allErrors().join(' | '))
+  const backend = makeBackend({ connected: true, synced: true })
+  const p = await boot(backend, { wait: 1600 })
+  check('no Charts tab, order ticket, or synthetic depth is rendered', !p.$('[data-page="chart"], #page-chart, #orderPanel, #depthCard'))
+  check('dashboard makes no background market requests', !backend.db.requests.some((r) => r.path.includes('/market/')))
   p.w.close()
-
-  const off = makeBackend({ connected: true, synced: true })              // market feature off on the server (404)
-  const q2 = await boot(off, { wait: 2500 })
-  check('with the feature off the ticker says so and shows no numbers', /Market prices are not enabled on this server/.test(q2.w.document.getElementById('tickerInner').textContent) && !/\d\.\d/.test(q2.w.document.getElementById('tickerInner').textContent), q2.w.document.getElementById('tickerInner').textContent.slice(0, 120))
-  q2.w.document.querySelector('.bnav-item[data-page="chart"]').click(); await sleep(500)
-  check('with the feature off the chart explains it instead of showing an equity chart', /Market chart not enabled/.test(q2.text('chartStateOverlay')) && q2.allErrors().length === 0, q2.text('chartStateOverlay') + q2.allErrors().join('|'))
-  q2.w.close()
 }
 
 // ── 7. analytics and older history ──
