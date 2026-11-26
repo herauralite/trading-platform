@@ -398,7 +398,7 @@
     var arc = fill ? '<circle class="pg-arc" cx="24" cy="24" r="20" pathLength="100" style="stroke-dashoffset:' + (100 - fill * 100).toFixed(2) + '"/>' : '';
     return '<button type="button" class="pg-ring pg-t-' + tone + (on ? ' is-on' : '') + (r.kind === 'target' ? ' is-target' : ' is-limit') + '"' +
       ' data-setup="ring" data-id="' + esc(r.id) + '" data-i="' + i + '" aria-expanded="' + on + '" aria-controls="' + detailId + '" aria-label="' + esc(ringSpeech(r)) + '">' +
-      '<span class="pg-dial" aria-hidden="true"><svg viewBox="0 0 48 48" focusable="false"><circle class="pg-track" cx="24" cy="24" r="20" pathLength="100"/>' + arc + '</svg>' +
+      '<span class="pg-dial" aria-hidden="true" data-fill="' + fill.toFixed(4) + '"><svg viewBox="0 0 48 48" focusable="false"><circle class="pg-track" cx="24" cy="24" r="20" pathLength="100"/>' + arc + '</svg>' +
       '<span class="pg-val' + (ringCenter(r).length > 4 ? ' is-long' : '') + '">' + esc(ringCenter(r)) + '</span></span>' +
       '<span class="pg-name" aria-hidden="true">' + esc(ringTitle(r)) + '</span><span class="pg-state" aria-hidden="true">' + esc(ringState(r)) + '</span></button>';
   }
@@ -739,7 +739,7 @@
     '.pg-rings.has-on .pg-ring:not(.is-on) .pg-dial{transform:scale(.68);opacity:.7}.pg-ring.is-on .pg-dial{transform:none}' +
     '.pg-dial svg{position:absolute;inset:0;width:100%;height:100%;transform:rotate(-90deg);overflow:visible}' +
     '.pg-track{fill:none;stroke:var(--s3);stroke-width:4.5}' +
-    '.pg-arc{fill:none;stroke:var(--pg-c);stroke-width:4.5;stroke-linecap:round;stroke-dasharray:100 100;transition:stroke-dashoffset .5s var(--out),stroke .3s}' +
+    '.pg-arc{fill:none;stroke:var(--pg-c);stroke-width:4.5;stroke-linecap:round;stroke-dasharray:100 100;transition:stroke .3s}' +
     '.pg-t-green{--pg-c:var(--green)}.pg-t-amber{--pg-c:var(--orange)}.pg-t-red{--pg-c:var(--red)}.pg-t-cyan{--pg-c:var(--blue)}.pg-t-neutral{--pg-c:var(--t3)}' +
     '.pg-val{position:relative;font-family:"JetBrains Mono",monospace;font-size:12.5px;font-weight:600;letter-spacing:-.4px;color:var(--text);font-variant-numeric:tabular-nums}.pg-val.is-long{font-size:10.5px;letter-spacing:-.6px}' +
     '.pg-name{font-size:11px;line-height:1.25;text-align:center;max-width:100%;margin-top:-3px;min-height:2.5em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}.pg-ring.is-on .pg-name{font-weight:600}' +
@@ -1294,13 +1294,80 @@
     if (!stamp || !Number.isFinite(Date.parse(stamp))) return;
     ringSnapshotTimes[key] = stamp;
     if (!previous || Date.parse(stamp) <= Date.parse(previous) || Date.now() - Date.parse(stamp) > 90000) return;
-    if (global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (reducedMotion()) return;
     var rail = container.querySelector('.su-ring-space');
     if (rail) { rail.classList.remove('is-refreshed'); void rail.offsetWidth; rail.classList.add('is-refreshed'); }
   }
+  // ── ring fill motion ──
+  // The markup always carries each arc's true end state, so no script, reduced motion and assistive tech see the real
+  // figure. After a redraw the arc travels from what was on screen to its figure: from empty the first time a circle is
+  // shown for an account, from its visible position when the figure changes (also part-way through a move), and not at
+  // all when the figure is unchanged. The number in the middle is never animated.
+  var RING_START_SLOPE = 1.5;    // starting speed relative to the average; anything from 0 to 3 never passes the end value
+  function reducedMotion() { return !!(global.matchMedia && global.matchMedia('(prefers-reduced-motion: reduce)').matches); }
+  function ringDuration(d) { return 650 + 450 * Math.min(1, Math.abs(d)); }
+  // Cubic Hermite from the start (slope k) to the end (slope 0): monotone for 0 <= k <= 3, so no overshoot or bounce.
+  function ringCurve(s, k) { return k * (s * s * s - 2 * s * s + s) + 3 * s * s - 2 * s * s * s; }
+  function ringSlope(s, k) { return k * (3 * s * s - 4 * s + 1) + 6 * s - 6 * s * s; }
+  function paintArc(dial, v, final) {
+    var arc = dial.querySelector('.pg-arc'), svg = dial.querySelector('svg');
+    if (!arc && v > 0 && svg) {      // a 0% figure has no arc in the markup; a move to or from it borrows one
+      arc = doc.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      arc.setAttribute('class', 'pg-arc'); arc.setAttribute('cx', '24'); arc.setAttribute('cy', '24'); arc.setAttribute('r', '20'); arc.setAttribute('pathLength', '100');
+      arc.setAttribute('data-motion', ''); svg.appendChild(arc);
+    }
+    if (!arc) return;
+    if (final && v <= 0 && arc.hasAttribute('data-motion')) { arc.parentNode.removeChild(arc); return; }
+    arc.style.strokeDashoffset = (100 - v * 100).toFixed(2);
+    arc.style.visibility = v < 0.004 && !final ? 'hidden' : '';     // the round cap would draw a dot at the very start
+  }
+  function stopRingMotion(container) {
+    var m = container._ringMotion;
+    if (m && m.raf && global.cancelAnimationFrame) global.cancelAnimationFrame(m.raf);
+    container._ringMotion = null;
+  }
+  function ringMotion(container, key) {
+    var m = container._ringMotion;
+    if (!m || m.key !== key) { stopRingMotion(container); m = container._ringMotion = { key: key, rings: Object.create(null), raf: 0 }; }  // a new account starts clean
+    var still = reducedMotion() || typeof global.requestAnimationFrame !== 'function', seen = Object.create(null), moving = false;
+    Array.prototype.forEach.call(container.querySelectorAll('.pg-ring'), function (b) {
+      var id = b.getAttribute('data-id'), dial = b.querySelector('.pg-dial');
+      if (!dial) return;
+      var to = Number(dial.getAttribute('data-fill')) || 0, st = m.rings[id];
+      seen[id] = true;
+      if (!st) st = m.rings[id] = { shown: 0, vel: 0, to: 0, done: true };
+      st.dial = dial;
+      if (still) { st.shown = st.to = to; st.vel = 0; st.done = true; paintArc(dial, to, true); return; }
+      if (st.to !== to) {
+        var d = to - st.shown, dur = ringDuration(d), k = RING_START_SLOPE;
+        if (!st.done) k = d ? Math.max(0, Math.min(3, st.vel * dur / d)) : 0;   // already moving: keep its speed, never reverse past the end
+        st.from = st.shown; st.to = to; st.dur = dur; st.k = k; st.t0 = null; st.done = !d;
+      }
+      if (st.done) paintArc(dial, st.to, true);
+      else { paintArc(dial, st.shown, false); moving = true; }
+    });
+    Object.keys(m.rings).forEach(function (id) { if (!seen[id]) delete m.rings[id]; });
+    if (still && m.raf && global.cancelAnimationFrame) { global.cancelAnimationFrame(m.raf); m.raf = 0; }
+    if (moving && !m.raf) m.raf = global.requestAnimationFrame(function (t) { ringFrame(container, m, t); });
+  }
+  function ringFrame(container, m, now) {
+    m.raf = 0;
+    if (container._ringMotion !== m) return;
+    var busy = false;
+    Object.keys(m.rings).forEach(function (id) {
+      var st = m.rings[id];
+      if (st.done) return;
+      if (st.t0 == null) st.t0 = now;
+      var s = Math.min(1, Math.max(0, (now - st.t0) / st.dur)), d = st.to - st.from;
+      if (s >= 1) { st.shown = st.to; st.vel = 0; st.done = true; paintArc(st.dial, st.to, true); return; }
+      st.shown = st.from + d * ringCurve(s, st.k); st.vel = d / st.dur * ringSlope(s, st.k);
+      paintArc(st.dial, st.shown, false); busy = true;
+    });
+    if (busy) m.raf = global.requestAnimationFrame(function (t) { ringFrame(container, m, t); });
+  }
   function renderCard(container, key) {
     if (!container) return;
-    if (!enabled()) { container.style.display = 'none'; container.innerHTML = ''; container._setupHtml = null; return; }
+    if (!enabled()) { stopRingMotion(container); container.style.display = 'none'; container.innerHTML = ''; container._setupHtml = null; return; }
     ensureDom();
     loadAll(); loadOne(key);
     var html = cardHtml(key);
@@ -1311,6 +1378,7 @@
     container._setupHtml = html;
     if (kept.key === key) restoreCardState(container, kept);   // another account's state never carries over
     bindCard(container);
+    ringMotion(container, key);
     ringRefreshMotion(container, key);
   }
   function cardState(container) {
