@@ -460,29 +460,7 @@ def test_startup_log_names_the_certificate_failure_reason_without_the_host():
     assert reason == "verify_code=62 reason=Hostname mismatch" and "secret-host" not in reason
 
 
-def test_probe_reports_each_mode_and_never_prints_credentials(fake_postgres_tls_matching_host, capsys, monkeypatch):
-    port, ca_path, _ = fake_postgres_tls_matching_host
-    monkeypatch.setenv("DATABASE_URL", f"postgresql+asyncpg://probeuser:CANARY-probe-pw7@127.0.0.1:{port}/db")
-    monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", open(ca_path).read())
-    monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT", raising=False)
-    assert db_tls_probe.main([]) == 0
-    out = capsys.readouterr().out
-    assert "CANARY-probe-pw7" not in out and "probeuser" not in out and "postgresql" not in out
-    assert "check public-ca/verify-full: FAIL" in out
-    assert "check configured-ca/verify-ca: PASS" in out and "check configured-ca/verify-full: PASS" in out
-
-
-def test_probe_shows_when_a_certificate_does_not_name_the_host(fake_postgres_tls, capsys, monkeypatch):
-    # Certificate for "db.test" only, reached as 127.0.0.1: chain-only passes, hostname check fails.
-    port, ca_path, _ = fake_postgres_tls
-    monkeypatch.setenv("DATABASE_URL", f"postgresql://u:pw123456@127.0.0.1:{port}/db")
-    monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT", ca_path)
-    monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", raising=False)
-    assert db_tls_probe.main([]) == 0
-    out = capsys.readouterr().out
-    assert "check configured-ca/verify-ca: PASS" in out
-    assert "check configured-ca/verify-full: FAIL verify_code=" in out and "mismatch" in out.lower()
-    assert "subject_cn='db.test'" in out
+# Probe tests for the generic modes live in tests/test_db_tls_probe.py (#156).
 
 
 def test_pinned_ca_expiry_is_reported_and_warns_when_close(tmp_path):
