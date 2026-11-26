@@ -1,6 +1,6 @@
 // Progress circles on the account card and clearing optional rules in the edit sheet.
 // Runs the real tali-account-setup.js in jsdom against a fake host and a fake /account-setup server.
-// Synthetic data only; no layout or animation.
+// Synthetic data only; no layout. Ring fill motion runs on a hand-driven frame clock.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -82,6 +82,10 @@ function setup(db = makeServer()) {
     getSnapshot: () => ({ summary: { balance: '1928800.00', fetched_at: '2026-11-18T14:00:00Z' } }),
     getProgress: (k) => progress[k], refreshSwitcher() {}, isBusy: () => false, onProfileSaved() {},
   }
+  // A hand-driven frame clock, so ring motion is deterministic: t.frame(ms) advances time and runs one frame.
+  const frames = new Map(); let frameId = 0, now = 1000
+  w.requestAnimationFrame = (cb) => { frames.set(++frameId, cb); return frameId }
+  w.cancelAnimationFrame = (id) => { frames.delete(id) }
   w.TaliAccountSetup.attach(host)
   const card = w.document.getElementById('card')
   card.id = 'mtApiSetupCard'
@@ -111,26 +115,44 @@ function setup(db = makeServer()) {
     skip: async () => { const before = db.puts.length; $('#setup-sheet [data-act="skip"]').click(); await until(() => db.puts.length > before); await tick(20) },
     sheetOpen: () => !!$('#setup-sheet.open'),
     saved: (id) => db.profiles[id],
+    pending: () => frames.size,
+    frame(ms = 16) { now += ms; const run = [...frames.values()]; frames.clear(); run.forEach((cb) => cb(now)) },
+    settle() { for (let i = 0; i < 1000 && frames.size; i++) t.frame(16) },
+    // the fill on screen, 0..1, read from the arc (null: no arc drawn)
+    shown(id) { const a = t.ring(id) && t.ring(id).querySelector('.pg-arc'); return a ? Math.round((100 - Number(a.style.strokeDashoffset)) * 100) / 10000 : null },
+    // every frame's fill for one circle until it settles
+    trace(id) { const out = []; for (let i = 0; i < 1000 && frames.size; i++) { t.frame(16); out.push(t.shown(id)) } return out },
   }
   return t
 }
 
-test('refresh halo only runs for a newer fresh snapshot, never first load or repeated data', async () => {
+test('refresh halo only runs when a shown circle changes figure, never on first view, switches or same-figure polls', async () => {
   const t = setup()
+  const halo = () => t.$('.su-ring-space').classList.contains('is-refreshed')
   let stamp = new Date(Date.now() - 10000).toISOString()
   t.host.getSnapshot = () => ({summary:{balance:'100000',fetched_at:stamp}})
   await t.render()
-  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), false)
+  assert.equal(halo(), false, 'first view')
   stamp = new Date(Date.now()).toISOString()
   await t.render()
-  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), true)
+  assert.equal(halo(), false, 'a newer snapshot with the same figures stays still')
+  t.progress['mtapi:1'].rows[1] = daily({ status: 'within', status_label: 'Within limit', tone: 'green', used: '260.00', limit: '5000.00', remaining: '4740.00', fraction: 0.052, ratio_percent: '5.2' })
+  await t.render()
+  assert.equal(halo(), true, 'a changed figure')
   t.$('.su-ring-space').classList.remove('is-refreshed')
+  t.settle()
   await t.render()
-  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), false)
+  assert.equal(halo(), false, 'the same figures again')
+  t.ring('daily_loss').click()
+  t.ring('daily_loss').click()
+  await t.render('mtapi:2')
+  assert.equal(halo(), false, 'switching accounts')
+  await t.render('mtapi:1')
+  assert.equal(halo(), false, 'switching back is a first view')
   t.w.matchMedia = () => ({matches:true})
-  stamp = new Date(Date.now() + 1000).toISOString()
+  t.progress['mtapi:1'].rows[1] = daily({ status: 'within', status_label: 'Within limit', tone: 'green', used: '300.00', limit: '5000.00', remaining: '4700.00', fraction: 0.06, ratio_percent: '6.0' })
   await t.render()
-  assert.equal(t.$('.su-ring-space').classList.contains('is-refreshed'), false)
+  assert.equal(halo(), false, 'reduced motion')
   t.w.close()
 })
 
@@ -177,6 +199,7 @@ test('negative, exceeded and unconfirmed figures keep their real values and labe
   assert.equal(t.ring('payout_target').querySelector('.pg-state').textContent, 'Unconfirmed')
   assert.equal(t.ring('firm_min').querySelector('.pg-val').textContent, '−356%')
   assert.equal(t.ring('daily_loss').querySelector('.pg-val').textContent, '130%')
+  t.settle()
   assert.equal(t.ring('daily_loss').querySelector('.pg-arc').style.strokeDashoffset, '0', 'the fill stops at a full circle')
   t.ring('daily_loss').click()
   assert.match(t.detail(), /\$52,000 used of \$40,000 limit/)
@@ -282,6 +305,158 @@ test('keyboard: arrows move between circles, Escape closes and returns to the ci
   t.key(summary, 'Escape')
   assert.deepEqual(t.selected(), [])
   assert.equal(t.w.document.activeElement, t.ring('daily_loss'))
+})
+
+// ── ring fill motion (driven by the hand clock; figures as fractions 0..1) ──
+const dailyAt = (f) => daily({ status: 'within', status_label: 'Within limit', tone: 'green', used: String(f * 5000), limit: '5000.00', remaining: String(5000 - f * 5000), fraction: f, ratio_percent: (f * 100).toFixed(1) })
+const rising = (xs) => xs.every((v, i) => i === 0 || v >= xs[i - 1])
+const falling = (xs) => xs.every((v, i) => i === 0 || v <= xs[i - 1])
+const maxStep = (xs, from) => Math.max(...xs.map((v, i) => Math.abs(v - (i ? xs[i - 1] : from))))
+
+test('motion: first load fills each circle from empty to its figure, once, with no overshoot', async () => {
+  const t = setup()
+  t.progress['mtapi:1'].rows[1] = dailyAt(1)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('phase_target'), 0, 'starts empty')
+  assert.equal(t.ring('phase_target').querySelector('.pg-arc').style.visibility, 'hidden', 'no round-cap dot before it moves')
+  assert.equal(t.ring('phase_target').querySelector('.pg-val').textContent, '41%', 'the number is the real figure from the start')
+  const p = t.trace('phase_target')
+  assert.ok(rising(p) && p.every((v) => v <= 0.4066), 'rises steadily and never passes the figure: ' + p)
+  assert.equal(p.at(-1), 0.4066)
+  assert.ok(p.length > 30 && p.length < 80, 'a deliberate move, not a snap or a crawl: ' + p.length + ' frames')
+  assert.ok(p.at(-1) - p.at(-6) < 0.02, 'a short, crisp finish')
+  assert.equal(t.shown('daily_loss'), 1, 'an over-limit figure stops at a full circle')
+  assert.equal(t.ring('daily_loss').querySelector('.pg-arc').style.visibility, '')
+  assert.equal(t.ring('overall_drawdown').querySelector('.pg-arc'), null, 'a real zero still draws only the track')
+  assert.equal(t.pending(), 0, 'nothing keeps running once settled')
+})
+
+test('motion: unchanged polling leaves the circles alone — same nodes, no frames, no restart', async () => {
+  const t = setup()
+  await t.render('mtapi:1')
+  t.settle()
+  const node = t.ring('phase_target'), arc = node.querySelector('.pg-arc'), offset = arc.style.strokeDashoffset
+  for (let i = 0; i < 5; i++) {
+    t.progress['mtapi:1'] = JSON.parse(JSON.stringify(t.progress['mtapi:1']))   // a fresh payload with the same figures
+    await t.render('mtapi:1')
+    assert.equal(t.ring('phase_target'), node)
+    assert.equal(arc.style.strokeDashoffset, offset)
+    assert.equal(t.pending(), 0, 'poll ' + i + ' scheduled a frame')
+  }
+  // a poll that redraws the card for another reason (one figure changed) leaves the unchanged circles exactly where they are
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.05)
+  await t.render('mtapi:1')
+  assert.notEqual(t.ring('phase_target'), node)
+  assert.equal(t.shown('phase_target'), 0.4066)
+  const p = t.trace('phase_target')
+  assert.ok(p.every((v) => v === 0.4066), 'the unchanged circle never moves: ' + p)
+})
+
+test('motion: a changed figure moves from what is on screen, up or down, and back to zero', async () => {
+  const t = setup()
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.1)
+  await t.render('mtapi:1')
+  t.settle()
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.6)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), 0.1, 'starts from the old figure, not from empty')
+  let p = t.trace('daily_loss')
+  assert.ok(rising(p) && p.at(-1) === 0.6 && Math.max(...p) <= 0.6, 'up: ' + p)
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.25)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), 0.6)
+  p = t.trace('daily_loss')
+  assert.ok(falling(p) && p.at(-1) === 0.25 && Math.min(...p) >= 0.25, 'down: ' + p)
+  t.progress['mtapi:1'].rows[1] = dailyAt(0)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), 0.25, 'a drop to zero is shown moving too')
+  p = t.trace('daily_loss')
+  assert.ok(falling(p.slice(0, -1)), 'down to zero: ' + p)
+  assert.equal(t.ring('daily_loss').querySelector('.pg-arc'), null, 'settled at zero: back to the bare track')
+  assert.equal(t.ring('daily_loss').querySelector('.pg-val').textContent, '0%')
+})
+
+test('motion: an update mid-move continues from the visible position with no snap or restart', async () => {
+  const t = setup()
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.1)
+  await t.render('mtapi:1')
+  t.settle()
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.9)
+  await t.render('mtapi:1')
+  for (let i = 0; i < 12; i++) t.frame(16)
+  const mid = t.shown('daily_loss')
+  assert.ok(mid > 0.1 && mid < 0.9, 'part-way: ' + mid)
+  // same direction: a further rise carries on at speed
+  t.progress['mtapi:1'].rows[1] = dailyAt(1)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), mid, 'the new circle picks up exactly where the old one was')
+  let p = t.trace('daily_loss')
+  assert.ok(rising(p) && p.at(-1) === 1, 'keeps rising to the new figure: ' + p)
+  assert.ok(maxStep(p, mid) < 0.06, 'no jump between frames: ' + maxStep(p, mid))
+  // reversal mid-move: eases out of the old direction, never past the new figure
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.2)
+  await t.render('mtapi:1')
+  for (let i = 0; i < 10; i++) t.frame(16)
+  const turn = t.shown('daily_loss')
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.95)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), turn)
+  p = t.trace('daily_loss')
+  assert.ok(turn < 0.95 && rising(p) && p.at(-1) === 0.95 && Math.max(...p) <= 0.95, 'reversed cleanly from ' + turn + ': ' + p)
+  assert.ok(maxStep(p, turn) < 0.06)
+  // a redraw with the same figure mid-move does not restart the move
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.3)
+  await t.render('mtapi:1')
+  for (let i = 0; i < 8; i++) t.frame(16)
+  const before = t.shown('daily_loss')
+  t.progress['mtapi:1'].rows[0] = target({ current: '3300.00', fraction: 0.4125, ratio_percent: '41.3' })   // another circle changes
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), before)
+  t.frame(16)
+  assert.ok(t.shown('daily_loss') < before && before - t.shown('daily_loss') < 0.06, 'carries on its own course')
+  t.settle()
+  assert.equal(t.shown('daily_loss'), 0.3)
+})
+
+test('motion: prefers-reduced-motion shows the end state at once, also for later changes', async () => {
+  const t = setup()
+  t.w.matchMedia = (q) => ({ matches: /reduce/.test(q) })
+  await t.render('mtapi:1')
+  assert.equal(t.pending(), 0)
+  assert.equal(t.shown('phase_target'), 0.4066)
+  assert.equal(t.ring('phase_target').querySelector('.pg-arc').style.visibility, '')
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.7)
+  await t.render('mtapi:1')
+  assert.equal(t.pending(), 0)
+  assert.equal(t.shown('daily_loss'), 0.7)
+  // turned on mid-move: the move stops at its end state
+  t.w.matchMedia = () => ({ matches: false })
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.2)
+  await t.render('mtapi:1')
+  t.frame(16); t.frame(16)
+  t.w.matchMedia = (q) => ({ matches: /reduce/.test(q) })
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.4)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), 0.4)
+  assert.equal(t.pending(), 0)
+})
+
+test('motion: switching accounts never carries one account’s move into the next', async () => {
+  const t = setup()
+  t.progress['mtapi:2'].rows[2] = dailyAt(0.5)
+  t.progress['mtapi:1'].rows[1] = dailyAt(0.9)
+  await t.render('mtapi:1')
+  for (let i = 0; i < 10; i++) t.frame(16)
+  assert.ok(t.shown('daily_loss') > 0 && t.shown('daily_loss') < 0.9)
+  await t.render('mtapi:2')
+  assert.equal(t.shown('daily_loss'), 0, 'the other account’s circle starts from empty, not from account 1’s position')
+  const p = t.trace('daily_loss')
+  assert.ok(rising(p) && p.at(-1) === 0.5, 'and fills to its own figure: ' + p)
+  await t.render('mtapi:1')
+  assert.equal(t.shown('daily_loss'), 0, 'coming back is a fresh first view, not a resumed move')
+  t.settle()
+  assert.equal(t.shown('daily_loss'), 0.9)
+  assert.equal(t.shown('phase_target'), 0.4066)
 })
 
 // ── clearing optional rules through the edit sheet ──
