@@ -141,3 +141,25 @@ def test_probe_without_database_url_reports_and_exits(monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "")
     assert db_tls_probe.main([]) == 2
     assert "DATABASE_URL is not set" in capsys.readouterr().out
+
+
+def test_probe_also_reports_results_with_the_strict_x509_flag_cleared(fake_postgres_tls_matching_host, capsys, monkeypatch):
+    # The non-strict rows show what TALITRADE_DB_SSL_X509_STRICT=off (#154) would do. Chain and host name are
+    # still verified there, so a CA that does not sign the server certificate must still fail.
+    port, ca_path, _ = fake_postgres_tls_matching_host
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://u:CANARY-probe-pw11@127.0.0.1:{port}/db")
+    monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT", ca_path)
+    assert db_tls_probe.main([]) == 0
+    out = capsys.readouterr().out
+    assert "CANARY-probe-pw11" not in out
+    assert "check configured-ca/verify-ca x509_strict=off: PASS" in out
+    assert "check configured-ca/verify-full x509_strict=off: PASS" in out
+
+
+def test_non_strict_check_still_rejects_an_untrusted_ca(fake_postgres_tls_matching_host, tmp_path):
+    port, _, _ = fake_postgres_tls_matching_host
+    other = tmp_path / "other"
+    other.mkdir()
+    _, wrong_ca = _make_ca_and_server_cert(other)
+    result = db_tls_probe.check("127.0.0.1", port, cadata=wrong_ca, hostname=True, x509_strict=False)
+    assert result.startswith("FAIL verify_code=")
