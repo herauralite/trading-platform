@@ -3,6 +3,7 @@ import os
 import ssl
 from pathlib import Path
 from dotenv import load_dotenv
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -144,16 +145,25 @@ def build_ssl_context(mode: str | None = None, root_cert: str | None = None, roo
 
 
 def describe_tls(context: ssl.SSLContext, host: str | None = None) -> str:
-    """One sanitized line for the startup log: what is and is not verified. Never includes the host name."""
+    """One sanitized line for the startup log: what is and is not verified. Never includes the host name, the
+    connection URL or certificate contents. "server identity verified" is used ONLY when the context requires a
+    valid chain AND checks the host name; anything weaker says what is NOT checked."""
     host = database_host() if host is None else host
     pinned = bool((os.getenv("TALITRADE_DB_SSL_ROOT_CERT") or "").strip() or (os.getenv("TALITRADE_DB_SSL_ROOT_CERT_PEM") or "").strip())
-    if context.verify_mode == ssl.CERT_NONE:
+    trust = "pinned CA" if pinned else "public CA bundle"
+    strict = "on" if context.verify_flags & getattr(ssl, "VERIFY_X509_STRICT", 0) else "off"
+    if context.verify_mode != ssl.CERT_REQUIRED:
         return (f"Database TLS: encrypted, server identity NOT verified (mode=require, owner exception="
                 f"{(os.getenv(UNVERIFIED_EXCEPTION_ENV) or '').strip() or 'none'}, "
                 f"railway_private_network={is_railway_private_host(host)})")
-    strict = bool(context.verify_flags & getattr(ssl, "VERIFY_X509_STRICT", 0))
-    return (f"Database TLS: server identity verified (chain=yes, hostname={'yes' if context.check_hostname else 'no'}, "
-            f"trust={'pinned CA' if pinned else 'public CA bundle'}, x509_strict={'on' if strict else 'off'})")
+    if not context.check_hostname:
+        return (f"Database TLS: certificate chain verified, host name NOT checked (mode=verify-ca, trust={trust}, "
+                f"x509_strict={strict})")
+    return (f"Database TLS: server identity verified (chain=yes, hostname=yes, trust={trust}, x509_strict={strict})")
+
+
+def is_fully_verified(context: ssl.SSLContext) -> bool:
+    return context.verify_mode == ssl.CERT_REQUIRED and bool(context.check_hostname)
 
 
 CA_EXPIRY_WARNING_DAYS = 60
@@ -177,13 +187,36 @@ def pinned_ca_days_left(root_cert: str | None = None, root_cert_pem: str | None 
 
 
 ssl_context = build_ssl_context()
-_ca_days = pinned_ca_days_left()
-if _ca_days is not None:
-    (logger.warning if _ca_days <= CA_EXPIRY_WARNING_DAYS else logger.info)(
-        "Database TLS: pinned CA expires in %s days%s", _ca_days,
-        "; Railway regenerates its Postgres CA ~30 days before server-certificate expiry: re-pin "
-        "TALITRADE_DB_SSL_ROOT_CERT_PEM before then" if _ca_days <= CA_EXPIRY_WARNING_DAYS else "")
-(logger.warning if ssl_context.verify_mode == ssl.CERT_NONE else logger.info)(describe_tls(ssl_context))
+
+
+def tls_summary_records(context: ssl.SSLContext) -> list[tuple[int, str]]:
+    """(level, message) for the startup log, derived from the SSLContext object the engine connects with.
+    Full verification logs at INFO; anything weaker, or a pinned CA close to expiry, at WARNING."""
+    records: list[tuple[int, str]] = []
+    days = pinned_ca_days_left()
+    if days is not None:
+        if days <= CA_EXPIRY_WARNING_DAYS:
+            records.append((logging.WARNING, f"Database TLS: pinned CA expires in {days} days; Railway regenerates its "
+                            "Postgres CA ~30 days before server-certificate expiry: re-pin "
+                            "TALITRADE_DB_SSL_ROOT_CERT_PEM before then"))
+        else:
+            records.append((logging.INFO, f"Database TLS: pinned CA expires in {days} days"))
+    records.append((logging.INFO if is_fully_verified(context) else logging.WARNING, describe_tls(context)))
+    return records
+
+
+def attach_tls_summary(target_engine, context: ssl.SSLContext) -> None:
+    """Log the TLS summary once, on the first successful database connection (TLS handshake done, logging
+    configured by then). Logging here was previously done at import time, before logging.basicConfig, so the
+    INFO line never reached the service logs. A failure to log never affects the connection."""
+    def _log_once(dbapi_connection, connection_record):
+        try:
+            for level, message in tls_summary_records(context):
+                logger.log(level, message)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Database TLS: summary unavailable (exception type=%s)", type(exc).__name__)
+    event.listen(target_engine.sync_engine, "connect", _log_once, once=True)
+
 
 engine = create_async_engine(
     DATABASE_URL,
@@ -192,6 +225,7 @@ engine = create_async_engine(
     max_overflow=10,
     connect_args={"ssl": ssl_context},
 )
+attach_tls_summary(engine, ssl_context)
 
 AsyncSessionLocal = async_sessionmaker(
     engine,

@@ -470,13 +470,18 @@ def test_pinned_ca_expiry_is_reported_and_warns_when_close(tmp_path):
     assert database.pinned_ca_days_left(root_cert="", root_cert_pem="") is None
 
 
-def test_import_warns_about_a_soon_expiring_pinned_ca(tmp_path):
+def test_import_logs_no_tls_summary_even_with_logging_configured(tmp_path):
+    # The summary moved to the first successful connection: import must not log it (it used to, before
+    # logging.basicConfig ran, so the INFO line never reached the service logs).
     _, ca_pem = _make_ca_and_server_cert(tmp_path)
-    result = _import_database({"DATABASE_URL": "postgresql+asyncpg://u:pw@postgres.railway.internal:5432/railway",
-                               "RAILWAY_ENVIRONMENT_NAME": "production", "TALITRADE_DB_SSL_MODE": "verify-ca",
-                               "TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem})
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("TALITRADE_DB_SSL", "RAILWAY_", "TALITRADE_ENV"))}
+    env.update({"DATABASE_URL": "postgresql+asyncpg://u:pw@postgres.railway.internal:5432/railway",
+                "RAILWAY_ENVIRONMENT_NAME": "production", "TALITRADE_DB_SSL_ROOT_CERT_PEM": ca_pem})
+    result = subprocess.run([sys.executable, "-c", "import logging; logging.basicConfig(level=logging.DEBUG); "
+                             "import app.core.database"], cwd=BACKEND_DIR, env=env, capture_output=True, text=True,
+                            timeout=60)
     assert result.returncode == 0, result.stderr
-    assert "pinned CA expires in 0 days" in result.stderr and "re-pin" in result.stderr
+    assert "Database TLS" not in result.stderr
 
 
 # ── Railway postgres-ssl certificate profile, end to end through SQLAlchemy + asyncpg ──
@@ -633,3 +638,102 @@ def test_railway_profile_default_trust_store_reproduces_production_code_19(tmp_p
         out = _connect_private_name(port, {})
         assert not handshakes, out
         assert "TLS=verify_code=19 reason=self-signed certificate in certificate chain" in out, out
+
+
+
+# ── startup TLS summary: once, after the first successful connection, never overstated ──
+
+import logging  # noqa: E402
+
+from sqlalchemy.ext.asyncio import create_async_engine as _create_async_engine  # noqa: E402
+
+
+def _tls_lines(caplog):
+    return [(r.levelno, r.getMessage()) for r in caplog.records if r.getMessage().startswith("Database TLS")]
+
+
+def _verified_context(tmp_path):
+    _, ca_pem = _make_ca_and_server_cert(tmp_path)
+    return database.build_ssl_context(mode="verify-full", root_cert_pem=ca_pem, host="postgres.railway.internal",
+                                      x509_strict="off")
+
+
+def test_tls_summary_is_logged_once_after_the_first_successful_connection(tmp_path, caplog):
+    pytest.importorskip("aiosqlite")
+    import asyncio
+    from sqlalchemy import text as sql_text
+    ctx = _verified_context(tmp_path)
+    engine = _create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'db.sqlite'}")
+    caplog.set_level(logging.DEBUG, logger="app.core.database")
+    database.attach_tls_summary(engine, ctx)
+    assert _tls_lines(caplog) == []                      # attaching logs nothing; only a real connection does
+
+    async def run():
+        async with engine.connect() as one, engine.connect() as two:   # two pooled connections = two connect events
+            await one.execute(sql_text("select 1"))
+            await two.execute(sql_text("select 1"))
+        await engine.dispose()
+        async with engine.connect() as three:                          # a fresh connection after dispose
+            await three.execute(sql_text("select 1"))
+        await engine.dispose()
+    asyncio.run(run())
+    lines = _tls_lines(caplog)
+    assert lines == [(logging.INFO, "Database TLS: server identity verified (chain=yes, hostname=yes, "
+                                    "trust=public CA bundle, x509_strict=off)")], lines
+
+
+def test_no_tls_summary_when_the_connection_fails(caplog):
+    import asyncio
+    ctx = ssl.create_default_context()
+    engine = _create_async_engine("postgresql+asyncpg://u:pw@127.0.0.1:1/db", connect_args={"ssl": ctx})
+    caplog.set_level(logging.DEBUG, logger="app.core.database")
+    database.attach_tls_summary(engine, ctx)
+
+    async def run():
+        with pytest.raises(Exception):
+            async with engine.connect():
+                pass
+        await engine.dispose()
+    asyncio.run(run())
+    assert _tls_lines(caplog) == []
+
+
+def _ctx(verify_mode, check_hostname):
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = verify_mode
+    ctx.check_hostname = check_hostname
+    return ctx
+
+
+@pytest.mark.parametrize("verify_mode,check_hostname,level,expected,forbidden", [
+    (ssl.CERT_REQUIRED, True, logging.INFO, "server identity verified (chain=yes, hostname=yes", "NOT"),
+    (ssl.CERT_REQUIRED, False, logging.WARNING, "certificate chain verified, host name NOT checked", "identity verified"),
+    (ssl.CERT_OPTIONAL, False, logging.WARNING, "server identity NOT verified", "identity verified"),
+    (ssl.CERT_NONE, False, logging.WARNING, "server identity NOT verified", "identity verified"),
+])
+def test_summary_never_reports_weaker_verification_as_verified(monkeypatch, verify_mode, check_hostname, level,
+                                                               expected, forbidden):
+    monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT", raising=False)
+    monkeypatch.delenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", raising=False)
+    records = database.tls_summary_records(_ctx(verify_mode, check_hostname))
+    assert len(records) == 1
+    got_level, message = records[0]
+    assert got_level == level and expected in message and forbidden not in message, message
+
+
+def test_summary_is_sanitized_and_warns_about_a_soon_expiring_pin(tmp_path, monkeypatch):
+    _, ca_pem = _make_ca_and_server_cert(tmp_path)          # valid for one day
+    monkeypatch.setenv("TALITRADE_DB_SSL_ROOT_CERT_PEM", ca_pem)
+    monkeypatch.setattr(database, "DATABASE_URL", "postgresql+asyncpg://user:CANARY-log-pw12@secret-db.railway.internal:5432/x")
+    ctx = database.build_ssl_context(mode="verify-full", root_cert_pem=ca_pem, host="secret-db.railway.internal",
+                                     x509_strict="off")
+    records = database.tls_summary_records(ctx)
+    text_out = " | ".join(m for _, m in records)
+    assert (logging.WARNING, records[0][1]) == records[0] and "pinned CA expires in 0 days" in records[0][1]
+    assert "re-pin" in records[0][1]
+    assert records[-1] == (logging.INFO, "Database TLS: server identity verified (chain=yes, hostname=yes, "
+                                         "trust=pinned CA, x509_strict=off)")
+    for secret in ("secret-db", "railway.internal", "CANARY-log-pw12", "user:", "postgresql", "BEGIN CERTIFICATE",
+                   ca_pem.splitlines()[1]):
+        assert secret not in text_out, secret
