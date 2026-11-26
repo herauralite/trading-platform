@@ -1,6 +1,7 @@
 # Committed-credential remediation plan
 
-Status as of 2026-11-23: **OPEN. Credentials must be treated as compromised.**
+Status as of 2026-11-26: **OPEN.** The production DB password has been rotated. The Telegram token,
+`SECRET_KEY` and the historical Neon credential have not; treat them as compromised.
 
 ## Verified findings (no values reproduced)
 
@@ -25,27 +26,85 @@ session tokens.
 
 ## 1. Rotation (required; history removal does not replace it)
 
-Owner: repository owner. Claude is not authorized to rotate production credentials.
+Owner: repository owner. Claude is not authorized to rotate production credentials. Never paste a
+credential into chat, an issue, a PR or a log. Production API service = Railway `scintillating-connection`.
 
-1. **Neon database**: reset the role password (or create a new role and drop the old one), update
-   `DATABASE_URL` on every Railway service, then check `/health/ready`. In Neon, review the connection and
-   query history for unknown clients.
-2. **Telegram bot**: in @BotFather, run `/revoke` for the bot token and update `TELEGRAM_BOT_TOKEN` on
-   Railway. The webhook secret is derived from the token, and the app calls `setWebhook` again on startup.
-3. **`SECRET_KEY`**: confirm that production does not use the committed value. If it does (or if you are
-   unsure), rotate it. Rotation has side effects:
-   * every session token becomes invalid, so all users must log in again;
-   * `app/services/secret_crypto.py` derives its encryption key from `SECRET_KEY`. Any connector
-     credentials encrypted under the old key become unreadable. Plan to re-encrypt them (decrypt with the
-     old key, encrypt with the new one, in one maintenance step), or to have affected users reconnect.
-     Match-Trader tokens use their own versioned key and are not affected.
-4. Record the evidence for each rotation: the date, who did it, and confirmation that the old credential
+### Status (2026-11-26, 04:20Z)
+
+How the checks were made (no values anywhere): SHA-256 of each value committed in `backend/.env` history was
+computed locally; inside the production API container a one-off script compared the hashes of the live variables
+against them and printed only `True`/`False`.
+
+| Credential | State | Evidence (no values) |
+|---|---|---|
+| Production DB (`DATABASE_URL`, Railway Postgres on `*.railway.internal`) | **Rotated** by the owner | Redeploys 2026-11-26 00:23Z ok, 00:28Z failed (`InvalidPasswordError`), 01:03Z ok; health 200; linked-account sync confirmed by the owner. Live value is not any committed DSN (`LEAKED_DATABASE_URL_IN_USE=False`). |
+| Historical Neon `DATABASE_URL` (both values in history) | **Not in use; revocation unconfirmed** | Production does not use it (above) and `diplomatic-manifestation` has no variables at all. Owner: delete the Neon project or role, or reset its password, and record that here. |
+| `TELEGRAM_BOT_TOKEN` | **Leaked token revoked** (rotation complete) | Live token differs from the committed one (`LEAKED_TELEGRAM_TOKEN_IN_USE=False`) but belongs to the same bot (`SAME_BOT_ID_AS_LEAKED_TOKEN=True`). Telegram keeps one valid token per bot, so the committed token was revoked. The live token works: webhook registered (HTTP 200) on every deploy, and the live trade alert passed. |
+| `SECRET_KEY` | **Committed value not in use; no rotation required for the leak** | `LEAKED_SECRET_KEY_IN_USE=False`; live key is 32 characters, 32 distinct, not a placeholder; `SECRET_KEY_PREVIOUS` unset. Sessions forged with the committed value are rejected, and stored credentials are not encrypted with it (sync works). Rotate only if the *current* value is suspected exposed: steps in 1.2. |
+
+### 1.1 Telegram bot token
+
+The bot is offline from `/revoke` until the new token is deployed, so do steps 1-3 back to back.
+
+1. In @BotFather: `/revoke` → choose the bot → copy the new token. (The old token stops working right away.)
+2. Railway → `scintillating-connection` → Variables: replace `TELEGRAM_BOT_TOKEN`, then deploy. Change it
+   on any other service that holds the old token as well (see 1.3).
+3. Deploy logs must show `Telegram webhook registered successfully (HTTP 200)`. The webhook secret is
+   derived from the token, so it changes automatically.
+4. Delivery check: send `/start` (or another bot command) to the bot and get a reply. Then trigger
+   one trade alert to your own chat (the #152 check) and confirm it arrives.
+5. Old token is dead: locally, without echoing it:
+   ```powershell
+   $t = Read-Host "old token" -AsSecureString; $p = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($t)); try { Invoke-RestMethod "https://api.telegram.org/bot$p/getMe" | Out-Null; "OLD TOKEN STILL WORKS" } catch { "old token rejected: " + $_.Exception.Response.StatusCode.value__ }; Remove-Variable p, t
+   ```
+   Expected: `old token rejected: 401`.
+
+### 1.2 `SECRET_KEY`
+
+Effects: every session becomes invalid (all users sign in again, by design: sessions are not accepted
+under the previous key). Stored connector credentials stay readable through `SECRET_KEY_PREVIOUS` until
+they are re-encrypted. Match-Trader tokens use their own AES-GCM key and are not touched.
+
+1. **Announce** a short sign-out window to users.
+2. Generate the new key locally and keep it out of shells' history and chat:
+   `python -c "import secrets; print(secrets.token_urlsafe(64))"`, then paste it straight into Railway.
+3. Railway → `scintillating-connection` → Variables, in one change: `SECRET_KEY_PREVIOUS` = the current
+   `SECRET_KEY`; `SECRET_KEY` = the new key. Deploy. Check `/health/ready` = 200.
+4. Dry run in the service shell (`railway ssh`): `python -m app.tools.reencrypt_secrets`.
+   The output is counts only. **Continue only if the last line shows `undecryptable=0`.** If it is not
+   0, stop: those rows were already unreadable before this rotation (or were encrypted with another key),
+   and the owner decides whether the affected users reconnect.
+5. Apply: `python -m app.tools.reencrypt_secrets --apply`. Run the dry run again: it must show `rotated=0`
+   and `undecryptable=0` (everything `already_current`).
+6. Sign in again and confirm that a linked account syncs: the sync time advances and balance/equity
+   update. Check the deploy logs for decrypt errors.
+7. Only then remove `SECRET_KEY_PREVIOUS`, deploy, and confirm account sync once more.
+8. Record: date, who did it, dry-run and apply counts, and the sync confirmation.
+
+### 1.3 Other services
+
+`diplomatic-manifestation` (Railway project `176aa183…`) is in a different Railway
+   project from production (`38f46222…`). It cannot reference production's variables or reach its
+   `*.railway.internal` database. Check its Variables tab (names only) for a copied `DATABASE_URL`,
+   `TELEGRAM_BOT_TOKEN` or `SECRET_KEY`. It has never reached a successful deploy (GitHub Deployments).
+
+### 1.4 Record
+
+Record the evidence for each rotation: the date, who did it, and confirmation that the old credential
    now fails. Do not put values in the record.
 
 ## 2. History rewrite (optional hardening, after rotation)
 
 The rewrite only shortens how long the data stays exposed. Clones, forks, caches, and the GitHub PR refs
-may already have copies.
+may already have copies. **Do it only after every credential in 1. is rotated, and only with explicit
+owner approval: it force-pushes every branch.**
+
+Inventory (2026-11-26 04:20Z, read-only): **all 155 branches, all 148 `refs/pull/*` refs and all 13 other open
+PRs** (#145, #141, #138, #136, #123, #98, #83, #35, #29, #14, #12, #5, and this one) contain leaked commits. No tags;
+no forks; one collaborator (the owner) plus the automated Codex branches. A full-history
+pickaxe scan for the Telegram-token and DSN-with-password patterns matches **only `backend/.env`**
+(commits `bd81baf`, `f41b4de`, `e1ed682`, `185a982`, `4658918`), so removing that one path is enough.
+`git-filter-repo` is not installed on the owner's machine (`pip install git-filter-repo`).
 
 1. **Backup**: `git clone --mirror https://github.com/herauralite/trading-platform.git backup.git` and
    store it privately. Note that it contains the secrets.
@@ -67,10 +126,14 @@ may already have copies.
 * `.github/workflows/secret-scan.yml`: gitleaks scans the commits each PR or push adds, with findings
   redacted. It also fails if any `.env` file is tracked.
 * `.gitignore` ignores `.env.*` (except `.env.example`), `**/.env`, and key-material extensions.
-* Recommended, owner action: turn on GitHub secret scanning and push protection
-  (Settings → Code security).
+* **GitHub secret scanning and push protection: still disabled** (GitHub API `security_and_analysis`,
+  2026-11-26 04:20Z). Tracked separately from the gitleaks CI job: gitleaks only scans commits CI sees, while
+  push protection blocks a secret before it reaches GitHub. Owner: Settings → Code security → enable both (free
+  on public repositories), then re-check the API.
 
 ## Remaining exposure until the items above are done
 
-Until the credentials are rotated, anyone who read the public history can connect to the production
-database and control the Telegram bot.
+Until the remaining credentials are rotated, anyone who read the public history can control the Telegram
+bot, forge session tokens if production ever used the committed `SECRET_KEY`, and use the Neon database if
+that role still exists. (The production Railway database is on a private network and its password was
+rotated.)
