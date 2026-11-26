@@ -39,3 +39,53 @@ test('served dashboard links home and supplies branded home-screen icons', async
     assert.equal(png.readUInt32BE(20), size)
   }
 })
+
+test('installed dashboard offers a new build and respects Later until the version changes', async () => {
+  const { JSDOM } = await import('jsdom')
+  const code = await readFile(new URL('../public/tali-app-update.js', import.meta.url), 'utf8')
+  const { window } = new JSDOM(
+    '<meta name="talitrade-app-version" content="first"><aside id="appUpdateNotice" hidden><button data-update-now></button><button data-update-later></button></aside>',
+    { runScripts: 'outside-only', pretendToBeVisual: true },
+  )
+  try {
+    Object.defineProperty(window.navigator, 'standalone', { value: true })
+    let version = 'first'
+    let checks = 0
+    window.fetch = async (path, options) => {
+      assert.equal(path, '/talitrade-app-version.json')
+      assert.equal(options.cache, 'no-store')
+      checks++
+      return { ok: true, json: async () => ({ version }) }
+    }
+    const settled = () => new Promise(resolve => setImmediate(resolve))
+    const notice = window.document.getElementById('appUpdateNotice')
+    const check = async () => {
+      window.document.dispatchEvent(new window.Event('visibilitychange'))
+      await settled()
+    }
+
+    window.eval(code)
+    await settled()
+    assert.ok(checks > 0)
+    assert.equal(notice.hidden, true)
+
+    version = 'second'
+    await check()
+    assert.equal(notice.hidden, false)
+    notice.querySelector('[data-update-later]').click()
+    await check()
+    assert.equal(notice.hidden, true)
+
+    version = 'third'
+    await check()
+    assert.equal(notice.hidden, false)
+  } finally {
+    window.close()
+  }
+})
+
+test('the third import bar fills the full length of its track', async () => {
+  const source = await readFile(new URL('../public/tali-account-setup.js', import.meta.url), 'utf8')
+  assert.match(source, /class="su-track" d="M153 25h14m-14 7h14m-14 7h14"/)
+  assert.match(source, /class="su-row su-row-third" d="M153 39h14"/)
+})

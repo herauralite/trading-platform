@@ -7,6 +7,8 @@
 <link rel="manifest" href="/talitrade-app.webmanifest">
 <link rel="apple-touch-icon" sizes="192x192" href="/talitrade-icon.png">
 <meta name="theme-color" content="#070b10">
+<meta name="talitrade-app-version" content="">
+<script src="/tali-app-update.js" defer></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>TaliTrade</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -46,6 +48,10 @@ body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;min-h
 .tb-avatar{transition:transform .2s var(--spring),box-shadow .2s ease;}
 .tb-info{flex:1;min-width:0;}
 .tb-name{font-size:15px;font-weight:600;color:var(--text);line-height:1.2;transition:color .2s ease;}
+#appUpdateNotice{position:fixed;top:calc(64px + env(safe-area-inset-top,0px));left:50%;transform:translateX(-50%);z-index:1300;display:flex;align-items:center;flex-wrap:wrap;gap:8px;width:max-content;max-width:calc(100% - 24px);padding:10px 12px;border:1px solid var(--border);border-radius:12px;background:var(--s1);color:var(--text);box-shadow:0 8px 24px #0008;font-size:13px}
+#appUpdateNotice[hidden]{display:none}
+#appUpdateNotice button{min-height:36px;padding:0 10px;border:1px solid var(--border);border-radius:8px;background:var(--s1);color:var(--text);cursor:pointer}
+#appUpdateNotice button[data-update-now]{background:var(--blue);border-color:var(--blue);color:#070b10;font-weight:700}
 .tb-status{font-size:12px;color:var(--blue);}
 .tb-btn{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;color:var(--t2);font-size:17px;transition:background .18s;}
 .tb-btn:hover{background:var(--blue-dim);color:var(--blue);}
@@ -1601,6 +1607,12 @@ if (existingTaliUser) applyUserToTopbar(existingTaliUser);
     <div style="text-align:center;padding:48px;color:var(--t3);font-size:12px">Loading rules...</div>
   </div>
 </div>
+
+<aside id="appUpdateNotice" aria-label="Dashboard update" hidden>
+  <span role="status">A TaliTrade update is available.</span>
+  <button type="button" data-update-now>Update now</button>
+  <button type="button" data-update-later>Later</button>
+</aside>
 
 <div class="topbar">
   <a id="tbBrandLanding" class="tb-brand rip" href="/" aria-label="Open TaliTrade landing page">
